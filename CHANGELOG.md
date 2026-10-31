@@ -4,6 +4,15 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.7 - 2026-10-31
+
+- ACME: an order stopped with "the key is ec, ec384, rsa2048, rsa3072 or rsa4096" -
+  the order's loop reused the name of the key's kind for the challenge's
+  (dns-01 / http-01). Fixed; tested through the whole order with both challenges.
+- Automatic certificates → What the last order did: the time stays one narrow
+  column (+102 s no longer breaks into a line per character) and the words sit
+  left beside it.
+
 ## 4.1.6 - 2026-10-31
 
 Automatic certificates (ACME) take every key Let's Encrypt accepts

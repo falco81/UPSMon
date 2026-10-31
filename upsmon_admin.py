@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.1.6'
+__version__ = '4.1.7'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -3961,7 +3961,7 @@ class Acme(object):
                 raise AcmeError('%s: the CA has not said in %d s (%s)' % (what, secs, st))
             time.sleep(2)
 
-    def order(self, names, say, kind=None):
+    def order(self, names, say, key_kind=None):
         say('ordered from the CA')
         got, headers = self.post_json(self.dir['newOrder'], {
             'identifiers': [{'type': 'dns', 'value': n} for n in names]})
@@ -4006,7 +4006,7 @@ class Acme(object):
                 self._poll(az, ('valid',), 'the CA did not take %s' % name)
             finally:
                 self.store.db.run('DELETE FROM meta WHERE k = ?', ('acme:chal:' + token,))
-        key, csr = make_csr(names[0], names[1:], kind or 'ec')
+        key, csr = make_csr(names[0], names[1:], key_kind or 'ec')
         der = _openssl(['req', '-in', '/dev/stdin', '-outform', 'DER'], data=csr.encode(),
                        what='the request')
         say('the certificate is made')

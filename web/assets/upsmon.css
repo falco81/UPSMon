@@ -3355,3 +3355,8 @@ a,a:link,a:visited{color:var(--accent)}
 a:hover{color:#79c0ff}
 .pw-head{flex-wrap:wrap;row-gap:6px}
 .pw-break{flex-basis:100%;height:0}
+
+/* ---- upsmon 4.1.7: the steps of an order - the time one narrow column, the words beside it ---- */
+.acme-steps-done .si-row{align-items:flex-start}
+.acme-steps-done .si-row .mono{flex:0 0 56px;white-space:nowrap;overflow-wrap:normal}
+.acme-steps-done .si-row span:last-child{flex:1;min-width:0;text-align:left;overflow-wrap:anywhere}

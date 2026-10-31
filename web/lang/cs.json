@@ -1095,10 +1095,6 @@
    "source": "ECDSA P-256",
    "text": "ECDSA P-256"
   },
-  "os0732": {
-   "source": "ECDSA is smaller and quicker; RSA for old clients.",
-   "text": "ECDSA je menší a rychlejší; RSA pro staré klienty."
-  },
   "os0734": {
    "source": "Each name points at the address that reaches port 80 of its node (or of the VIP address) - from the internet, or from your own CA.",
    "text": "Každé jméno ukazuje na adresu, přes kterou se dá dostat na port 80 jeho uzlu (nebo VIP adresy) – z internetu, nebo z vaší vlastní CA."
@@ -3898,6 +3894,10 @@
   "os2577": {
    "source": "The key’s secret (base64). Kept sealed; written to a file only upsmon reads for the moment nsupdate runs.",
    "text": "Tajemství klíče (base64). Uloženo zapečetěné; zapíše se do souboru, který čte jen upsmon, jen na dobu běhu nsupdate."
+  },
+  "os2578": {
+   "source": "The kind",
+   "text": "Typ"
   },
   "os2581": {
    "source": "The language every page opens in until somebody chooses another for themselves.",
