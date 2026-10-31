@@ -23,10 +23,7 @@ RuntimeDirectoryMode=0750
 StateDirectory=upsmon
 StateDirectoryMode=0750
 # /var/log/upsmon, created with the right ownership. Without this the daemon
-# could not write there at all: # full, not strict (4.1): a backup may go to a folder mounted anywhere (an NFS
-# share under /mnt); /usr, /boot and /etc stay read-only.
-ProtectSystem=full makes everything else
-# read-only.
+# could not write there at all: ProtectSystem makes /usr, /boot and /etc read-only.
 LogsDirectory=upsmon
 LogsDirectoryMode=0750
 # StateDirectory already grants this, but naming it explicitly means a
@@ -53,7 +50,10 @@ NoNewPrivileges=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK (4.1.5): smbclient reads the machine's network interfaces through
+# netlink - without it a backup to an SMB share fails with "Could not determine
+# network interfaces, you must use a interfaces config line".
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 RestrictNamespaces=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes

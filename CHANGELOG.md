@@ -4,6 +4,10 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.5 - 2026-10-31
+
+- Backups to an SMB share work: the service may now open netlink sockets (`AF_NETLINK` in `upsmon.service`), which smbclient needs to read the machine's network interfaces. Before, it stopped with "Could not determine network interfaces, you must use a interfaces config line".
+
 ## 4.1.4 - 2026-10-31
 
 - Settings → System updates: the tag "restart after the update" (or "restart needed") sits on a line of its own under the server's name.
