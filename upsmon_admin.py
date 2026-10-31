@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.2.1'
+__version__ = '4.2.2'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -364,9 +364,9 @@ SAYS['upgrade_downgrade'] = ('Off: nothing on these pages offers going back to a
                              'Settings → Upgrades shows <i>Going back to an older version</i> - only the '
                              'versions it is safe to go back to, each with what changed in it. On the '
                              'server, root can always: upsmon --downgrade.')
-SAYS['proxy'] = ('An HTTP proxy for what upsmon asks of the web: the new versions, the CA of the '
-                 'automatic certificates, and the system updates (dnf, apt). The UPS, the plug and the '
-                 'sensors never use it.')
+SAYS['proxy'] = ('An HTTP proxy for the updates only: the new versions of upsmon, and the system '
+                 'updates (dnf, apt) where switched on below. Nothing else upsmon does goes through it - '
+                 'the UPS, the plug, the sensors, the automatic certificates, mail and the backups never.')
 SAYS['acme_dns_tsig_name'] = ('As the DNS server knows it, <code>upsmon-acme.</code>; allowed to update '
                               '_acme-challenge records only.')
 SAYS['acme_dns_tsig_secret'] = ('The key’s secret (base64). Kept sealed; written to a file only upsmon reads '
@@ -2221,7 +2221,7 @@ def _online_get(url, limit=4 * 1024 * 1024, accept='*/*', timeout=30):
     req = urllib.request.Request(url, headers={
         'User-Agent': 'upsmon/%s (+upgrade check)' % __version__, 'Accept': accept})
     ctx = ssl.create_default_context()
-    with url_open(req, timeout=timeout, context=ctx) as r:
+    with url_open(req, timeout=timeout, context=ctx, purpose='web') as r:
         final = r.geturl()
         if not str(final).startswith('https://'):
             raise ValueError('it was sent on to an address that is not https: %s' % final)
@@ -2448,6 +2448,10 @@ def online_fetch(store, version, by, older=False):
 # line), dnf or apt fetching the system updates. Mail, Active Directory, the
 # database, syslog and the other node never go through it.
 def proxy_on(purpose='web'):
+    # 'web' is the new versions of upsmon, 'os' the system updates; anything
+    # else ('direct') never goes through the proxy (4.2.2).
+    if purpose not in ('web', 'os', 'sms'):
+        return False
     if not CONFIG.get('proxy') or not str(CONFIG.get('proxy_url') or '').strip():
         return False
     if purpose == 'sms':
@@ -2518,7 +2522,7 @@ class _ProxyOnly(urllib.request.ProxyHandler):
         return None
 
 
-def url_open(req, timeout=30, context=None, purpose='web'):
+def url_open(req, timeout=30, context=None, purpose='direct'):
     """urllib.request.urlopen, through the proxy where one is set and the host
     is not one reached straight; never through what the environment says."""
     if not isinstance(req, urllib.request.Request):

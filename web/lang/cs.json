@@ -9832,16 +9832,16 @@
    "text": "V údržbě se UPS, zásuvka i senzory dál sledují a jejich historie se ukládá, ale nic je nemění: příkazy pro UPS, nastavení hodnot i přepnutí nebo reset zásuvky se odmítnou a dashboard i /api/health hlásí údržbu. Stránky fungují dál."
   },
   "k42101": {
-   "source": "Where the server may reach the web only through an HTTP proxy: the new versions, the CA of the automatic certificates and the system updates (dnf, apt) go through it. The UPS, the plug, the sensors, mail and the backups never do.",
-   "text": "Kde server smí na web jen přes HTTP proxy: přes ni jdou nové verze, CA automatických certifikátů a systémové aktualizace (dnf, apt). UPS, zásuvka, senzory, pošta ani zálohy přes ni nikdy nejdou."
+   "source": "Where the server may reach the web only through an HTTP proxy: the updates go through it - the new versions of upsmon, and the system updates (dnf, apt). Nothing else does: the UPS, the plug, the sensors, the automatic certificates, mail and the backups never.",
+   "text": "Kde server smí na web jen přes HTTP proxy: jdou přes ni aktualizace – nové verze upsmon a systémové aktualizace (dnf, apt). Nic jiného: UPS, zásuvka, senzory, automatické certifikáty, pošta ani zálohy přes ni nikdy nejdou."
   },
   "k42102": {
-   "source": "An HTTP proxy for what upsmon asks of the web - new versions, the CA of the certificates, the system updates.",
-   "text": "HTTP proxy pro to, na co se upsmon ptá webu – nové verze, CA certifikátů, systémové aktualizace."
+   "source": "An HTTP proxy for the updates only - the new versions of upsmon and the system updates.",
+   "text": "HTTP proxy jen pro aktualizace – nové verze upsmon a systémové aktualizace."
   },
   "k42103": {
-   "source": "An HTTP proxy for what upsmon asks of the web: the new versions, the CA of the automatic certificates, and the system updates (dnf, apt). The UPS, the plug and the sensors never use it.",
-   "text": "HTTP proxy pro to, na co se upsmon ptá webu: nové verze, CA automatických certifikátů a systémové aktualizace (dnf, apt). UPS, zásuvka ani senzory ji nikdy nepoužívají."
+   "source": "An HTTP proxy for the updates only: the new versions of upsmon, and the system updates (dnf, apt) where switched on below. Nothing else upsmon does goes through it - the UPS, the plug, the sensors, the automatic certificates, mail and the backups never.",
+   "text": "HTTP proxy jen pro aktualizace: nové verze upsmon a systémové aktualizace (dnf, apt), pokud jsou níže zapnuté. Nic jiného z upsmon přes ni nejde – UPS, zásuvka, senzory, automatické certifikáty, pošta ani zálohy nikdy."
   },
   "k42104": {
    "source": "dnf or apt fetch the updates of Settings → System updates through it.",

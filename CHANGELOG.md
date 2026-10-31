@@ -4,6 +4,16 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.2.2 - 2026-10-31
+
+- **The proxy is for the updates only**: the new versions of upsmon (the daily
+  look, the download) and the system updates (dnf, apt, when "The system updates
+  through it too" is on). Nothing else goes through it, whatever is set: the
+  automatic certificates (the CA, deSEC, Cloudflare, acme-dns) go straight
+  again, as do the UPS, the plug, the sensors, mail and the backups - none of
+  them can be stopped by a proxy that is down or wrongly set. Settings → Proxy
+  says so.
+
 ## 4.2.1 - 2026-10-31
 
 **Settings → Proxy** - a pane of its own, as OTP has it (Server, before Time):
