@@ -4,6 +4,19 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.1 - 2026-10-31
+
+- **PHP on the stream php:8.2, at least 8.2.35** (php2shell, CVE-2026-109618,
+  CVE-2026-109619): `install.sh` - on a fresh install and on every upgrade,
+  from the command line or from Settings → Upgrades - puts PHP on the
+  AppStream stream `php:8.2` whatever was there before (AlmaLinux 9's own
+  8.0, or another stream): `dnf module reset php`, `dnf module enable
+  php:8.2`, every PHP package moved over (`dnf distro-sync 'php*'`), php-fpm
+  restarted on it. Already on php:8.2, it is brought up to the newest build.
+  It then says whether 8.2.35 or later runs, and how to get it where the
+  mirror has not got it yet. `--php-stream X.Y` chooses another stream,
+  `--remi` Remi's 8.4, `--no-php-update` leaves PHP alone.
+
 ## 4.1.0 - 2026-10-31
 
 More of OTP's Settings, the same pages and the same functions, for upsmon:
