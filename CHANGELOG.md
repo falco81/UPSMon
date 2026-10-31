@@ -4,6 +4,20 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.2.1 - 2026-10-31
+
+**Settings → Proxy** - a pane of its own, as OTP has it (Server, before Time):
+- *Settings*: Go out through a proxy, the proxy, its user name and password
+  (sealed), the names reached straight, and **the system updates through it
+  too** (dnf, apt - handed to root's helper, never on a command line).
+- *Try it*: an address asked the way upsmon asks the web - through the proxy as
+  saved, or straight - drawn as OTP draws it: this server, the proxy, the
+  address, each link green or red, and every step (looked up, connected, the
+  tunnel, TLS and its certificate, the answer) with how long it took. Empty:
+  where the new versions are looked for.
+- `upsmon --proxy-test [URL]` on the command line (`--json` too).
+- The proxy's settings are no longer in Settings → Upgrades.
+
 ## 4.2.0 - 2026-10-31
 
 **Upgrades and maintenance, as OTP 1.0.197 has them (one server, no HA)**

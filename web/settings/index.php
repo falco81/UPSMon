@@ -247,7 +247,7 @@ if (isset($_GET['api'])) {
         'whoami' => '/api/auth/whoami', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy',
         'rbackup' => '/api/rbackup',
     ];
     $writes = [
@@ -256,7 +256,7 @@ if (isset($_GET['api'])) {
         'columns' => '/api/auth/columns', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy',
         'rbackup' => '/api/rbackup',
     ];
     if ($post) {
@@ -492,6 +492,7 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
     <button type="button" data-pane="web" data-icon="lock" title="The certificate of the web server, and how TLS is spoken.">Certificates and TLS</button>
     <button type="button" class="fulladmin-only" data-pane="acme" data-icon="lock" title="The certificate ordered from Let's Encrypt (or another ACME CA) and renewed by itself.">Automatic certificates</button>
     <div class="ctl-group">Server</div>
+    <button type="button" class="fulladmin-only" data-pane="proxy" data-icon="globe" title="An HTTP proxy for what upsmon asks of the web - new versions, the CA of the certificates, the system updates.">Proxy</button>
     <button type="button" class="fulladmin-only" data-pane="time" data-icon="clock" title="The clock of this server: chrony, its time servers, how far off it is.">Time</button>
     <button type="button" class="fulladmin-only" data-pane="power" data-icon="power" title="Restart or switch off this server.">Restart and power off</button>
     <div class="ctl-group">Data</div>
@@ -831,6 +832,15 @@ upsmon --upgrade-status                    # an upgrade started on these pages</
         </label>
       </div>
     </div>
+  </div>
+
+  <div class="ctl-pane" id="pane-proxy" hidden>
+    <div class="ctl-head"><h2 class="ctl-title">Proxy</h2>
+      <p class="ctl-lede">Where the server may reach the web only through an HTTP proxy: the new versions,
+        the CA of the automatic certificates and the system updates (dnf, apt) go through it. The UPS, the
+        plug, the sensors, mail and the backups never do.</p></div>
+    <div class="card full"><h2>Settings</h2><div id="sect-proxy"></div></div>
+    <div id="px-host"></div>
   </div>
 
   <div class="ctl-pane" id="pane-time" hidden>

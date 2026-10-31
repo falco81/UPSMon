@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.2.0'
+__version__ = '4.2.1'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -206,7 +206,7 @@ SAYS = {'site_name': 'The name at the top of the administration pages. Empty: th
  'proxy_password': 'Kept sealed, like the other passwords.',
  'proxy_no': 'Names and addresses reached without it, separated by commas: '
              '<code>.example.cz</code> is every name under it, <code>10.0.0.0/8</code> a net.',
- 'proxy_os': 'dnf or apt fetch the updates of System → Updates through it.',
+ 'proxy_os': 'dnf or apt fetch the updates of Settings → System updates through it.',
  'proxy_sms': 'The HTTP SMS gateway asked through it.',
  'acme': 'The certificates ordered from the CA by HTTP-01 and renewed by themselves - port 80 of '
          'the name must reach a node. In a cluster the answer is kept in the database, so '
@@ -364,13 +364,14 @@ SAYS['upgrade_downgrade'] = ('Off: nothing on these pages offers going back to a
                              'Settings → Upgrades shows <i>Going back to an older version</i> - only the '
                              'versions it is safe to go back to, each with what changed in it. On the '
                              'server, root can always: upsmon --downgrade.')
-SAYS['proxy'] = ('An HTTP proxy for what upsmon asks of the web: the new versions and the CA of the '
-                 'automatic certificates. The UPS, the plug and the sensors never use it.')
+SAYS['proxy'] = ('An HTTP proxy for what upsmon asks of the web: the new versions, the CA of the '
+                 'automatic certificates, and the system updates (dnf, apt). The UPS, the plug and the '
+                 'sensors never use it.')
 SAYS['acme_dns_tsig_name'] = ('As the DNS server knows it, <code>upsmon-acme.</code>; allowed to update '
                               '_acme-challenge records only.')
 SAYS['acme_dns_tsig_secret'] = ('The key’s secret (base64). Kept sealed; written to a file only upsmon reads '
                                 'for the moment nsupdate runs.')
-for _k in ('proxy_sms', 'proxy_os'):
+for _k in ('proxy_sms',):
     DEFAULTS.pop(_k, None); NAMES.pop(_k, None); SAYS.pop(_k, None); TUNABLE.pop(_k, None)
     ONLY_WHEN.pop(_k, None)
 TUNABLE['acme_for'] = ('node',)
@@ -395,8 +396,9 @@ PANES = {
              'acme_dns_tsig_secret', 'acme_dns_token', 'acme_dns_url', 'acme_dns_user',
              'acme_dns_key', 'acme_dns_subdomain', 'acme_desec_domain', 'acme_desec_token',
              'acme_dns_alias', 'acme_dns_wait', 'acme_resolvers'],
-    'upgrade': ['upgrade_check', 'upgrade_url', 'upgrade_downgrade', 'proxy', 'proxy_url',
-                'proxy_user', 'proxy_password', 'proxy_no'],
+    'upgrade': ['upgrade_check', 'upgrade_url', 'upgrade_downgrade'],
+    # Settings → Proxy (4.2.1), as OTP has it - the SMS gateway aside.
+    'proxy': ['proxy', 'proxy_url', 'proxy_user', 'proxy_password', 'proxy_no', 'proxy_os'],
     'about': ['site_name', 'ui_lang', 'admin_port', 'debug', 'debug_api'],
 }
 HIDDEN_KEYS = ('acme_for',)
@@ -14037,6 +14039,49 @@ def daily_copy_tick(store):
         store.add_event('settings', 'the daily copy of the databases was not made: %s' % e, 'bad')
 
 
+# ---- Settings → Proxy: try an address (4.2.1), as OTP's /api/proxy - one server,
+# so this daemon tries it itself, in a thread, and the page asks how it went.
+PROXY_TRIES = {}
+PROXY_TRIES_LOCK = threading.Lock()
+
+
+@route('POST', '/api/proxy')
+def _proxy_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    act = str(b.get('action') or '')
+    me = node_name()
+    if act == 'try':
+        url = str(b.get('url') or '').strip()
+        if url and not re.match(r'^https?://[^\s/]+[^\s]*\Z', url):
+            raise ApiError(400, 'an address starting https:// (or http://)')
+        tid = secrets.token_hex(8)
+        with PROXY_TRIES_LOCK:
+            for k in [k for k, v in PROXY_TRIES.items() if time.time() - v['at'] > 600]:
+                PROXY_TRIES.pop(k, None)
+            PROXY_TRIES[tid] = {'at': time.time(), 'got': None}
+
+        def run():
+            try:
+                got = proxy_try(url)
+            except Exception as e:                      # noqa: BLE001
+                got = {'ok': False, 'error': str(e)[:300], 'node': me}
+            with PROXY_TRIES_LOCK:
+                if tid in PROXY_TRIES:
+                    PROXY_TRIES[tid]['got'] = got
+        threading.Thread(target=run, name='proxy-try', daemon=True).start()
+        h.store.add_event('settings', '%s tried %s through the proxy settings'
+                          % (s['name'], url or 'where the new versions are looked for'),
+                          'info', who=s['name'])
+        return {'id': tid, 'nodes': [me]}
+    if act == 'result':
+        with PROXY_TRIES_LOCK:
+            row = PROXY_TRIES.get(str(b.get('id') or ''))
+            got = row and row['got']
+        return {'nodes': {me: got} if got else {}}
+    raise ApiError(400, 'no such thing to do')
+
+
 @route('GET', '/api/db')
 def _db(h):
     h.me()
@@ -14510,6 +14555,9 @@ def add_cli_arguments(parser):
     a('--downgrade-check', action='store_true', help='the older versions there, and which are safe')
     a('--downgrade', metavar='VERSION|FILE', help='go back to an older version (only a safe one)')
     a('--maintenance', choices=('on', 'off', 'status'), help='this server in maintenance or not')
+    a('--proxy-test', nargs='?', const='', metavar='URL',
+      help='an address asked the way upsmon asks the web - through the proxy as saved, or '
+           'straight - each step shown (empty: where the new versions are looked for)')
     a('--why', default='', help='with --maintenance on: why')
     g = parser.add_argument_group('THE CONSOLE')
     a = g.add_argument
@@ -14526,7 +14574,7 @@ CLI_FLAGS = ('users', 'add_user', 'passwd', 'set_role', 'del_user', 'disable_use
              'upgrade_cancel', 'downgrade_check', 'downgrade', 'maintenance', 'console',
              'console_at_login', 'console_status', 'lockouts', 'lockouts_clear', 'backup',
              'copies', 'restore', 'restore_bundle', 'rbackup_now', 'rbackup_status', 'db_check',
-             'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export')
+             'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export', 'proxy_test')
 
 
 def cli_wanted(args):
@@ -14545,6 +14593,22 @@ def cli_main(args, ups_status=None):
     def out(data):
         print(json.dumps(data, indent=2, default=str, ensure_ascii=False))
 
+    if args.proxy_test is not None:
+        try:
+            got = proxy_try(args.proxy_test)
+        except ValueError as e:
+            raise SystemExit('upsmon: %s' % e)
+        if as_json:
+            out(got)
+            return 0 if got.get('ok') else 1
+        print('%s%s' % (got.get('url'), ('  through %s' % got['proxy']) if got.get('mode') == 'proxy'
+                         else '  straight (%s)' % (got.get('why_direct') or 'no proxy')))
+        for s in got.get('steps') or []:
+            line = '  %-30s %5s ms  %s' % (s.get('what'), s.get('ms'), s.get('said') or '')
+            print(pal.ok_line(line) if s.get('ok') else pal.bad_line(line))
+        print(pal.ok_line('reached - HTTP %s, %s ms' % (got.get('status'), got.get('ms')))
+              if got.get('ok') else pal.bad_line('not reached'))
+        return 0 if got.get('ok') else 1
     if args.console:
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             raise SystemExit('upsmon: the console needs a terminal')

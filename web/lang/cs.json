@@ -443,6 +443,10 @@
    "source": "An account kept here, not in a directory",
    "text": "Účet vedený zde, ne v adresáři"
   },
+  "os0373": {
+   "source": "An address asked from this node the way upsmon asks the web: through the proxy as it is saved, or straight where none is set or the address is in the list. Each step is shown. Empty: where the new versions are looked for.",
+   "text": "Adresa dotázaná z každého uzlu tak, jak upsmon chodí na web: přes proxy, jak je uložená, nebo přímo, když žádná není nebo je adresa v seznamu. Ukáže se každý krok. Prázdné: kde se hledají nové verze."
+  },
   "os0379": {
    "source": "An administrator on that server",
    "text": "Administrátor toho serveru"
@@ -2851,6 +2855,10 @@
    "source": "Reached",
    "text": "Dosaženo"
   },
+  "os1855": {
+   "source": "Reached through the proxy",
+   "text": "Dosaženo přes proxy"
+  },
   "os1856": {
    "source": "Read",
    "text": "Načteno"
@@ -4282,6 +4290,10 @@
   "os2844": {
    "source": "This makes the database and the account on that server, and gives the account rights on that one database and no other. The first time, it needs an administrator on the server to do it — root on MariaDB, postgres on PostgreSQL, or anyone who may create a database.",
    "text": "Tohle na tom serveru vytvoří databázi a účet a dá účtu práva k té jediné databázi a k žádné jiné. Poprvé je k tomu potřeba administrátor serveru – root na MariaDB, postgres na PostgreSQL nebo kdokoli, kdo smí vytvořit databázi."
+  },
+  "os2848": {
+   "source": "This node did not answer in a minute - is it running?",
+   "text": "Tento uzel do minuty neodpověděl – běží?"
   },
   "os2854": {
    "source": "This node’s DNS name",
@@ -6258,6 +6270,10 @@
   "os3995": {
    "source": "not there yet",
    "text": "zatím tam není"
+  },
+  "os3996": {
+   "source": "not tried - the step before stopped it",
+   "text": "nezkoušeno – zastavil to předchozí krok"
   },
   "os3997": {
    "source": "not under high security",
@@ -9814,6 +9830,26 @@
   "k42007": {
    "source": "While it is in maintenance the UPS, the plug and the sensors are still watched and their history kept, but nothing changes them: commands to the UPS, values set on it and the plug switched or reset are refused, and the dashboard and /api/health say maintenance. Its pages go on working.",
    "text": "V údržbě se UPS, zásuvka i senzory dál sledují a jejich historie se ukládá, ale nic je nemění: příkazy pro UPS, nastavení hodnot i přepnutí nebo reset zásuvky se odmítnou a dashboard i /api/health hlásí údržbu. Stránky fungují dál."
+  },
+  "k42101": {
+   "source": "Where the server may reach the web only through an HTTP proxy: the new versions, the CA of the automatic certificates and the system updates (dnf, apt) go through it. The UPS, the plug, the sensors, mail and the backups never do.",
+   "text": "Kde server smí na web jen přes HTTP proxy: přes ni jdou nové verze, CA automatických certifikátů a systémové aktualizace (dnf, apt). UPS, zásuvka, senzory, pošta ani zálohy přes ni nikdy nejdou."
+  },
+  "k42102": {
+   "source": "An HTTP proxy for what upsmon asks of the web - new versions, the CA of the certificates, the system updates.",
+   "text": "HTTP proxy pro to, na co se upsmon ptá webu – nové verze, CA certifikátů, systémové aktualizace."
+  },
+  "k42103": {
+   "source": "An HTTP proxy for what upsmon asks of the web: the new versions, the CA of the automatic certificates, and the system updates (dnf, apt). The UPS, the plug and the sensors never use it.",
+   "text": "HTTP proxy pro to, na co se upsmon ptá webu: nové verze, CA automatických certifikátů a systémové aktualizace (dnf, apt). UPS, zásuvka ani senzory ji nikdy nepoužívají."
+  },
+  "k42104": {
+   "source": "dnf or apt fetch the updates of Settings → System updates through it.",
+   "text": "dnf nebo apt přes ni stahují aktualizace z Nastavení → Systémové aktualizace."
+  },
+  "k42105": {
+   "source": "An address asked from this node the way upsmon asks the web: through the proxy as it is saved, or straight where none is set or the address is in the list. Each step is shown. Empty: where the new versions are looked for.",
+   "text": "Adresa dotázaná z tohoto serveru tak, jak se upsmon ptá webu: přes uloženou proxy, nebo přímo, když žádná není nastavená nebo je adresa v seznamu. Ukáže se každý krok. Prázdné: kde se hledají nové verze."
   }
  },
  "patterns": {
@@ -10112,6 +10148,10 @@
   "op0154": {
    "source": "Not in use while {0}.",
    "text": "Nepoužívá se, dokud {0}."
+  },
+  "op0157": {
+   "source": "Not reached: {0}",
+   "text": "Nedosaženo: {0}"
   },
   "op0166": {
    "source": "Nothing newer: the newest there is {0} and this server runs {1} (looked {2})",
@@ -11052,6 +11092,10 @@
   "op0699": {
    "source": "started by {0}",
    "text": "spustil {0}"
+  },
+  "op0703": {
+   "source": "straight because {0}",
+   "text": "přímo, protože {0}"
   },
   "op0705": {
    "source": "that file is far bigger than any settings file ({0})",

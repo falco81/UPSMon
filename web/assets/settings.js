@@ -499,6 +499,7 @@ function showPane(name) {
   if (name === 'acme') loadAcme(); else acPoll(false);
   if (name === 'about') drawAbout();
   if (name === 'upgrade') loadUpgrade();
+  if (name === 'proxy') drawProxy();
   if (name === 'web') loadWeb();
   /* The save bar where there is a setting to save, and nowhere else - a page
      of clients or directories saves each one in its own window. */
@@ -6545,6 +6546,158 @@ function certExport(target, prof) {
         }).catch(oops).then(function () { busy(b, false); });
       }}], 'medium');
 }
+
+/* ---- Settings → Proxy (4.2.1), from OTP 1.0.197 ---- */
+
+var PX = {poll: null};
+function drawProxy() {
+  var host = $('px-host');
+  if (!host) return;
+  clear(host);
+  var c = el('div', 'card full');
+  c.appendChild(el('h2', '', 'Try it'));
+  c.appendChild(el('p', 'note', 'An address asked from this node the way upsmon asks the web: through the proxy as it is saved, or straight where none is set or the address is in the list. Each step is shown. Empty: where the new versions are looked for.'));
+  var row = el('div', 'btnrow');
+  var url = el('input');
+  url.type = 'text';
+  url.placeholder = 'https://github.com/';
+  url.style.flex = '1';
+  url.style.minWidth = '260px';
+  var go = cmdButton('Try it', 'play', 'primary');
+  var said = el('div', 'px-out');
+  /* Tried on every node (1.0.169): each node's card fills in as it answers. */
+  go.onclick = function () {
+    busy(go, true);
+    clear(said);
+    if (PX.poll) { clearInterval(PX.poll); PX.poll = null; }
+    api('proxy', {action: 'try', url: url.value.trim()}).then(function (x) {
+      var nodes = x.nodes || [];
+      var cards = {};
+      var grid = nodeGrid();
+      nodes.forEach(function (n) {
+        var cd = nodeCard({node: n, me: !!(STATUS && n === STATUS.node)}, 'dim', 'being tried', 'info');
+        var body = el('div', 'px-out');
+        body.appendChild(pxPath(null, n));
+        cd.appendChild(body);
+        grid.appendChild(cd);
+        cards[n] = {body: body, done: false, card: cd};
+      });
+      said.appendChild(grid);
+      var began = Date.now();
+      var look = function () {
+        api('proxy', {action: 'result', id: x.id}).then(function (r) {
+          var left = 0;
+          nodes.forEach(function (n) {
+            var got = (r.nodes || {})[n];
+            if (cards[n].done) return;
+            if (!got) { left++; return; }
+            cards[n].done = true;
+            var hd = cards[n].card.querySelector('.pw-head');
+            hd.querySelector('.dot').className = 'dot ' + (got.ok ? 'ok' : 'bad');
+            var tg = hd.querySelector('.tag:last-child');
+            hd.replaceChild(el('span', 'tag ' + (got.ok ? 'ok' : 'crit'), got.ok ? (got.mode === 'proxy' ? 'through the proxy' : 'straight') : 'not reached'), tg);
+            clear(cards[n].body);
+            if (got.error) { cards[n].body.appendChild(el('p', 'note bad', got.error)); return; }
+            cards[n].body.appendChild(pxPath(got));
+            cards[n].body.appendChild(pxSteps(got));
+          });
+          if (!left || Date.now() - began > 60000) {
+            clearInterval(PX.poll); PX.poll = null; busy(go, false);
+            nodes.forEach(function (n) {
+              if (!cards[n].done) { clear(cards[n].body); cards[n].body.appendChild(el('p', 'note warn', 'This node did not answer in a minute - is it running?')); }
+            });
+          }
+        }).catch(function () {});
+      };
+      PX.poll = setInterval(look, 1000);
+      setTimeout(look, 300);
+    }).catch(function (e) { busy(go, false); oops(e); });
+  };
+  url.addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
+  row.appendChild(url); row.appendChild(go);
+  c.appendChild(row);
+  c.appendChild(said);
+  host.appendChild(c);
+}
+/* The way it went, drawn: this node, the proxy (when it went through one),
+   the address - each link green, red, or still being tried. */
+function pxPath(x, nodeName) {
+  var box = el('div', 'px-path' + (x ? (x.ok ? ' ok' : ' bad') : ' going'));
+  var steps = (x && x.steps) || [];
+  var failAt = steps.filter(function (s) { return !s.ok; })[0];
+  var stop = function (icon, title, sub, cls) {
+    var n = el('div', 'px-stop ' + (cls || ''));
+    var ic = el('span', 'px-ic');
+    ic.innerHTML = iconMarkup(icon, 22);
+    n.appendChild(ic);
+    n.appendChild(noI18n(el('b', 'mono', title)));
+    if (sub) n.appendChild(el('span', 'muted small', sub));
+    return n;
+  };
+  var link = function (state, words) {
+    var l = el('div', 'px-link ' + state);
+    l.appendChild(el('span', 'px-wire'));
+    if (words) l.appendChild(el('span', 'px-lw small', words));
+    return l;
+  };
+  if (!x) {
+    box.appendChild(stop('router', nodeName || (STATUS && STATUS.node) || 'upsmon', 'the node', 'me'));
+    box.appendChild(link('going', 'trying…'));
+    box.appendChild(stop('globe', '…', '', ''));
+    return box;
+  }
+  var reached = function (re) { return steps.some(function (s) { return s.ok && re.test(s.what); }); };
+  box.appendChild(stop('router', x.node, 'the node', 'me'));
+  if (x.mode === 'proxy') {
+    var toProxy = reached(/^connected to the proxy/) ? 'ok' : 'bad';
+    box.appendChild(link(toProxy, toProxy === 'ok' ? 'connected' : 'not reached'));
+    box.appendChild(stop('wall', x.proxy, x.proxy_auth ? 'the proxy · with a password' : 'the proxy', toProxy === 'ok' ? 'good' : 'bad'));
+    var through = x.ok ? 'ok' : (toProxy === 'ok' ? 'bad' : 'off');
+    box.appendChild(link(through, through === 'ok' ? 'through the proxy' : (through === 'bad' ? 'stopped here' : '')));
+  } else {
+    var st = x.ok ? 'ok' : 'bad';
+    box.appendChild(link(st, 'straight'));
+  }
+  box.appendChild(stop(x.tls ? 'lock' : 'globe', x.host + ':' + x.port, x.tls ? x.tls.version + ' · ' + (x.tls.issuer || '') : '', x.ok ? 'good' : 'bad'));
+  var top = el('div', 'px-verdict ' + (x.ok ? 'ok' : 'bad'));
+  top.appendChild(el('span', 'dot ' + (x.ok ? 'ok' : 'bad')));
+  var words = x.ok
+    ? (x.mode === 'proxy' ? 'Reached through the proxy' : 'Reached straight') + ' - HTTP ' + x.status + ', ' + x.ms + ' ms'
+    : 'Not reached: ' + ((failAt && failAt.said) || '?');
+  top.appendChild(el('b', '', words));
+  if (x.mode === 'direct' && x.why_direct) top.appendChild(el('span', 'muted small', 'straight because ' + x.why_direct));
+  var wrap = el('div', 'px-result');
+  wrap.appendChild(top);
+  wrap.appendChild(box);
+  return wrap;
+}
+function pxSteps(x) {
+  var ul = el('div', 'px-steps');
+  var plan = x.mode === 'proxy'
+    ? ['the proxy looked up', 'connected to the proxy'].concat(/^https/.test(x.url) ? ['a tunnel through the proxy', 'TLS'] : []).concat(['asked for'])
+    : ['looked up', 'connected to'].concat(/^https/.test(x.url) ? ['TLS'] : []).concat(['asked for']);
+  var done = x.steps || [];
+  done.forEach(function (s) {
+    var r = el('div', 'px-step ' + (s.ok ? 'ok' : 'bad'));
+    r.appendChild(el('span', 'px-n', s.ok ? '✓' : '✗'));
+    var t = el('div', 'px-st');
+    t.appendChild(el('b', '', s.what));
+    if (s.said) t.appendChild(noI18n(el('div', 'muted small mono', s.said)));
+    r.appendChild(t);
+    r.appendChild(el('span', 'px-ms small muted', s.ms + ' ms'));
+    ul.appendChild(r);
+  });
+  for (var i = done.length; i < plan.length; i++) {
+    var r = el('div', 'px-step off');
+    r.appendChild(el('span', 'px-n', '○'));
+    var t = el('div', 'px-st');
+    t.appendChild(el('b', '', 'not tried - the step before stopped it'));
+    r.appendChild(t);
+    ul.appendChild(r);
+  }
+  return ul;
+}
+
 
 /* ======== helpers of the panes above, from OTP admin.js ======== */
 var MODAL_GO = null;
