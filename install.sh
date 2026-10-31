@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.1.2'
+readonly INSTALLER_VERSION='4.1.3'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -90,6 +90,9 @@ ADMIN_PASSWORD=''
 REWRITE_NGINX=''
 FIRST_PASSWORD=''
 NEW_VERSION=''
+PY_FORCE=''
+PY_SYSTEM=''
+UPSMON_PY=''
 PHP_UPDATE=yes
 PHP_STREAM=8.3
 USE_REMI=''
@@ -188,6 +191,11 @@ the dashboard
   --admin-password PASS its password (otherwise one is made and printed)
   --rewrite-nginx       write the nginx file afresh (otherwise one of 4.x is kept)
 
+Python, as OTP: upsmon runs on the newest Python the system offers beside its
+own (3.14, 3.13, 3.12, 3.11 - installed from AppStream when missing):
+  --python PATH         run upsmon on this Python instead (kept for later upgrades)
+  --system-python       run upsmon on the system's own python3 (kept too)
+
 PHP (php2shell, CVE-2026-109618 / CVE-2026-109619 - fixed 21 October 2026), as OTP:
   --php-stream X.Y      the AppStream stream PHP is put on, install and upgrade (default 8.3)
   --remi                PHP 8.4 from Remi's repository instead
@@ -280,6 +288,8 @@ while [[ $# -gt 0 ]]; do
         --admin-user)      ADMIN_USER=$2; shift 2;;
         --admin-password)  ADMIN_PASSWORD=$2; shift 2;;
         --rewrite-nginx)   REWRITE_NGINX=yes; shift;;
+        --python)          PY_FORCE=$2; shift 2;;
+        --system-python)   PY_SYSTEM=yes; shift;;
         --php-stream)      PHP_STREAM=$2; shift 2;;
         --remi)            USE_REMI=yes; shift;;
         --no-php-update)   PHP_UPDATE=''; shift;;
@@ -619,27 +629,34 @@ ensure_php() {
 # ---------------------------------------------------------------------------
 # The pages: the pool, nginx, the certificate
 
-install_colour() {      # colorama: the command line in colour, as isemon's
+install_colour() {      # colorama: the command line in colour, as OTP's - for the Python upsmon runs on
     # Nothing needs it - without it upsmon writes the same escape sequences
     # itself - so it is offered and never insisted on.
-    if python3 -c 'import colorama' 2>/dev/null; then
-        good "python3-colorama is here - the command line is in colour"
+    local py="${UPSMON_PY:-python3}" v
+    v="${py##*/python}"
+    if "$py" -c 'import colorama' 2>/dev/null; then
+        good "colorama is here for $py - the command line is in colour"
         return 0
     fi
     if [[ "$PKG" == "dnf" ]]; then
-        run dnf install -y python3-colorama >/dev/null 2>&1 || true
+        if [[ "$v" =~ ^3\.[0-9]+$ ]]; then
+            run dnf install -y "python$v-colorama" >/dev/null 2>&1 || true
+            "$py" -m pip --version >/dev/null 2>&1 || run dnf install -y "python$v-pip" >/dev/null 2>&1 || true
+        else
+            run dnf install -y python3-colorama >/dev/null 2>&1 || true
+        fi
     elif [[ "$PKG" == "apt" ]]; then
         run apt-get install -y python3-colorama >/dev/null 2>&1 || true
     fi
     # Not in the distribution's own repositories (on RHEL 9 it is EPEL's):
-    # pip, where there is one, for the system Python.
-    if ! python3 -c 'import colorama' 2>/dev/null && python3 -m pip --version >/dev/null 2>&1; then
-        run python3 -m pip install --quiet colorama >/dev/null 2>&1 || true
+    # pip, for that Python.
+    if ! "$py" -c 'import colorama' 2>/dev/null && "$py" -m pip --version >/dev/null 2>&1; then
+        run "$py" -m pip install --quiet colorama >/dev/null 2>&1 || true
     fi
-    if [[ -n "$DRY_RUN" ]] || python3 -c 'import colorama' 2>/dev/null; then
-        good "python3-colorama installed - the command line is in colour"
+    if [[ -n "$DRY_RUN" ]] || "$py" -c 'import colorama' 2>/dev/null; then
+        good "colorama installed for $py - the command line is in colour"
     else
-        note "python3-colorama is not available; colour is written by hand instead,"
+        note "colorama is not available for $py; colour is written by hand instead,"
         note "which works on this terminal and is the only difference."
     fi
 }
@@ -905,7 +922,6 @@ install_packages() {
         dnf install -y "${missing[@]}" >/dev/null || fail "package installation failed"
         good "installed"
     fi
-    install_colour
     install_backup_tools
     install_time_tools
     # PHP for the pages - put on a release fixed against php2shell, checked by
@@ -941,7 +957,61 @@ create_user() {
     fi
 }
 
+py_runs_upsmon() {      # py_runs_upsmon PYTHON -> 0 when it can run upsmon
+    local py="$1"
+    [[ -x "$py" ]] || return 1
+    "$py" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)' 2>/dev/null || return 1
+    "$py" -c 'import ssl, sqlite3, hashlib, json, tarfile, ftplib, curses' 2>/dev/null || return 1
+    "$py" -I "$SOURCE_DIR/upsmon.py" --version >/dev/null 2>&1
+}
+
+# The Python upsmon runs on (as OTP chooses it): the newest the system offers
+# beside its own - on AlmaLinux / RHEL 9 the system's python3 is 3.9, and
+# AppStream has python3.11 and python3.12 (and newer where they come) - put in
+# when missing, and shown to run upsmon before it is taken. The choice is the
+# link $LIB_DIR/python; the service and the command start it. --python PATH and
+# --system-python are kept for the next upgrade, the pages' too.
+runtime_python() {
+    step "Python"
+    local cand=() py v kept="$LIB_DIR/python-choice"
+    if [[ -n "$PY_FORCE" ]]; then
+        [[ -z "$DRY_RUN" ]] && { install -d -m 755 "$LIB_DIR"; printf '%s\n' "$PY_FORCE" > "$kept"; }
+        cand=("$PY_FORCE")
+    elif [[ -n "$PY_SYSTEM" ]]; then
+        [[ -z "$DRY_RUN" ]] && { install -d -m 755 "$LIB_DIR"; printf 'system\n' > "$kept"; }
+        cand=(/usr/bin/python3)
+    else
+        if [[ -f "$kept" && ! -L "$kept" ]]; then
+            local was
+            was="$(head -n1 "$kept" 2>/dev/null || true)"
+            [[ "$was" == "system" ]] && was=/usr/bin/python3
+            [[ "$was" == /* ]] && { cand=("$was"); note "the Python chosen before is kept: $was (--python PATH or --system-python to change it)"; }
+        fi
+        cand+=(/usr/bin/python3.14 /usr/bin/python3.13 /usr/bin/python3.12 /usr/bin/python3.11 /usr/bin/python3)
+    fi
+    UPSMON_PY=""
+    for py in "${cand[@]}"; do
+        v="${py##*/python}"
+        if [[ ! -x "$py" && "$v" =~ ^3\.[0-9]+$ && "$PKG" == "dnf" ]]; then
+            if [[ -n "$DRY_RUN" ]]; then
+                note "[would try] dnf install -y python$v"
+            elif dnf install -y "python$v" >/dev/null 2>&1; then
+                good "python$v installed from AppStream"
+            fi
+        fi
+        [[ -x "$py" ]] || continue
+        if [[ -n "$DRY_RUN" ]] || py_runs_upsmon "$py"; then UPSMON_PY="$py"; break; fi
+        note "$py ($("$py" --version 2>&1)) cannot run upsmon here - the next one is tried"
+    done
+    [[ -n "$UPSMON_PY" ]] || fail "no Python here runs upsmon - install python3.12 (dnf), or say which with --python"
+    run install -d -m 755 "$LIB_DIR"
+    run ln -sfn "$UPSMON_PY" "$LIB_DIR/python"
+    good "upsmon runs on $("$UPSMON_PY" --version 2>&1 || echo "$UPSMON_PY") - $UPSMON_PY"
+}
+
 install_program() {
+    runtime_python
+    install_colour
     step "Installing the program"
     run install -d -m 755 "$LIB_DIR"
     run install -m 755 "$SOURCE_DIR/upsmon.py" "$LIB_DIR/upsmon.py"
@@ -974,9 +1044,10 @@ install_program() {
 
         cat > "$BIN" <<EOF
 #!/bin/sh
-# upsmon - installed by install.sh $INSTALLER_VERSION
-exec /usr/bin/python3 $LIB_DIR/upsmon.py "\$@"
+# upsmon - installed by install.sh $INSTALLER_VERSION, on the Python it chose ($LIB_DIR/python)
+exec $LIB_DIR/python $LIB_DIR/upsmon.py "\$@"
 EOF
+        "$LIB_DIR/python" -m py_compile "$LIB_DIR/upsmon.py" "$LIB_DIR/upsmon_admin.py" 2>/dev/null || true
         chmod 755 "$BIN"
         # The folders the daemon lays its requests to root in, made as the
         # daemon's own account (never through a link root would follow).

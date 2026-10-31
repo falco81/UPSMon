@@ -4,6 +4,18 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.3 - 2026-10-31
+
+- **The newest Python** (as OTP chooses it): every install and upgrade puts
+  upsmon on the newest Python the system offers beside its own - on AlmaLinux
+  / RHEL 9 (whose own python3 is 3.9) python3.14, 3.13, 3.12 or 3.11, the
+  first that AppStream has, installed when missing - and takes it only once
+  it is shown to run upsmon. The choice is the link
+  `/usr/local/lib/upsmon/python`; `upsmon.service` and the `upsmon` command
+  start it. `--python PATH` or `--system-python` choose otherwise, and the
+  choice is kept for later upgrades (the ones from the pages too).
+- colorama installed for that Python (its own package, else pip).
+
 ## 4.1.2 - 2026-10-31
 
 - **PHP on the stream php:8.3, at least 8.3.36** (php2shell): every install and

@@ -6,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/python3 /usr/local/lib/upsmon/upsmon.py
+ExecStart=/usr/local/lib/upsmon/python /usr/local/lib/upsmon/upsmon.py
 Restart=on-failure
 RestartSec=10
 

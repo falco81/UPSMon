@@ -3,7 +3,7 @@
 The short way, on AlmaLinux 9:
 
 ```bash
-tar xzf upsmon-4.1.2.tar.gz && cd upsmon-4.1.2
+tar xzf upsmon-4.1.3.tar.gz && cd upsmon-4.1.3
 sudo ./install.sh --nut-host 192.168.40.253 --server-name ups.example.cz
 ```
 
@@ -16,7 +16,7 @@ the end (and kept in `/var/lib/upsmon/first-login.txt` until it is changed).
 **Upgrading the standalone 3.x** (3.6.7 or any other) - the same package:
 
 ```bash
-tar xzf upsmon-4.1.2.tar.gz && cd upsmon-4.1.2
+tar xzf upsmon-4.1.3.tar.gz && cd upsmon-4.1.3
 sudo ./install.sh --upgrade
 ```
 
@@ -61,6 +61,13 @@ by the CVE in the changelog of php-fpm. Whatever happens the guard goes on:
 `/etc/php.d/99-php2shell.ini`, upsmon's own pool taking no request body apart,
 nginx refusing every multipart body. Settings → System updates keeps it fixed
 afterwards (dnf, on a schedule if you like).
+
+Python: upsmon runs on the newest Python the system offers beside its own -
+on AlmaLinux 9 (python3 is 3.9 there) python3.14, 3.13, 3.12 or 3.11, the first
+AppStream has, installed when missing, and only once it is shown to run
+upsmon. The choice is the link `/usr/local/lib/upsmon/python`, which the
+service and the command start; `--python PATH` or `--system-python` choose
+otherwise and are kept for later upgrades.
 
 Also installed now: chrony (Settings → Time), openssh-clients and
 samba-client (backups to SFTP, SCP and SMB), python3-colorama (the colours of
