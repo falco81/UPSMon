@@ -175,6 +175,14 @@ def tls_checked(t, name):
     if not isinstance(t, dict):
         raise Refused('the TLS of %s is not an object' % name)
     out = {'pem': pem_set(t.get('cert'), t.get('key'), t.get('chain'), t.get('root'))}
+    # A second certificate (4.1.6): the ECDSA one beside the RSA one, as
+    # Let's Encrypt advises - nginx offers it to the clients that take it.
+    alt = t.get('alt')
+    out['alt'] = None
+    if alt and out['pem']:
+        if not isinstance(alt, dict):
+            raise Refused('the second certificate is not an object')
+        out['alt'] = pem_set(alt.get('cert'), alt.get('key'), alt.get('chain'))
     prot = t.get('protocols') or list(PROTOCOLS)
     if not isinstance(prot, list) or not prot or any(p not in PROTOCOLS for p in prot):
         raise Refused('the protocols are TLSv1.2 and/or TLSv1.3')
@@ -280,6 +288,21 @@ def set_directive(block, name, value):
     return '\n'.join(lines)
 
 
+def also_directive(block, after, name, value, last=False):
+    """One more `name value;` line in a server { }, right after the (first,
+    or with last the last) `after` line of the server's own (4.1.6) - nginx
+    takes ssl_certificate and ssl_certificate_key more than once."""
+    lines = block.split('\n')
+    depth, at = 0, []
+    for n, line in enumerate(lines):
+        if depth == 1 and re.match(r'^\s*%s\s' % re.escape(after), line):
+            at.append(n)
+        depth += line.count('{') - line.count('}')
+    pos = (at[-1] if last else at[0]) + 1 if at else 1
+    lines.insert(pos, '    %-25s %s;' % (name, value))
+    return '\n'.join(lines)
+
+
 CIPHERS_DEFAULT = ('ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:'
                    'ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:'
                    'ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305')
@@ -332,6 +355,12 @@ def tls_into(block, t, files, had_dh):
         write_root(files['key'], t['pem']['key'], 0o600)
         block = set_directive(block, 'ssl_certificate', files['cert'])
         block = set_directive(block, 'ssl_certificate_key', files['key'])
+        if t.get('alt'):
+            write_root(files['cert2'], t['alt']['cert'] + t['alt']['chain'], 0o644)
+            write_root(files['key2'], t['alt']['key'], 0o600)
+            block = also_directive(block, 'ssl_certificate_key', 'ssl_certificate', files['cert2'])
+            block = also_directive(block, 'ssl_certificate', 'ssl_certificate_key', files['key2'],
+                                   last=True)
         if t['pem']['root']:
             write_root(files['root'], t['pem']['root'] + t['pem']['chain'], 0o644)
             block = set_directive(block, 'ssl_trusted_certificate', files['root'])
@@ -340,6 +369,8 @@ def tls_into(block, t, files, had_dh):
         subj = openssl(['x509', '-noout', '-subject', '-enddate'], 'the certificate',
                        t['pem']['cert']).strip().replace('\n', ', ')
         said.append('certificate: %s' % subj)
+        if t.get('alt'):
+            said.append('and the second one (ECDSA) beside it')
     block = set_directive(block, 'ssl_protocols', ' '.join(t['protocols']))
     block = set_directive(block, 'ssl_ciphers', t['ciphers'] or CIPHERS_DEFAULT)
     block = set_directive(block, 'ssl_prefer_server_ciphers', 'on' if t['prefer'] else 'off')
@@ -360,10 +391,14 @@ def tls_into(block, t, files, had_dh):
 
 NODE_FILES = {'cert': os.path.join(CERT_DIR, 'upsmon.pem'), 'key': os.path.join(CERT_DIR, 'upsmon.key'),
               'root': os.path.join(CERT_DIR, 'upsmon-ca.pem'),
+              'cert2': os.path.join(CERT_DIR, 'upsmon-ecdsa.pem'),
+              'key2': os.path.join(CERT_DIR, 'upsmon-ecdsa.key'),
               'dh': os.path.join(CERT_DIR, 'upsmon-dh.pem')}
 VIP_FILES = {'cert': os.path.join(CERT_DIR, 'upsmon-vip.pem'),
              'key': os.path.join(CERT_DIR, 'upsmon-vip.key'),
              'root': os.path.join(CERT_DIR, 'upsmon-vip-ca.pem'),
+             'cert2': os.path.join(CERT_DIR, 'upsmon-vip-ecdsa.pem'),
+             'key2': os.path.join(CERT_DIR, 'upsmon-vip-ecdsa.key'),
              'dh': os.path.join(CERT_DIR, 'upsmon-vip-dh.pem')}
 
 

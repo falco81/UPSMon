@@ -3645,7 +3645,7 @@ function certCard(d, target) {
     b.appendChild(bar);
     var facts = [['Issued by', noI18n(el('span', '', info.self_signed ? 'itself (self-signed)' : (info.issuer || '').replace(/^CN=/, '')))],
                  ['Valid until', info.not_after ? stamp(info.not_after) : '–'],
-                 ['Key', info.key || '–']];
+                 ['Key', (info.key || '–') + (prof && prof.alt && prof.alt.info && prof.alt.info.key ? ' + ' + prof.alt.info.key + ' (a second certificate beside it)' : '')]];
     if (info.san && info.san.length) facts.push(['Names', noI18n(el('span', '', info.san.join(', ')))]);
     if (prof) {
       facts.push(['Chain', prof.chain_info ? (prof.chain_info.length + ' between it and the root') : '–']);
@@ -6084,7 +6084,7 @@ function drawAcme() {
       c.querySelector('.pw-head') ? c.querySelector('.pw-head').appendChild(care) : c.appendChild(care);
       nodeBig(c, left !== null ? num(left) : '–', left !== null ? 'days left' : '');
       c.appendChild(netFacts([
-        ['For', t.name || '', true], ['Issued by', t.issuer || '', true],
+        ['For', t.name || '', true], ['Issued by', t.issuer || '', true], ['Keys', t.keys || '', true],
         ['Good until', t.not_after ? new Date(t.not_after * 1000).toLocaleDateString(numLang()) : ''],
         ['Last ordered', st.ordered_at ? ago(st.ordered_at) : 'never'],
         ['Ordered by', t.target === 'vip' ? 'the first node by name' : t.target]
@@ -6159,6 +6159,7 @@ function drawAcme() {
     if (d.account && d.account.kid) {
       var a = el('p', 'muted small', 'The account at the CA: ');
       a.appendChild(noI18n(el('span', 'mono', d.account.kid)));
+      if (d.account.key) a.appendChild(noI18n(el('span', '', ' · ' + d.account.key)));
       host.appendChild(a);
     }
   });

@@ -9690,6 +9690,74 @@
   "c0036": {
    "source": "strong",
    "text": "silné"
+  },
+  "k41601": {
+   "source": "Let’s Encrypt takes RSA keys of 2048, 3072 or 4096 bits and ECDSA keys on P-256 or P-384. Both - what Let’s Encrypt advises - orders two certificates for the name: RSA served by default, the much smaller ECDSA one to the clients that say they take it.",
+   "text": "Let’s Encrypt přijímá klíče RSA o 2048, 3072 nebo 4096 bitech a klíče ECDSA na křivkách P-256 nebo P-384. Oba - jak Let’s Encrypt doporučuje - objedná pro jméno dva certifikáty: RSA se podává standardně, mnohem menší ECDSA klientům, kteří řeknou, že ho umí."
+  },
+  "k41602": {
+   "source": "The key of the ACME account",
+   "text": "Klíč účtu ACME"
+  },
+  "k41603": {
+   "source": "The key the account with the CA signs with - never one of a certificate. RSA 2048, 3072, 4096 or ECDSA P-256, P-384. A change makes a new account at the next order.",
+   "text": "Klíč, kterým se podepisuje účet u CA - nikdy ne klíč certifikátu. RSA 2048, 3072, 4096 nebo ECDSA P-256, P-384. Změna při příští objednávce založí nový účet."
+  },
+  "k41604": {
+   "source": "Both: RSA 2048 + ECDSA P-256 (advised)",
+   "text": "Oba: RSA 2048 + ECDSA P-256 (doporučeno)"
+  },
+  "k41605": {
+   "source": "Both: RSA 4096 + ECDSA P-384",
+   "text": "Oba: RSA 4096 + ECDSA P-384"
+  },
+  "k41606": {
+   "source": "ECDSA P-384",
+   "text": "ECDSA P-384"
+  },
+  "k41607": {
+   "source": "RSA 2048",
+   "text": "RSA 2048"
+  },
+  "k41608": {
+   "source": "RSA 3072",
+   "text": "RSA 3072"
+  },
+  "k41609": {
+   "source": "RSA 4096",
+   "text": "RSA 4096"
+  },
+  "k41610": {
+   "source": "ECDSA P-256 (ES256)",
+   "text": "ECDSA P-256 (ES256)"
+  },
+  "k41611": {
+   "source": "ECDSA P-384 (ES384)",
+   "text": "ECDSA P-384 (ES384)"
+  },
+  "k41612": {
+   "source": "RSA 2048 (RS256)",
+   "text": "RSA 2048 (RS256)"
+  },
+  "k41613": {
+   "source": "RSA 3072 (RS256)",
+   "text": "RSA 3072 (RS256)"
+  },
+  "k41614": {
+   "source": "RSA 4096 (RS256)",
+   "text": "RSA 4096 (RS256)"
+  },
+  "k41615": {
+   "source": "Keys",
+   "text": "Klíče"
+  },
+  "k41616": {
+   "source": "(a second certificate beside it)",
+   "text": "(druhý certifikát vedle něj)"
+  },
+  "k41617": {
+   "source": "and the second one (ECDSA) beside it",
+   "text": "a druhý (ECDSA) vedle něj"
   }
  },
  "patterns": {
@@ -12260,6 +12328,22 @@
   "cp0002": {
    "source": "{0} - with the private key; keep it, and its password, safe",
    "text": "{0} – se soukromým klíčem; uložte ho i s heslem bezpečně"
+  },
+  "kp41618": {
+   "source": "the key: {0}",
+   "text": "klíč: {0}"
+  },
+  "kp41619": {
+   "source": "the keys: {0}",
+   "text": "klíče: {0}"
+  },
+  "kp41620": {
+   "source": "a second certificate, with a {0} key",
+   "text": "druhý certifikát, s klíčem {0}"
+  },
+  "kp41621": {
+   "source": "{0} + {1} (a second certificate beside it)",
+   "text": "{0} + {1} (druhý certifikát vedle něj)"
   }
  },
  "rich": {

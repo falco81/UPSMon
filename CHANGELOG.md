@@ -4,6 +4,25 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.6 - 2026-10-31
+
+Automatic certificates (ACME) take every key Let's Encrypt accepts
+(https://letsencrypt.org/docs/integration-guide/):
+
+- **The certificate's key:** RSA 2048, 3072, 4096 or ECDSA P-256, P-384 - and,
+  the new default, **both**: two certificates for the name, RSA served by
+  default and the much smaller ECDSA one to the clients that take it
+  ("Both: RSA 2048 + ECDSA P-256", or "Both: RSA 4096 + ECDSA P-384").
+  The second order only signs: the name is already proven. nginx gets two
+  `ssl_certificate` / `ssl_certificate_key` pairs (`upsmon.pem` and
+  `upsmon-ecdsa.pem`); a certificate put in another way on Certificates and
+  TLS drops the ECDSA one.
+- **The account's key** (new setting): ECDSA P-256 (ES256), P-384 (ES384) or
+  RSA 2048, 3072, 4096 (RS256) - never a certificate's key. A change makes a
+  new account at the next order.
+- The keys show on the ACME card (Keys), on the certificate (Key) and beside
+  the account; the order's steps say which keys were made.
+
 ## 4.1.5 - 2026-10-31
 
 - Backups to an SMB share work: the service may now open netlink sockets (`AF_NETLINK` in `upsmon.service`), which smbclient needs to read the machine's network interfaces. Before, it stopped with "Could not determine network interfaces, you must use a interfaces config line".
