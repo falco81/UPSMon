@@ -6354,31 +6354,31 @@ function acmeDnsGuide(d) {
     var c = checked && checked[i] && checked[i].record === r.record ? checked[i] : {};
     return Object.assign({}, r, {ok: c.ok, said: c.said});
   });
-  var t = listTable(['Certificate', 'DNS record', '', 'Type', 'Points at / value', '', 'In DNS now'], rows, function (r) {
+  var t = listTable(['Certificate', 'DNS record', 'Type', 'Points at / value', 'In DNS now'], rows, function (r) {
     var tr = el('tr');
     tr.appendChild(r.target === 'vip' ? el('td', '', 'the VIP address') : (r.type === 'NS' ? el('td', '', 'its zone at deSEC') : noI18n(el('td', '', r.target))));
     var rec = el('td', 'mono small dns-txt');
-    var recb = el('td', 'dns-copy');
     if (r.record) {
-      rec.appendChild(noI18n(el('span', '', r.record)));
+      var rb = el('span', 'dns-val');
+      rb.appendChild(noI18n(el('span', '', r.record)));
       var cp = iconButton('copy', 'Copy');
       cp.onclick = function () { copyText(r.record, cp); };
-      recb.appendChild(cp);
+      rb.appendChild(cp);
+      rec.appendChild(rb);
     } else rec.appendChild(el('span', 'muted', r.why || ''));
     tr.appendChild(rec);
-    tr.appendChild(recb);
     tr.appendChild(noI18n(el('td', 'mono small', r.type || '')));
     var val = el('td', 'mono small dns-txt');
-    var valb = el('td', 'dns-copy');
     if (r.type === 'CNAME' || r.type === 'NS' || (r.type === 'A' && r.value)) {
-      val.appendChild(noI18n(el('span', '', r.value)));
+      var vb = el('span', 'dns-val');
+      vb.appendChild(noI18n(el('span', '', r.value)));
       var cv = iconButton('copy', 'Copy');
       cv.onclick = function () { copyText(r.value, cv); };
-      valb.appendChild(cv);
+      vb.appendChild(cv);
+      val.appendChild(vb);
       if (r.type === 'A') val.appendChild(el('div', 'muted', 'or the public address in front of it'));
     } else val.appendChild(el('span', 'muted', r.type === 'TXT' ? (r.value || r.why) : ''));
     tr.appendChild(val);
-    tr.appendChild(valb);
     var st = el('td', 'small');
     if (r.check) {
       if (r.ok === undefined) st.appendChild(el('span', 'muted', 'not checked yet'));

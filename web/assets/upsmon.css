@@ -3372,10 +3372,13 @@ a:hover{color:#79c0ff}
 .pem-says{font-size:12px;margin-left:4px}
 .pem-says.good{color:var(--good,#3fb950)}.pem-says.bad{color:var(--bad,#f85149)}.pem-says.dim{color:var(--tx-dim)}
 
-/* ---- upsmon 4.1.9: In your DNS - the text as wide as its longest, the copy button right after it ---- */
-.acme-dns table{width:100%}
-.acme-dns td.dns-txt{width:1%;white-space:nowrap;padding-right:6px}
+/* ---- upsmon 4.1.10: In your DNS - columns as wide as their content with room
+   between them; the copy button right after its text ---- */
+.acme-dns table{width:auto;max-width:100%;border-collapse:collapse}
+.acme-dns th,.acme-dns td{padding:9px 36px 9px 0;text-align:left;white-space:nowrap}
+.acme-dns th:last-child,.acme-dns td:last-child{padding-right:0}
 .acme-dns td.dns-txt > div{white-space:normal}
-.acme-dns td.dns-copy{width:1%;padding-left:0;padding-right:22px}
-.acme-dns td.dns-copy button{display:block}
-.acme-dns th:empty{padding:0}
+.acme-dns .dns-val{display:inline-flex;align-items:center;gap:6px;flex-wrap:nowrap}
+.acme-dns .dns-val > button{flex:none}
+@media (max-width:900px){.acme-dns th,.acme-dns td{white-space:normal;padding-right:18px}
+  .acme-dns .dns-val{flex-wrap:wrap}.acme-dns .dns-val > span{overflow-wrap:anywhere}}

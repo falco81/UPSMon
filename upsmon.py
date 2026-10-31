@@ -34,7 +34,7 @@ this file; the daemon starts it in threads of its own.
 """
 
 # Bumped with every change; upsmon_admin.py carries the same number.
-__version__ = '4.1.9'
+__version__ = '4.1.10'
 
 import argparse
 import getpass
