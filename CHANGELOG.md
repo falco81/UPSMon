@@ -4,6 +4,56 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.0 - 2026-10-31
+
+More of OTP's Settings, the same pages and the same functions, for upsmon:
+
+- **Time** - the clock as chrony keeps it: how far off, its sources, stratum,
+  the time servers set from here (or `/etc/chrony.conf` left as it is), the
+  time zone, a step to the right time now. `install.sh` installs and starts
+  chrony, as OTP's does.
+- **The database** - both SQLite files (`history.db`, `upsmon.db`): how big,
+  every table counted, the disk under them and how fast they grow; a copy of
+  both a day (`backup_daily`, `backup_at`, `backup_keep`), a copy now,
+  download one (with the key, locked with a passphrase, or without), put one
+  back (shown first; a copy of what it replaces made first; the service
+  restarts on it), read them through, give the disk back, forget old
+  records, erase what was collected (the history of the UPS, its events,
+  power failures, tests, the plug, the sensors, the events of the pages).
+- **Backups** - everything (both databases, the key, config.json, RESTORE.md)
+  to a folder, FTP, FTPS, SFTP, SCP or SMB, locked with a password
+  (AES-256), on a schedule, the oldest taken away, tried (opened, every file
+  checked, both databases read through), and put back.
+- **System updates** - dnf looks every day, the updates put in from here or
+  on a schedule (all, or security only), a restart offered or made when one
+  is needed.
+- **Restart and power off** - this server, now or on a schedule.
+- **Certificates and TLS → Download** - a window to choose the format: PEM
+  with the chain, the certificate alone (PEM or DER), PFX / PKCS#12 (AES-256,
+  or 3DES for older Windows and Java), PEM with the private key or the key
+  alone - with a password, typed unseen. Every export with the key goes into
+  Events. On the command line: `upsmon --cert-export pfx --out FILE`.
+- **PHP and php2shell** (CVE-2026-109618, CVE-2026-109619): `install.sh`
+  does what OTP's does - PHP put on the AppStream stream 8.3 where there is
+  none, an installed one brought up to the newest build, checked by its
+  version and by its changelog (a backport keeps the old number), Remi's 8.4
+  offered (`--remi`) where AppStream has no fixed build, and the guard always
+  (`99-php2shell.ini`, a pool that takes no body apart, nginx refusing
+  multipart). `--php-stream X.Y`, `--no-php-update`.
+- Secrets saved on the pages (the password of the backups, of the proxy, the
+  DNS keys) show as dots and their last two characters; typed, dots only.
+- **The command line in OTP's colours** - `--help` in two columns, in colour
+  (colorama, installed where it can be), every line of output coloured as
+  OTP colours it; new: `--backup`, `--copies`, `--restore`,
+  `--restore-bundle`, `--rbackup-now`, `--rbackup-status`, `--db-check`,
+  `--time [sync]`, `--updates status|check|start|cancel`, `--restart-server`,
+  `--poweroff-server`, `--restarts`, `--lockouts`, `--lockouts-clear`,
+  `--cert-export`.
+- **The console** - new menus: *The database and backups* and
+  *Certificates, updates, restarts, the time*.
+- `upsmon.service`: `ProtectSystem=full` (was strict), so a backup can go to
+  a folder mounted anywhere; more room for keys and copies.
+
 ## 4.0.0 - 2026-10-31
 
 The standalone upsmon rebuilt on the engine and the pages of OTP (1.0.187).

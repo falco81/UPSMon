@@ -34,7 +34,7 @@ this file; the daemon starts it in threads of its own.
 """
 
 # Bumped with every change; upsmon_admin.py carries the same number.
-__version__ = '4.0.0'
+__version__ = '4.1.0'
 
 import argparse
 import getpass
@@ -5801,8 +5801,10 @@ def shelly_cmd_radio(args, pal):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(
-        prog='upsmon',
+    # The help as OTP draws it (4.1): two columns, in colour, its own examples.
+    kind = upsmon_admin.HelpfulParser if upsmon_admin is not None else argparse.ArgumentParser
+    parser = kind(
+        prog='upsmon', allow_abbrev=False,
         description='UPS monitoring daemon and command line tool (upsmon %s).'
                     % __version__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -5855,14 +5857,15 @@ configuration:
 Configuration lives in /etc/upsmon/config.json; every key can also be given as
 an environment variable with a UPSMON_ prefix (UPSMON_NUT_HOST=10.0.0.5).
 """)
-    parser.add_argument('--config', metavar='FILE',
-                        help='configuration file (default %s)' % CONFIG_FILE)
-    parser.add_argument('--host', metavar='HOST',
-                        help='NAS or NUT server address, overriding the config')
-    parser.add_argument('--port', type=int, help='upsd port (default 3493)')
-    parser.add_argument('--ups', metavar='NAME', help='which UPS to use')
+    where = parser.add_argument_group('THE UPS: WHERE IT IS')
+    where.add_argument('--config', metavar='FILE',
+                       help='configuration file (default %s)' % CONFIG_FILE)
+    where.add_argument('--host', metavar='HOST',
+                       help='NAS or NUT server address, overriding the config')
+    where.add_argument('--port', type=int, help='upsd port (default 3493)')
+    where.add_argument('--ups', metavar='NAME', help='which UPS to use')
 
-    actions = parser.add_argument_group('actions')
+    actions = parser.add_argument_group('THE UPS, THE PLUG AND THE SENSORS')
     actions.add_argument('--status', action='store_true',
                          help='print a full report and exit')
     actions.add_argument('--oneshot', action='store_true',
@@ -5902,14 +5905,14 @@ an environment variable with a UPSMON_ prefix (UPSMON_NUT_HOST=10.0.0.5).
                               'all (the default), history, events or outages. '
                               'Asks for confirmation unless --yes is given')
 
-    output = parser.add_argument_group('output')
+    output = parser.add_argument_group('EVERYWHERE')
     output.add_argument('--yes', action='store_true',
                         help='answer yes to confirmations, for scripts')
     output.add_argument('--json', action='store_true', help='machine-readable output')
     output.add_argument('--points', type=int, default=200,
-                        help='maximum rows for --history (default 200)')
+                        help='maximum rows for --history')
     output.add_argument('--limit', type=int, default=50,
-                        help='how many events to show (default 50)')
+                        help='how many events to show')
     output.add_argument('--log-file', metavar='FILE',
                         help='write the log here instead of the configured path; '
                              'an empty string disables the file')
@@ -5919,6 +5922,7 @@ an environment variable with a UPSMON_ prefix (UPSMON_NUT_HOST=10.0.0.5).
                         version='upsmon ' + __version__)
     if upsmon_admin is not None:
         upsmon_admin.add_cli_arguments(parser)
+    parser._optionals.title = 'HELP'
     return parser
 
 
@@ -5957,6 +5961,9 @@ def main(argv=None):
                             if a != '--config' and not a.endswith('config.json')], pal)
 
     parser = build_parser()
+    if upsmon_admin is not None:
+        # Every line in OTP's colours (4.1); never the daemon's, the console's or JSON.
+        parser.palette = upsmon_admin.colour_cli(arguments)
     args = parser.parse_args(arguments)
 
     if args.config:
@@ -6019,6 +6026,12 @@ def main(argv=None):
             log('refusing to start on defaults - that would monitor the wrong '
                 'host and hide the real problem', level='error')
             return 2
+        # A copy put back on the pages (4.1) goes into place before a database opens.
+        if upsmon_admin is not None:
+            try:
+                upsmon_admin.apply_pending_restore(log)
+            except Exception as e:
+                log('the copy laid down to be put back could not be: %s' % e, level='error')
         try:
             Daemon().run()
         except StorageError as e:

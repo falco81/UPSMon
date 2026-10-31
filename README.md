@@ -48,6 +48,11 @@ https://ups.example.cz/settings/   Settings - an account of Settings needed
 | **Certificates and TLS** | upload (PEM, PFX), a request (CSR) made here, self-signed; protocols, ciphers, DH, HSTS - put in nginx by root |
 | **Automatic certificates** | ACME (Let's Encrypt or another CA), HTTP-01 or DNS-01, renewed by themselves |
 | **Upgrades** | a signed package from the pages, or the newest from `release/` of this repository, with one click |
+| **Time** | chrony: how far off the clock is, its sources, the time servers, the time zone |
+| **Restart and power off** | this server, now or on a schedule |
+| **The database** | both SQLite files, copies (daily, now, download, put back), check, give the disk back, erase |
+| **Backups** | everything to a folder, FTP, FTPS, SFTP, SCP or SMB, locked, on a schedule, tried, put back |
+| **System updates** | dnf: look, put in (all or security), restart when needed, on a schedule |
 | **About** | the version, what it runs on, the language (CS / EN), debugging, the console at login |
 | **Events** | every sign-in and every change |
 
@@ -330,4 +335,4 @@ The PHP is checked structurally rather than executed; no interpreter was
 available in the build environment. Run `php -l` on both files after copying
 them across, and see `test/README.md` for the checks used during development.
 
-Current version: **4.0.0**
+Current version: **4.1.0**

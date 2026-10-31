@@ -578,12 +578,659 @@ def console_part():
 
 
 
-def serve():
+def _read_or(path, most=65536):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'rb') as f:
+            return f.read(most).decode('utf-8', 'replace')
+    except OSError:
+        return None
+
+
+def _put_file(path, text, mode=0o644):
+    """Written whole, beside and renamed in; never through a link."""
+    folder = os.path.dirname(path)
+    if os.path.islink(path) or os.path.islink(folder):
+        raise Refused('%s is a link - put the file itself there' % path)
+    os.makedirs(folder, mode=0o755, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix='.upsmon-')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    if shutil.which('restorecon'):
+        subprocess.run(['restorecon', path], capture_output=True)
+
+
+def _drop(path):
+    try:
+        if not os.path.islink(path):
+            os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+
+
+# ---- restart and power off (upsmon 1.0.119), asked in net.ask -------------------------
+NET_ASK = 'net.ask'
+NET_FILE = 'net.json'
+POWER_CMD = os.environ.get('UPSMON_POWER_CMD', '')        # tests: a file to write instead
+
+
+def power_after(what, secs):
+    """A reboot or a power-off a few seconds from now - after this helper
+    has written its answer and the page has had it."""
+    secs = max(3, int(secs or 5))
+    if POWER_CMD:
+        with open(POWER_CMD, 'a') as f:
+            f.write('%s %d %s\n' % (what, secs, time.time()))
+        return '%s in %d s (written to %s)' % (what, secs, POWER_CMD)
+    if NO_SERVICES:
+        return '%s in %d s (not here: tests)' % (what, secs)
+    run(['systemd-run', '--on-active=%ds' % secs, '--unit',
+         'upsmon-%s-%d' % (what, int(time.time())), '/usr/bin/systemctl', what],
+        'systemd-run %s' % what)
+    return '%s in %d s' % (what, secs)
+
+
+
+def net_part():
+    """net.ask: on upsmon only the restart and the power-off of this server."""
     d = web_fd()
     try:
-        console_part()
+        raw = read_req(NET_ASK, 65536)
+    except FileNotFoundError:
+        return
+    except (Refused, OSError):
+        drop_ask(NET_ASK, d)
+        return
+    drop_ask(NET_ASK, d)
+    out = {'at': time.time(), 'ok': False, 'id': ''}
+    try:
+        r = json.loads(raw.decode('utf-8'))
+        if not isinstance(r, dict):
+            raise Refused('the request is not an object')
+        out['id'] = re.sub(r'[^A-Za-z0-9]', '', str(r.get('id') or ''))[:40]
+        if r.get('do') != 'power':
+            raise Refused('power: reboot or poweroff')
+        how = r.get('how')
+        if how not in ('reboot', 'poweroff'):
+            raise Refused('reboot or poweroff')
+        try:
+            secs = int(r.get('in') or 5)
+        except (TypeError, ValueError):
+            secs = 5
+        out['data'] = {'said': [power_after(how, secs)]}
+        out['ok'] = True
+    except Refused as e:
+        out['said'] = str(e)[:400]
     except Exception as e:                              # noqa: BLE001
-        print('upsmon_web.py: the console at login: %s' % e, file=sys.stderr)
+        out['said'] = 'it went wrong: %s' % str(e)[:300]
+    write_here(NET_FILE, json.dumps(out))
+
+
+# ---- the time: chrony (1.0.120) ---------------------------------------------------
+# Asked in ntp.ask: how the clock is (read), chrony's servers set (apply), a
+# step to the right time now (sync). /etc/chrony.conf keeps everything of its
+# own; when upsmon sets the servers, the file's own server/pool/makestep/allow
+# lines are commented out (#upsmon#) and upsmon's block is added between marks -
+# put back as they were when upsmon stops setting them.
+NTP_ASK = 'ntp.ask'
+NTP_FILE = 'ntp.json'
+CHRONYC = os.environ.get('UPSMON_CHRONYC', 'chronyc')
+TIMEDATECTL = os.environ.get('UPSMON_TIMEDATECTL', 'timedatectl')
+# Debian and Ubuntu read /etc/chrony/chrony.conf (1.0.146): the other was
+# written there and never read, and "applied" said so.
+CHRONY_CONF = os.environ.get('UPSMON_CHRONY_CONF') or next(
+    (p for p in ('/etc/chrony.conf', '/etc/chrony/chrony.conf') if os.path.isfile(p)),
+    '/etc/chrony.conf')
+NTP_BEGIN = '# ---- upsmon: the time servers, set on its pages (Settings - Time) ----'
+NTP_END = '# ---- upsmon: end ----'
+NTP_KEYS = ('server', 'pool', 'peer', 'makestep', 'allow', 'minsources', 'maxdistance', 'sourcedir')
+TZ_RE = re.compile(r'^[A-Za-z0-9_+-]{1,40}(/[A-Za-z0-9_+-]{1,40}){0,3}\Z')
+
+
+def ntp_read():
+    out = {'chrony': bool(shutil.which(CHRONYC)), 'tracking': {}, 'sources': [], 'stats': {}}
+    try:
+        t = run([TIMEDATECTL, 'show'], 'timedatectl', ok=(0, 1))
+        for line in t.splitlines():
+            if '=' in line:
+                k, v = line.split('=', 1)
+                if k in ('Timezone', 'NTP', 'NTPSynchronized', 'LocalRTC', 'CanNTP'):
+                    out[k.lower()] = v
+    except (Refused, OSError):
+        pass
+    out['time'] = time.time()
+    if not out['chrony']:
+        return out
+    try:
+        f = run([CHRONYC, '-c', 'tracking'], 'chronyc tracking').strip().split(',')
+        if len(f) >= 14:
+            out['tracking'] = {'ref_id': f[0], 'ref': f[1], 'stratum': int(f[2] or 0),
+                               'ref_time': float(f[3] or 0), 'offset': float(f[4] or 0),
+                               'last_offset': float(f[5] or 0), 'rms': float(f[6] or 0),
+                               'freq': float(f[7] or 0), 'skew': float(f[9] or 0),
+                               'root_delay': float(f[10] or 0), 'root_disp': float(f[11] or 0),
+                               'interval': float(f[12] or 0), 'leap': f[13]}
+    except (Refused, ValueError, OSError) as e:
+        out['said'] = str(e)[:200]
+    try:
+        for line in run([CHRONYC, '-c', 'sources'], 'chronyc sources').splitlines():
+            f = line.split(',')
+            if len(f) < 10:
+                continue
+            try:
+                out['sources'].append({'mode': f[0], 'state': f[1], 'name': f[2][:120],
+                                       'stratum': int(f[3] or 0), 'poll': int(f[4] or 0),
+                                       'reach': int(f[5] or 0, 8) if f[5] else 0,
+                                       'last_rx': int(f[6]) if f[6].lstrip('-').isdigit() else None,
+                                       'offset': float(f[7] or 0), 'measured': float(f[8] or 0),
+                                       'error': float(f[9] or 0)})
+            except ValueError:
+                continue
+    except (Refused, OSError):
+        pass
+    try:
+        with open(CHRONY_CONF) as f:
+            text = f.read()
+        out['managed'] = NTP_BEGIN in text
+        out['own'] = [l.strip() for l in text.splitlines()
+                      if l.strip().split(' ')[0] in ('server', 'pool', 'peer')][:20]
+    except OSError:
+        out['managed'] = False
+    return out
+
+
+def ntp_checked(r):
+    out = {'manage': bool(r.get('manage')), 'servers': [], 'allow': [],
+           'makestep': [1.0, 3], 'minsources': 1, 'timezone': '', 'peers': []}
+    for x in (r.get('servers') or [])[:12]:
+        if not isinstance(x, dict):
+            raise Refused('a server is an object')
+        host = str(x.get('host') or '').strip().lower().rstrip('.')
+        try:
+            host = str(plain(host, 'address'))
+        except ValueError:
+            if not NAME_RE.match(host):
+                raise Refused('%r is not a host name or an address' % host[:80])
+        out['servers'].append({'host': host, 'pool': bool(x.get('pool')),
+                               'iburst': bool(x.get('iburst', True)),
+                               'prefer': bool(x.get('prefer')), 'nts': bool(x.get('nts'))})
+    for p in (r.get('peers') or [])[:2]:
+        try:
+            out['peers'].append(str(plain(p, 'address')))
+        except ValueError:
+            raise Refused('%r is not the other node\'s address' % str(p)[:60])
+    for a in (r.get('allow') or [])[:20]:
+        try:
+            out['allow'].append(str(plain(a, 'network')))
+        except ValueError:
+            raise Refused('%r is not a network (192.0.2.0/24)' % str(a)[:60])
+    try:
+        th = float((r.get('makestep') or [1.0, 3])[0])
+        lim = int((r.get('makestep') or [1.0, 3])[1])
+    except (TypeError, ValueError, IndexError):
+        raise Refused('makestep is a threshold in seconds and a number of updates')
+    if not (0.001 <= th <= 3600) or not (-1 <= lim <= 1000):
+        raise Refused('makestep: 0.001 - 3600 s, and -1 (always) to 1000 updates')
+    out['makestep'] = [th, lim]
+    try:
+        out['minsources'] = max(1, min(10, int(r.get('minsources') or 1)))
+    except (TypeError, ValueError):
+        out['minsources'] = 1
+    tz = str(r.get('timezone') or '').strip()
+    if tz and not TZ_RE.match(tz):
+        raise Refused('%r is not a time zone' % tz[:60])
+    out['timezone'] = tz
+    if out['manage'] and not out['servers'] and not out['peers']:
+        raise Refused('at least one time server')
+    return out
+
+
+def ntp_conf_text(text, n):
+    """chrony.conf with upsmon's block (or without it, put back as it was)."""
+    lines = text.splitlines()
+    out, inside = [], False
+    for l in lines:
+        if l.strip() == NTP_BEGIN:
+            inside = True
+            continue
+        if l.strip() == NTP_END:
+            inside = False
+            continue
+        if inside:
+            continue
+        if l.startswith('#upsmon# '):
+            l = l[6:]                       # the file's own line, put back first
+        out.append(l)
+    if not n['manage']:
+        return '\n'.join(out).rstrip('\n') + '\n'
+    kept = []
+    for l in out:
+        if l.strip().split(' ')[0] in NTP_KEYS:
+            kept.append('#upsmon# ' + l)
+        else:
+            kept.append(l)
+    block = [NTP_BEGIN]
+    for x in n['servers']:
+        opts = [o for o, on in (('iburst', x['iburst']), ('prefer', x['prefer']),
+                                ('nts', x['nts'])) if on]
+        block.append('%s %s %s' % ('pool' if x['pool'] else 'server', x['host'], ' '.join(opts)))
+    for p in n['peers']:
+        # The other node of the cluster: one more source, and allowed to ask.
+        block.append('server %s iburst' % p)
+        block.append('allow %s' % p)
+    for a in n['allow']:
+        block.append('allow %s' % a)
+    block.append('makestep %s %d' % (('%g' % n['makestep'][0]), n['makestep'][1]))
+    if n['minsources'] > 1:
+        block.append('minsources %d' % n['minsources'])
+    block.append(NTP_END)
+    return '\n'.join([l.rstrip() for l in kept]).rstrip('\n') + '\n\n' + '\n'.join(block) + '\n'
+
+
+def ntp_apply(n):
+    said = []
+    if not shutil.which(CHRONYC) and not NO_SERVICES:
+        if shutil.which('dnf'):
+            run(['dnf', '-y', 'install', 'chrony'], 'dnf install chrony')
+            said.append('chrony installed')
+        else:
+            raise Refused('chrony is not on this machine')
+    try:
+        with open(CHRONY_CONF) as f:
+            had = f.read()
+    except FileNotFoundError:
+        had = 'driftfile /var/lib/chrony/drift\nrtcsync\nlogdir /var/log/chrony\n'
+    new = ntp_conf_text(had, n)
+    if new != had:
+        if NTP_BEGIN not in had:
+            try:
+                write_root(CHRONY_CONF + '.upsmon-before', had, 0o644)
+            except OSError:
+                pass
+        write_root(CHRONY_CONF, new, 0o644)
+        said.append('%s: %s' % (CHRONY_CONF, ', '.join(x['host'] for x in n['servers'])
+                                if n['manage'] else 'its own servers again'))
+        if not NO_SERVICES and not os.environ.get('UPSMON_NTP_NO_SERVICE'):
+            run(['systemctl', 'enable', '--now', 'chronyd'], 'systemctl enable chronyd')
+            run(['systemctl', 'restart', 'chronyd'], 'systemctl restart chronyd')
+            said.append('chronyd restarted')
+    if n['timezone']:
+        try:
+            cur = run([TIMEDATECTL, 'show', '-p', 'Timezone', '--value'], 'timedatectl').strip()
+        except Refused:
+            cur = ''
+        if cur != n['timezone']:
+            run([TIMEDATECTL, 'set-timezone', n['timezone']], 'timedatectl set-timezone')
+            said.append('time zone: %s' % n['timezone'])
+    if not NO_SERVICES and shutil.which(TIMEDATECTL) and not os.environ.get('UPSMON_NTP_NO_SERVICE'):
+        run([TIMEDATECTL, 'set-ntp', 'true'], 'timedatectl set-ntp', ok=(0, 1))
+    return {'said': said}
+
+
+def ntp_part():
+    d = web_fd()
+    try:
+        raw = read_req(NTP_ASK, 65536)
+    except FileNotFoundError:
+        return
+    except (Refused, OSError):
+        drop_ask(NTP_ASK, d)
+        return
+    drop_ask(NTP_ASK, d)
+    out = {'at': time.time(), 'ok': False, 'id': ''}
+    try:
+        r = json.loads(raw.decode('utf-8'))
+        if not isinstance(r, dict):
+            raise Refused('the request is not an object')
+        out['id'] = re.sub(r'[^A-Za-z0-9]', '', str(r.get('id') or ''))[:40]
+        what = r.get('do')
+        if what == 'read':
+            out['data'] = ntp_read()
+            if r.get('zones'):
+                try:
+                    out['data']['zones'] = run([TIMEDATECTL, 'list-timezones'],
+                                               'timedatectl').split()[:700]
+                except Refused:
+                    pass
+        elif what == 'apply':
+            out['data'] = ntp_apply(ntp_checked(r))
+        elif what == 'sync':
+            said = run([CHRONYC, 'makestep'], 'chronyc makestep').strip()
+            run([CHRONYC, 'burst', '4/4'], 'chronyc burst', ok=(0, 1))
+            out['data'] = {'said': [said or 'stepped']}
+        else:
+            raise Refused('read, apply or sync')
+        out['ok'] = True
+    except Refused as e:
+        out['said'] = str(e)[:400]
+    except Exception as e:                              # noqa: BLE001
+        out['said'] = 'it went wrong: %s' % str(e)[:300]
+    write_here(NTP_FILE, json.dumps(out))
+
+
+# ---- updates of the operating system (1.0.158) ------------------------------------------
+# Asked with osup.ask, answered at once; the work itself - minutes of dnf or
+# apt - runs as a unit of its own (systemd-run), so this oneshot service ends
+# and the other asks are served meanwhile. Its progress and its last lines go
+# into osup.json, every second or so.
+OSUP_ASK = 'osup.ask'
+OSUP_ANS = 'osup.ans'
+OSUP_FILE = 'osup.json'
+OSUP_LOCK = os.environ.get('UPSMON_OSUP_LOCK', '/run/upsmon-osup.lock')
+OSUP_PM = os.environ.get('UPSMON_OSUP_PM', '')          # tests: a fake package manager
+# The proxy dnf and apt go through (1.0.166): handed over in osup.ask, kept
+# here for the job, readable by root only, never on a command line.
+OSUP_PROXY = os.environ.get('UPSMON_OSUP_PROXY', '/run/upsmon-osup-proxy.json')
+
+
+def osup_proxy_keep(r):
+    url = str(r.get('proxy') or '').strip()
+    if url and not re.match(r'^https?://[^\s]+\Z', url):
+        raise Refused('the proxy is not an http:// address')
+    no = ','.join(w for w in re.split(r'[\s,;]+', re.sub(r'[^A-Za-z0-9.*:/\[\],;\s_-]', '',
+                                                          str(r.get('proxy_no') or ''))) if w)
+    if not url:
+        _drop(OSUP_PROXY)
+        return
+    fd = os.open(OSUP_PROXY + '.new', os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                 0o600)
+    with os.fdopen(fd, 'w') as f:
+        os.fchmod(f.fileno(), 0o600)
+        f.write(json.dumps({'url': url, 'no': no}))
+    os.replace(OSUP_PROXY + '.new', OSUP_PROXY)
+
+
+def osup_proxy_env(env):
+    try:
+        got = json.loads(_read_or(OSUP_PROXY) or '{}')
+    except ValueError:
+        got = {}
+    if got.get('url'):
+        for k in ('http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY'):
+            env[k] = got['url']
+        if got.get('no'):
+            env['no_proxy'] = env['NO_PROXY'] = got['no']
+    return env
+
+
+def osup_pm():
+    if OSUP_PM:
+        return 'fake'
+    if shutil.which('dnf'):
+        return 'dnf'
+    if shutil.which('apt-get'):
+        return 'apt'
+    return ''
+
+
+def osup_running():
+    import fcntl
+    try:
+        fd = os.open(OSUP_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
+def osup_launch(ident, kind, security=False):
+    if osup_running():
+        raise Refused('an update or a look for updates is going on already')
+    if not osup_pm():
+        raise Refused('neither dnf nor apt-get is on this machine')
+    me = os.path.abspath(__file__)
+    argv = [sys.executable, '-I', me, '--os-job', ident, kind] + (['security'] if security else [])
+    if (shutil.which('systemd-run') and not NO_SERVICES and os.path.isdir('/run/systemd/system')):
+        got = subprocess.run(['systemd-run', '--unit', 'upsmon-os-%s-%s' % (kind, ident[:12]),
+                              '--collect', '--quiet', '--property', 'TimeoutStopSec=30min'] + argv,
+                             capture_output=True, text=True, timeout=30)
+        if got.returncode != 0:
+            raise Refused('systemd-run: %s' % (got.stderr or got.stdout).strip()[-200:])
+        return
+    subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True, close_fds=True)
+
+
+def osup_part():
+    d = web_fd()
+    try:
+        raw = read_req(OSUP_ASK, 4096)
+    except FileNotFoundError:
+        return
+    except (Refused, OSError):
+        drop_ask(OSUP_ASK, d)
+        return
+    drop_ask(OSUP_ASK, d)
+    out = {'at': time.time(), 'ok': False, 'id': ''}
+    try:
+        r = json.loads(raw.decode('utf-8'))
+        if not isinstance(r, dict):
+            raise Refused('the request is not an object')
+        out['id'] = re.sub(r'[^A-Za-z0-9]', '', str(r.get('id') or ''))[:40]
+        kind = r.get('kind')
+        if r.get('do') != 'run' or kind not in ('check', 'upgrade'):
+            raise Refused('run: check or upgrade')
+        osup_proxy_keep(r)
+        osup_launch(out['id'], kind, bool(r.get('security')) and kind == 'upgrade')
+        out['ok'] = True
+        out['data'] = {'started': kind, 'pm': osup_pm(), 'security': bool(r.get('security'))}
+    except Refused as e:
+        out['said'] = str(e)[:400]
+    except Exception as e:                              # noqa: BLE001
+        out['said'] = 'it went wrong: %s' % str(e)[:300]
+    write_here(OSUP_ANS, json.dumps(out))
+
+
+# The packages a restart is needed for once they are updated, as dnf
+# needs-restarting -r and Debian's reboot-required name them (1.0.159).
+REBOOT_PKGS = {'kernel', 'kernel-core', 'kernel-rt', 'kernel-rt-core', 'kernel-modules',
+               'kernel-uek', 'glibc', 'linux-firmware', 'systemd', 'dbus', 'dbus-broker',
+               'dbus-daemon', 'microcode_ctl', 'zlib', 'zlib-ng-compat', 'libc6', 'linux-base',
+               'intel-microcode', 'amd64-microcode'}
+
+
+def reboot_for(packages):
+    """Which of the packages waiting want a restart once updated."""
+    out = []
+    for p in packages:
+        name = str(p).split()[0] if str(p).split() else ''
+        if re.search(r'\.(x86_64|aarch64|noarch|i686|ppc64le|s390x)$', name):
+            name = name.rsplit('.', 1)[0]
+        if name in REBOOT_PKGS or name.startswith(('linux-image', 'kernel-core-', 'linux-modules')):
+            out.append(name)
+    return sorted(set(out))
+
+
+def reboot_now(pm, env, say=None):
+    """Whether this machine waits for a restart already."""
+    if pm == 'fake':
+        return subprocess.run([OSUP_PM, 'needs-restart'], stdout=subprocess.DEVNULL).returncode == 1
+    if pm == 'dnf':
+        nr = subprocess.run(['dnf', 'needs-restarting', '-r'], capture_output=True,
+                            text=True, env=env, timeout=300)
+        if nr.returncode == 1 and say:
+            say(nr.stdout.strip().splitlines()[0] if nr.stdout.strip() else 'a restart is needed')
+        return nr.returncode == 1
+    return os.path.exists('/var/run/reboot-required')
+
+
+def osup_job(ident, kind, security=False):
+    """The work itself, as root, in a process of its own."""
+    import fcntl
+    fd = os.open(OSUP_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return 1
+    state = {'id': ident, 'kind': kind, 'state': 'running', 'pct': 1, 'lines': [],
+             'began': time.time(), 'at': time.time(), 'packages': [], 'reboot': False,
+             'pm': osup_pm(), 'phase': 'starting'}
+    last = [0.0]
+
+    def put(force=False):
+        state['at'] = time.time()
+        if force or time.time() - last[0] > 0.8:
+            last[0] = time.time()
+            state['lines'] = state['lines'][-400:]
+            write_here(OSUP_FILE, json.dumps(state))
+
+    def say(line):
+        line = line.rstrip()
+        if line:
+            state['lines'].append(line[:300])
+        put()
+
+    env = {'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'LANG': 'C', 'LC_ALL': 'C',
+           'DEBIAN_FRONTEND': 'noninteractive', 'HOME': '/root'}
+    osup_proxy_env(env)
+
+    def stream(cmd, on_line=None, ok=(0,)):
+        say('$ ' + ' '.join(cmd))
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
+                             stdin=subprocess.DEVNULL, text=True, bufsize=1)
+        for ln in p.stdout:
+            say(ln)
+            if on_line:
+                on_line(ln)
+        rc = p.wait()
+        if rc not in ok:
+            raise Refused('%s ended with %d' % (cmd[0], rc))
+        return rc
+
+    pm = state['pm']
+    try:
+        put(True)
+        if kind == 'check':
+            state['phase'] = 'asking for what is new'
+            pk = []
+            if pm == 'fake':
+                stream([OSUP_PM, 'check'], lambda ln: pk.append(ln.strip())
+                       if ln.strip() and not ln.startswith('#') else None)
+            elif pm == 'dnf':
+                rc_out = []
+                stream(['dnf', '-q', '--refresh', 'check-update'], rc_out.append, ok=(0, 100))
+                for ln in rc_out:
+                    parts = ln.split()
+                    if len(parts) >= 3 and '.' in parts[0] and not ln.startswith(' '):
+                        pk.append('%s %s' % (parts[0], parts[1]))
+                state['security'] = 0
+                sec = subprocess.run(['dnf', '-q', 'updateinfo', 'list', '--security'],
+                                     capture_output=True, text=True, env=env, timeout=300)
+                state['security'] = len([x for x in sec.stdout.splitlines() if x.strip()])
+            else:
+                stream(['apt-get', 'update'])
+                got = subprocess.run(['apt', 'list', '--upgradable'], capture_output=True,
+                                     text=True, env=env, timeout=300)
+                for ln in got.stdout.splitlines():
+                    if '/' in ln and '[upgradable' in ln:
+                        name = ln.split('/', 1)[0]
+                        ver = ln.split()[1] if len(ln.split()) > 1 else ''
+                        pk.append('%s %s' % (name, ver))
+            state['packages'] = pk[:1000]
+            state['count'] = len(pk)
+            # Whether the update will need a restart, told before it is made.
+            state['phase'] = 'whether a restart is needed'
+            state['reboot_why'] = reboot_for(pk)
+            state['reboot_after'] = bool(state['reboot_why'])
+            try:
+                state['reboot_now'] = reboot_now(pm, env)
+            except (OSError, subprocess.SubprocessError):
+                state['reboot_now'] = False
+            if state['reboot_now']:
+                say('a restart is needed already, before any update')
+            if state['reboot_why']:
+                say('a restart will be needed after the update: %s' % ', '.join(state['reboot_why']))
+            state['pct'] = 100
+        else:
+            seen = {'total': 0, 'done': 0}
+
+            def count(ln):
+                m = re.search(r'\b(\d+)/(\d+)\s*$', ln)
+                if pm in ('dnf', 'fake') and m and re.search(
+                        r'(Upgrading|Installing|Cleanup|Verifying|Running scriptlet|Erasing|'
+                        r'Reinstalling|Downgrading|Obsoleting)\s*:', ln):
+                    total = int(m.group(2)) * 2          # each one upgraded and then verified
+                    seen['total'] = max(seen['total'], total)
+                    seen['done'] = min(seen['total'], seen['done'] + 1)
+                    state['phase'] = 'putting the packages in'
+                if pm == 'dnf' and ln.startswith('Downloading Packages'):
+                    state['phase'] = 'downloading'
+                    state['pct'] = max(state['pct'], 8)
+                if pm == 'apt':
+                    m2 = re.match(r'^(\d+) upgraded, (\d+) newly installed', ln)
+                    if m2:
+                        seen['total'] = (int(m2.group(1)) + int(m2.group(2))) * 2
+                    if ln.startswith(('Unpacking ', 'Setting up ')):
+                        seen['done'] += 1
+                        state['phase'] = 'putting the packages in'
+                    if ln.startswith('Get:'):
+                        state['phase'] = 'downloading'
+                        state['pct'] = max(state['pct'], 8)
+                if seen['total']:
+                    state['pct'] = max(state['pct'], min(97, 10 + int(87 * seen['done'] /
+                                                                      seen['total'])))
+            state['phase'] = 'asking for what is new'
+            # Only the security updates where asked (1.0.164): dnf's own
+            # --security, unattended-upgrade on apt (it takes the security
+            # sources only, as Debian and Ubuntu set it up).
+            state['security_only'] = bool(security)
+            if pm == 'fake':
+                stream([OSUP_PM, 'upgrade'] + (['security'] if security else []), count)
+            elif pm == 'dnf':
+                stream(['dnf', '-y', '--refresh', 'upgrade'] + (['--security'] if security else []),
+                       count)
+            elif security:
+                if not shutil.which('unattended-upgrade'):
+                    raise Refused('only the security updates: unattended-upgrade is not on this '
+                                  'machine (apt install unattended-upgrades)')
+                stream(['apt-get', 'update'])
+                state['pct'] = max(state['pct'], 5)
+                stream(['unattended-upgrade', '-v'], count)
+            else:
+                stream(['apt-get', 'update'])
+                state['pct'] = max(state['pct'], 5)
+                stream(['apt-get', '-y', '-o', 'Dpkg::Options::=--force-confdef', '-o',
+                        'Dpkg::Options::=--force-confold', 'upgrade'], count)
+            state['phase'] = 'whether a restart is needed'
+            state['reboot'] = reboot_now(pm, env, say)
+            state['pct'] = 100
+        state['state'] = 'done'
+        state['phase'] = 'done'
+    except Refused as e:
+        state.update(state='failed', said=str(e)[:300])
+    except Exception as e:                              # noqa: BLE001
+        state.update(state='failed', said='it broke: %s' % str(e)[:300])
+    finally:
+        put(True)
+        os.close(fd)
+    return 0
+
+
+
+def serve():
+    d = web_fd()
+    for part, words in ((console_part, 'the console at login'), (net_part, 'restart and power off'),
+                        (ntp_part, 'the time'), (osup_part, 'the updates of the system')):
+        try:
+            part()
+        except Exception as e:                          # noqa: BLE001
+            print('upsmon_web.py: %s: %s' % (words, e), file=sys.stderr)
     try:
         os.replace('request.json', 'request.taken', src_dir_fd=d, dst_dir_fd=d)
     except FileNotFoundError:
@@ -630,6 +1277,9 @@ def main(argv):
     if os.geteuid() != 0:
         print('upsmon_web.py: root only', file=sys.stderr)
         return 2
+    if argv[:1] == ['--os-job'] and len(argv) >= 3 and argv[2] in ('check', 'upgrade'):
+        return osup_job(re.sub(r'[^A-Za-z0-9]', '', argv[1])[:40], argv[2],
+                        argv[3:4] == ['security'])
     return serve()
 
 

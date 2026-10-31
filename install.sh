@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.0.0'
+readonly INSTALLER_VERSION='4.1.0'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -90,6 +90,15 @@ ADMIN_PASSWORD=''
 REWRITE_NGINX=''
 FIRST_PASSWORD=''
 NEW_VERSION=''
+PHP_UPDATE=yes
+PHP_STREAM=8.3
+USE_REMI=''
+PHP_RELOAD=''
+DO_UPGRADE=''
+PKG=''
+command -v dnf >/dev/null 2>&1 && PKG=dnf
+[[ -z "$PKG" ]] && command -v apt-get >/dev/null 2>&1 && PKG=apt
+OS_MAJOR=$( (. /etc/os-release 2>/dev/null && printf '%s' "${VERSION_ID%%.*}") || echo 9)
 
 # --- talking to the person -------------------------------------------------
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
@@ -179,6 +188,11 @@ the dashboard
   --admin-password PASS its password (otherwise one is made and printed)
   --rewrite-nginx       write the nginx file afresh (otherwise one of 4.x is kept)
 
+PHP (php2shell, CVE-2026-109618 / CVE-2026-109619 - fixed 21 October 2026), as OTP:
+  --php-stream X.Y      the AppStream stream for a machine with no PHP yet (default 8.3)
+  --remi                PHP 8.4 from Remi's repository instead
+  --no-php-update       leave PHP exactly as it is (it is still checked and guarded)
+
 a smart plug and sensors, both optional
   --plug-host ADDR      a Shelly plug to watch alongside the UPS
   --plug-password PASS  if one is set in its web interface
@@ -266,9 +280,12 @@ while [[ $# -gt 0 ]]; do
         --admin-user)      ADMIN_USER=$2; shift 2;;
         --admin-password)  ADMIN_PASSWORD=$2; shift 2;;
         --rewrite-nginx)   REWRITE_NGINX=yes; shift;;
+        --php-stream)      PHP_STREAM=$2; shift 2;;
+        --remi)            USE_REMI=yes; shift;;
+        --no-php-update)   PHP_UPDATE=''; shift;;
         --yes|-y)          ASSUME_YES=yes; shift;;
         --dry-run)         DRY_RUN=yes; shift;;
-        --upgrade)         MODE=upgrade; shift;;
+        --upgrade)         MODE=upgrade; DO_UPGRADE=yes; shift;;
         --uninstall)       MODE=uninstall; shift;;
         --source)          SOURCE_DIR=$(cd "$2" && pwd); shift 2;;
         --help|-h)         usage; exit 0;;
@@ -363,6 +380,302 @@ PYCHECK
     NEW_VERSION=$v1
     good "the files are all here and they compile (upsmon $NEW_VERSION)"
 }
+
+
+# ---------------------------------------------------------------------------
+# As OTP 1.0.187 has it: PHP fixed against php2shell, colour, the tools of the
+# backups, the clock
+# ---------------------------------------------------------------------------
+php_fpm_units() {
+    local found="" unit listed
+    systemctl cat php-fpm.service >/dev/null 2>&1 && found="php-fpm"
+    listed="$(systemctl list-unit-files --no-legend 'php*-fpm.service' 2>/dev/null || true)"
+    while read -r unit _rest; do
+        unit="${unit%.service}"
+        [[ -n "$unit" && "$unit" != "php-fpm" && "$unit" =~ ^php[0-9.]*-fpm$ ]] && found="$found $unit"
+    done <<< "$listed"
+    echo "$found"
+}
+
+# PHP, fixed against php2shell
+# ---------------------------------------------------------------------------
+# On 21 October 2026 PHP fixed two remote code execution flaws reached through
+# how PHP takes a request apart before any page runs (CVE-2026-109618,
+# CVE-2026-109619). Fixed upstream: 8.2.35, 8.3.36, 8.4.27, 8.5.12. The
+# distributions rebuilt their streams the same day - AlmaLinux 9's php:8.3 is
+# 8.3.36 and php:8.2 is 8.2.35; its default 8.0 has the fix backported and
+# keeps its number - so the version alone does not always say it, and the
+# package's changelog is read as well.
+#
+# What this does: puts PHP on the stream asked for (8.3 unless told), brings
+# every PHP package up to the newest build, and checks the result by the
+# version and by the CVE in the changelog. Where AppStream has no fixed build
+# it offers Remi's PHP 8.4 (fixed in 8.4.27). Either way the guard goes on:
+# upload progress off for every PHP on the machine, upsmon's own pool taking no
+# request body apart, and nginx refusing every multipart body.
+
+php_fpm_bin() {         # the php-fpm that serves the pages: the newest one installed
+    local b
+    b="$(command -v php-fpm 2>/dev/null || true)"
+    [[ -z "$b" && -x /usr/sbin/php-fpm ]] && b=/usr/sbin/php-fpm
+    if [[ -z "$b" ]]; then
+        b="$(ls -1 /usr/sbin/php-fpm[0-9]* 2>/dev/null | sort -V | tail -n 1 || true)"
+    fi
+    echo "$b"
+}
+
+php_fpm_version() {     # its version, 8.3.36 - from php-fpm itself, not from the
+    local b v           # command-line php, which may be another one or missing (1.0.36)
+    b="$(php_fpm_bin)"
+    [[ -n "$b" ]] || { echo ""; return; }
+    v="$("$b" -v 2>/dev/null | head -n 1 | awk '{print $2}')"
+    echo "${v%%[-+~]*}"
+}
+
+ver_ge() { [[ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n 1)" == "$2" ]]; }
+
+php_fixed() {           # is the PHP that php-fpm runs fixed? 0 yes, 1 no
+    local v b f log
+    v="$(php_fpm_version)"
+    [[ -n "$v" ]] || return 1
+    b="$(echo "$v" | cut -d. -f1,2)"
+    case "$b" in
+        8.2) f=8.2.35 ;; 8.3) f=8.3.36 ;; 8.4) f=8.4.27 ;; 8.5) f=8.5.12 ;;
+        *) if ver_ge "$b" 8.6; then return 0; fi; f="" ;;
+    esac
+    [[ -n "$f" ]] && ver_ge "$v" "$f" && return 0
+    # A backport keeps the old number: the changelog says it instead. Read
+    # whole first and searched after (1.0.36): `rpm | grep -q` under
+    # pipefail failed when grep found it early and rpm died on the pipe.
+    if [[ "$PKG" == "dnf" ]]; then
+        log="$(rpm -q --changelog php-fpm php-common 2>/dev/null || true)"
+        grep -q 'CVE-2026-109618' <<< "$log" && return 0
+    elif [[ "$PKG" == "apt" ]]; then
+        for log in /usr/share/doc/php*-fpm/changelog.Debian.gz /usr/share/doc/php*-common/changelog.Debian.gz; do
+            [[ -f "$log" ]] || continue
+            grep -q 'CVE-2026-109618' <<< "$(zcat "$log" 2>/dev/null || true)" && return 0
+        done
+    fi
+    return 1
+}
+
+php_says() {
+    local v
+    v="$(php_fpm_version)"; v="${v:-?}"
+    if php_fixed; then
+        good "PHP $v has the php2shell fix (CVE-2026-109618, CVE-2026-109619)"
+    else
+        warn "PHP $v does NOT have the php2shell fix (CVE-2026-109618, CVE-2026-109619)"
+    fi
+}
+
+php_guard() {           # the second layer, for every PHP on the machine
+    local dir
+    for dir in /etc/php.d /etc/php/*/fpm/conf.d /etc/php/*/cli/conf.d; do
+        [[ -d "$dir" ]] || continue
+        if [[ -f "$dir/99-php2shell.ini" ]] && grep -q 'upload_progress.enabled *= *0' "$dir/99-php2shell.ini"; then
+            continue
+        fi
+        run install -m 0644 "$SOURCE_DIR/deploy/99-php2shell.ini" "$dir/99-php2shell.ini"
+        PHP_RELOAD=yes
+        good "$dir/99-php2shell.ini - session upload progress off, sessions strict"
+    done
+}
+
+remi_php() {
+    [[ "$PKG" == "dnf" ]] || { warn "Remi's repository is for the RHEL family only"; return 1; }
+    local major="${OS_MAJOR:-9}"
+    say "Remi's repository (rpms.remirepo.net), PHP 8.4"
+    if ! rpm -q remi-release >/dev/null 2>&1; then
+        run dnf install -y "https://rpms.remirepo.net/enterprise/remi-release-${major}.rpm" \
+            || { warn "remi-release could not be installed (is rpms.remirepo.net reachable?)"; return 1; }
+    fi
+    if dnf module list php 2>/dev/null | grep -q 'remi-8.4'; then
+        run dnf module reset -y php
+        run dnf module enable -y php:remi-8.4
+    else
+        run dnf config-manager --set-enabled remi-modular 2>/dev/null || true
+        run dnf module reset -y php || true
+        run dnf module enable -y php:remi-8.4 || { warn "php:remi-8.4 could not be enabled"; return 1; }
+    fi
+    run dnf distro-sync -y 'php*'
+    run dnf install -y php-fpm php-cli php-common
+}
+
+ensure_php() {
+    step "PHP, and php2shell"
+    if [[ -z "$PHP_UPDATE" ]]; then
+        note "--no-php-update: PHP is left as it is"
+        php_says
+        php_guard
+        return 0
+    fi
+    # PHP that is there and fixed is left exactly as it is (1.0.26): no
+    # install, no stream switched, no restart. Updating it further is the
+    # system's own business - dnf/apt upgrade - and any newer build or
+    # stream is welcome; nothing here pins a version.
+    local had_php=""
+    if command -v php-fpm >/dev/null 2>&1 || ls /usr/sbin/php-fpm* >/dev/null 2>&1; then had_php=yes; fi
+    if [[ -n "$had_php" && -z "$USE_REMI" ]] && php_fixed; then
+        note "PHP is installed and fixed: left as it is (updates come with dnf/apt upgrade)"
+        php_says
+        php_guard
+        return 0
+    fi
+    if [[ "$PKG" == "dnf" ]]; then
+        if [[ -n "$USE_REMI" ]]; then
+            remi_php || true
+        elif [[ -n "$had_php" ]]; then
+            # There, but not fixed: only the packages already installed are
+            # brought up to date, on whatever stream they are on.
+            say "PHP is installed but not fixed: updating the packages that are there"
+            run dnf upgrade -y --refresh 'php*' || true
+        else
+            # Not there at all. A stream is chosen only where none is enabled
+            # yet - an enabled one, older or newer, is never switched. On 10
+            # PHP is one stream already. dnf exits 1 for "no enabled stream"
+            # on a machine that never had PHP, so its output is taken first
+            # and read afterwards (set -e, pipefail).
+            local streams now
+            streams="$(dnf -q module list php 2>/dev/null || true)"
+            now="$(dnf -q module list --enabled php 2>/dev/null || true)"
+            now="$(awk '/^php /{print $2; exit}' <<< "$now")"
+            if [[ -z "$now" ]] && grep -qE "^php +${PHP_STREAM//./\\.}( |$)" <<< "$streams"; then
+                say "PHP comes from the stream php:$PHP_STREAM"
+                run dnf module enable -y "php:$PHP_STREAM"
+            elif [[ -n "$now" ]]; then
+                note "the PHP stream php:$now is enabled already: it is kept"
+            fi
+            run dnf install -y php-fpm php-cli php-common
+        fi
+    elif [[ "$PKG" == "apt" ]]; then
+        if [[ -n "$had_php" ]]; then
+            say "PHP is installed but not fixed: updating the packages that are there"
+            run apt-get update
+            local have
+            have="$(dpkg-query -W -f='${Package} ${Status}\n' 'php*' 2>/dev/null | awk '/ installed$/{print $1}' | tr '\n' ' ' || true)"
+            [[ -n "$have" ]] && { run apt-get install -y --only-upgrade $have || true; }
+        else
+            run apt-get update
+            run apt-get install -y php-fpm php-cli
+        fi
+    else
+        warn "this distribution is not one this knows: install php-fpm yourself, fixed against php2shell"
+    fi
+    [[ -n "$DRY_RUN" ]] && { php_guard; return 0; }
+    if ! php_fixed && [[ "$PKG" == "dnf" && -z "$USE_REMI" ]]; then
+        warn "the PHP AppStream has here is not fixed yet: $(php_fpm_version)"
+        # Never on its own in an upgrade (1.0.44): it moves every PHP site on
+        # the machine to 8.4. Asked of a person, or --remi.
+        if [[ -n "$DO_UPGRADE" || -n "${UPSMON_UPGRADE_FROM_PAGES:-}" ]]; then
+            note "Remi's PHP 8.4 is not taken during an upgrade by itself: ./install.sh --upgrade --remi"
+        elif confirm "Take PHP 8.4 from Remi's repository instead (fixed in 8.4.27)?" y; then
+            remi_php || true
+        fi
+    fi
+    php_says
+    # PHP 8 at least (1.0.94): the pages' relay is written for it, and on a
+    # 7.4 every page was a 500 after an install that said it went well.
+    local pv
+    pv="$(php_fpm_version)"
+    if [[ -n "$pv" && -z "$DRY_RUN" ]] && ! ver_ge "$pv" 8.0; then
+        fail "php-fpm here is $pv: upsmon's pages need PHP 8.0 or newer (on Debian 11 / Ubuntu 20.04 add a PHP 8 repository first, or install with --no-web)"
+    fi
+    if ! php_fixed; then
+        warn "Until it is fixed: dnf upgrade --refresh 'php*' (or apt upgrade) as soon as the"
+        warn "fixed build is out, and ./install.sh --upgrade. upsmon's pages are guarded meanwhile:"
+        warn "its pool takes no request body apart, upload progress is off everywhere, and nginx"
+        warn "refuses every multipart body."
+    fi
+    php_guard
+    # The new build only counts once php-fpm runs it.
+    local unit
+    for unit in $(php_fpm_units); do
+        run systemctl enable "$unit" >/dev/null 2>&1 || true
+        run systemctl restart "$unit" || warn "$unit would not restart"
+    done
+    if grep -lE ' /(usr|lib|upsmon).*\(deleted\)$' /proc/[0-9]*/maps 2>/dev/null | grep -q .; then
+        note "some processes still run files an update replaced; they pick the new ones up when restarted"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# The pages: the pool, nginx, the certificate
+
+install_colour() {      # colorama: the command line in colour, as isemon's
+    # Nothing needs it - without it upsmon writes the same escape sequences
+    # itself - so it is offered and never insisted on.
+    if python3 -c 'import colorama' 2>/dev/null; then
+        good "python3-colorama is here - the command line is in colour"
+        return 0
+    fi
+    if [[ "$PKG" == "dnf" ]]; then
+        run dnf install -y python3-colorama >/dev/null 2>&1 || true
+    elif [[ "$PKG" == "apt" ]]; then
+        run apt-get install -y python3-colorama >/dev/null 2>&1 || true
+    fi
+    # Not in the distribution's own repositories (on RHEL 9 it is EPEL's):
+    # pip, where there is one, for the system Python.
+    if ! python3 -c 'import colorama' 2>/dev/null && python3 -m pip --version >/dev/null 2>&1; then
+        run python3 -m pip install --quiet colorama >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$DRY_RUN" ]] || python3 -c 'import colorama' 2>/dev/null; then
+        good "python3-colorama installed - the command line is in colour"
+    else
+        note "python3-colorama is not available; colour is written by hand instead,"
+        note "which works on this terminal and is the only difference."
+    fi
+}
+
+install_backup_tools() {
+    local opt=()
+    { command -v ssh >/dev/null && command -v sftp >/dev/null && command -v ssh-keygen >/dev/null; } \
+        || opt+=("openssh-clients")
+    command -v smbclient >/dev/null || opt+=("samba-client")
+    ((${#opt[@]})) || return 0
+    [[ -n "$DRY_RUN" ]] && { say "would install, for backups: ${opt[*]}"; return 0; }
+    if [[ "$PKG" == "dnf" ]]; then
+        dnf install -y "${opt[@]}" >/dev/null 2>&1 \
+            && good "for backups to SFTP, SCP and SMB: ${opt[*]}" \
+            || warn "for backups to SFTP, SCP and SMB, install by hand: dnf install ${opt[*]}"
+    elif [[ "$PKG" == "apt" ]]; then
+        local deb=()
+        for p in "${opt[@]}"; do [[ "$p" == "openssh-clients" ]] && deb+=("openssh-client") || deb+=("smbclient"); done
+        apt-get install -y "${deb[@]}" >/dev/null 2>&1 || warn "for backups: apt-get install ${deb[*]}"
+    fi
+}
+
+install_time_tools() {
+    local unit=chronyd
+    [[ "$PKG" == "apt" ]] && unit=chrony
+    if ! command -v chronyd >/dev/null && ! command -v chronyc >/dev/null; then
+        if [[ -n "$DRY_RUN" ]]; then say "would install chrony (the clock)"; return 0; fi
+        if [[ "$PKG" == "dnf" ]]; then
+            dnf install -y chrony >/dev/null 2>&1 || { warn "chrony could not be installed: dnf install chrony - every sample is written with its time"; return 0; }
+        elif [[ "$PKG" == "apt" ]]; then
+            apt-get install -y chrony >/dev/null 2>&1 || { warn "chrony could not be installed: apt-get install chrony"; return 0; }
+        else
+            warn "install chrony by hand - every sample is written with its time"; return 0
+        fi
+        good "chrony installed (the clock)"
+    fi
+    [[ -n "$DRY_RUN" ]] && return 0
+    # Another time daemon would fight it.
+    if systemctl is-active --quiet systemd-timesyncd 2>/dev/null; then
+        systemctl disable --now systemd-timesyncd >/dev/null 2>&1 || true
+        note "systemd-timesyncd stopped: chrony keeps the clock"
+    fi
+    if ! systemctl is-enabled --quiet "$unit" 2>/dev/null || ! systemctl is-active --quiet "$unit" 2>/dev/null; then
+        systemctl enable --now "$unit" >/dev/null 2>&1 \
+            && good "chrony started and enabled ($unit)" \
+            || warn "chrony could not be started: systemctl enable --now $unit"
+    fi
+    timedatectl set-ntp true >/dev/null 2>&1 || true
+    if ! grep -Eq '^[[:space:]]*(server|pool|peer|sourcedir)[[:space:]]' /etc/chrony.conf /etc/chrony/chrony.conf 2>/dev/null; then
+        warn "chrony has no time server: set them in Settings → Time (or in /etc/chrony.conf)"
+    fi
+}
+
 
 # ---------------------------------------------------------------------------
 # What to install
@@ -559,7 +872,7 @@ ask_advanced() {
 install_packages() {
     step "Installing packages"
     local wanted=(python3 openssl policycoreutils-python-utils)
-    [[ -n "$WITH_WEB" ]] && wanted+=(nginx php-fpm php-cli curl)
+    [[ -n "$WITH_WEB" ]] && wanted+=(nginx curl)
 
     local missing=()
     local package
@@ -572,29 +885,16 @@ install_packages() {
         note "[would run] dnf install -y ${missing[*]}"
     else
         say "installing: ${missing[*]}"
-        # PHP 8 at least for the pages: AlmaLinux 9 has 8.0 as it comes, and the
-        # streams 8.1 - 8.3; a machine with no PHP yet gets 8.3.
-        if [[ " ${missing[*]} " == *" php-fpm "* ]] && ! rpm -q php-common >/dev/null 2>&1 \
-           && command -v dnf >/dev/null 2>&1; then
-            dnf -y module reset php >/dev/null 2>&1 || true
-            dnf -y module enable php:8.3 >/dev/null 2>&1 \
-                && note "PHP from the AppStream stream php:8.3" || true
-        fi
         dnf install -y "${missing[@]}" >/dev/null || fail "package installation failed"
         good "installed"
     fi
-    # colorama colours the console and the command line where it is there;
-    # nothing needs it.
-    if [[ -z "$DRY_RUN" ]] && ! python3 -c 'import colorama' >/dev/null 2>&1; then
-        dnf install -y python3-colorama >/dev/null 2>&1 || true
-    fi
-    if [[ -n "$WITH_WEB" ]] && [[ -z "$DRY_RUN" ]]; then
-        local phpv
-        phpv=$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo 0)
-        say "PHP $phpv"
-        php -r 'exit(PHP_MAJOR_VERSION >= 8 ? 0 : 1);' 2>/dev/null \
-            || fail "the pages need PHP 8 or newer: dnf module enable php:8.3 && dnf upgrade 'php*'"
-    fi
+    install_colour
+    install_backup_tools
+    install_time_tools
+    # PHP for the pages - put on a release fixed against php2shell, checked by
+    # its version and its changelog, guarded either way (as OTP does it).
+    [[ -n "$WITH_WEB" ]] && ensure_php
+    return 0
 }
 
 create_user() {
@@ -847,8 +1147,11 @@ install_web() {
     run install -m 644 "$SOURCE_DIR/deploy/php-fpm-upsmon.conf" "$POOL"
     run install -m 644 "$SOURCE_DIR/deploy/99-php2shell.ini" /etc/php.d/99-php2shell.ini
     if [[ -z "$DRY_RUN" ]]; then
-        systemctl enable php-fpm >/dev/null 2>&1 || true
-        systemctl restart php-fpm || fail "php-fpm did not start with $POOL"
+        local unit
+        for unit in $(php_fpm_units); do
+            systemctl enable "$unit" >/dev/null 2>&1 || true
+            systemctl restart "$unit" || fail "$unit did not start with $POOL"
+        done
         good "php-fpm: the pool upsmon ($WEB_USER, /run/php-fpm/upsmon.sock)"
     fi
 }

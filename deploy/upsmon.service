@@ -23,7 +23,9 @@ RuntimeDirectoryMode=0750
 StateDirectory=upsmon
 StateDirectoryMode=0750
 # /var/log/upsmon, created with the right ownership. Without this the daemon
-# could not write there at all: ProtectSystem=strict makes everything else
+# could not write there at all: # full, not strict (4.1): a backup may go to a folder mounted anywhere (an NFS
+# share under /mnt); /usr, /boot and /etc stay read-only.
+ProtectSystem=full makes everything else
 # read-only.
 LogsDirectory=upsmon
 LogsDirectoryMode=0750
@@ -41,7 +43,9 @@ Nice=10
 IOSchedulingClass=idle
 
 # It reads one config file and writes one directory. Everything else is closed.
-ProtectSystem=strict
+# full, not strict (4.1): a backup may go to a folder mounted anywhere (an NFS
+# share under /mnt); /usr, /boot and /etc stay read-only.
+ProtectSystem=full
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes

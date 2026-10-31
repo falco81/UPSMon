@@ -1,6 +1,7 @@
 /* settings.js - the Settings of upsmon: the pages of OTP (its admin.js, 1.0.187),
-   their Accounts, Certificates and TLS, Automatic certificates, Upgrades and About,
-   drawn by core.js the way OTP draws them, over the upsmon daemon's settings API. */
+   their Accounts, Certificates and TLS, Automatic certificates, Time, Restart and power off,
+   The database, Backups, System updates, Upgrades and About, drawn by core.js the way OTP
+   draws them, over the upsmon daemon's settings API. */
 
 /* ======== the time picker of Events (OTP admin.js 5-5) ======== */
 if ($('ev-time')) timePicker('ev-time', {start: {k: 'all'}, all: true});
@@ -490,6 +491,11 @@ function showPane(name) {
   document.querySelectorAll('.ctl-pane').forEach(function (p) { p.hidden = p.id !== 'pane-' + name; });
   writeHash();
   if (name === 'people') loadUsers();
+  if (name === 'db') loadDb();
+  if (name === 'backup') loadRbackup();
+  if (name === 'power') loadPower();
+  if (name === 'time') loadNtp();
+  if (name === 'osup') loadOsup(); else ouPoll(false);
   if (name === 'acme') loadAcme(); else acPoll(false);
   if (name === 'about') drawAbout();
   if (name === 'upgrade') loadUpgrade();
@@ -1798,6 +1804,1044 @@ $('us-add').onclick = function () {
 };
 
 
+/* ======== the database (OTP admin.js 4848-5879) ======== */
+/* ---- the database --------------------------------------------------------- */
+/* ==========================================================================
+   The database - as isemon's Settings → The database (1.10.160 - 1.10.218)
+   ========================================================================== */
+var DBSTATE = null;
+var ENGINE_SAID = {sqlite: 'the file on this machine', mariadb: 'MariaDB', postgres: 'PostgreSQL'};
+var DUMP_SAID = {sqlite: 'a copy of the file', mariadb: 'a MariaDB dump',
+                 postgres: 'a PostgreSQL dump', copy: 'a portable copy'};
+var TABLE_SAID = {samples: 'samples of the UPS (full)', samples_hourly: 'samples of the UPS (hourly)',
+                  snapshots: 'every variable, when it changed', outages: 'power failures', tests: 'self tests',
+                  plug_samples: 'samples of the plug (full)', plug_hourly: 'samples of the plug (hourly)',
+                  sensor_samples: 'readings of the sensors', 'history.events': 'events of the UPS',
+                  'history.meta': 'notes of the UPS side',
+                  tokens: 'tokens', radius_log: 'RADIUS requests', otp_log: 'checks of a code',
+                  events: 'events', accounts: 'accounts', sessions: 'sign-ins',
+                  clients: 'clients', realms: 'realms', directories: 'directories',
+                  settings: 'settings', meta: 'notes of its own'};
+
+function loadDb() {
+  api('db').then(function (d) {
+    DBSTATE = d;
+    $('db-size').textContent = bytes(d.size) + ' · ' + d.where;
+    drawEngine(d);
+    drawDisk(d);
+    drawCounts(d);
+    keptTable($('db-backups'), d.copies || [], {
+      kind: 'copy', head: 'Copies kept (' + d.keep + ' at most)',
+      where: 'They are files on this machine, under ' + d.backup_dir + ', each with the key '
+        + 'that opens the tokens beside it. Copy them off it if they are to survive the machine.'
+    });
+    keptTable($('db-dumps'), d.dumps || [], {
+      kind: 'dump', head: 'Dumps kept (' + d.keep + ' at most)',
+      where: 'They are files on this machine, under ' + d.dump_dir + ', each with the key '
+        + 'that opens the tokens beside it. Copy them off it if they are to survive the machine.'
+    });
+    dumpCard(d);
+    drawTune(d);
+    drawErasable(d.erasable || {});
+    if (d.job && d.job.running && ADMIN) dbWatch();     /* its progress is a full administrator's (1.0.146) */
+    explainWhatWasDrawn($('pane-db'));
+  }).catch(oops);
+}
+
+/* ---- which database everything is kept in -------------------------------- */
+function dbAsked() {
+  var out = {};
+  ['db_engine', 'db_host', 'db_port', 'db_name', 'db_user', 'db_password', 'db_timeout_s'].forEach(function (k) {
+    var input = $('set-' + k);
+    if (!input) return;
+    var v = input._get ? input._get() : input.value;
+    if (k === 'db_password' && (v === '' || String(v).indexOf('•') === 0)) return;
+    out[k] = (k === 'db_port' || k === 'db_timeout_s') ? (String(v).trim() === '' ? 0 : Number(v)) : v;
+  });
+  return out;
+}
+function engineChosen() { return String(dbAsked().db_engine || (DBSTATE && DBSTATE.engine) || 'sqlite'); }
+function engineWord(name) { return ENGINE_SAID[name] || name; }
+
+function drawEngine(d) {
+  $('db-engine-file').textContent = d.config_file || 'the config file';
+  $('db-engine-now').textContent = (ENGINE_SAID[d.engine] || d.engine) + ' · ' + d.where;
+  var host = $('db-engine-says');
+  clear(host);
+  var c = d.counts || {};
+  host.appendChild(peekFacts([
+    ['In use now', d.version],
+    ['Where', noI18n(el('span', 'mono', d.where))],
+    ['Holding', num(c.tokens || 0) + ' token(s), ' + num(c.radius_log || 0) + ' RADIUS request(s)'],
+    ['Room it takes', bytes(d.size || 0)]
+  ]));
+  Object.keys(d.drivers || {}).forEach(function (name) {
+    var one = d.drivers[name];
+    host.appendChild(el('p', 'btnhelp', engineWord(name) + ': '
+      + (one.ready ? 'the driver is installed'
+         : (one.says || 'no driver') + ' — install ' + one.package)));
+  });
+  engineButtons();
+}
+function engineButtons() {
+  var chosen = engineChosen();
+  var live = String((DBSTATE && DBSTATE.engine) || 'sqlite');
+  var same = chosen === live;
+  if ($('db-engine-setup')) $('db-engine-setup').disabled = chosen === 'sqlite';
+  if ($('db-engine-move')) $('db-engine-move').disabled = same;
+  if ($('db-engine-empty')) $('db-engine-empty').disabled = same;
+  if ($('db-engine-use')) $('db-engine-use').disabled = same;
+}
+document.addEventListener('change', function (e) {
+  if (e.target && e.target.id === 'set-db_engine') engineButtons();
+});
+
+function engineFacts(d) {
+  var facts = [['Reached', d.reached ? 'yes' : 'no'], ['Where', d.where || '']];
+  if (d.version) facts.push(['It says it is', d.version]);
+  if (d.reached) {
+    facts.push(['Tables there', num((d.tables || []).length) + ' of ours']);
+    facts.push(['Records in it', num(d.rows || 0)]);
+    facts.push(['May this account write', d.writable ? 'yes' : 'NO']);
+  }
+  return peekFacts(facts);
+}
+
+/* ---- the job going on, and the bar that says how far ---------------------- */
+var DB_WATCHING = null;
+function dbBusyButtons(on) {
+  ['db-backup', 'db-dump-make', 'db-optimize', 'db-check', 'db-prune', 'db-tidy',
+   'db-restore', 'dump-restore', 'db-engine-move', 'erase-go'].forEach(function (id) {
+    var b = $(id);
+    if (b) b.disabled = on || (id === 'erase-go' && !erasePicked().length)
+      || ((id === 'db-restore' || id === 'dump-restore') && !b._held);
+  });
+}
+/* A bar that has finished gets Hide this; one that starts again loses it. */
+function goingCloser(box) {
+  if (!box || box.querySelector('.hide-row')) return;
+  box.appendChild(hideBar(function () { box.hidden = true; }));
+}
+function goingOpen(box) {
+  if (!box) return;
+  box.hidden = false;
+  var r = box.querySelector('.hide-row');
+  if (r) r.remove();
+}
+function dbWatch(done) {
+  if (DB_WATCHING) return;
+  DB_WATCHING = true;     /* taken at once (1.0.57): two watchers ran when asked twice in one round trip */
+  var box = $('db-going');
+  goingOpen(box);
+  dbBusyButtons(true);
+  var step = function () {
+    api('db', {action: 'job'}).then(function (d) {
+      var j = d.job || {};
+      var pct = j.whole ? Math.min(100, Math.round(100 * j.done / j.whole)) : (j.running ? 5 : 100);
+      $('db-going-fill').style.width = pct + '%';
+      $('db-going-says').textContent = (j.what || '') + (j.says ? ' — ' + j.says : '')
+        + (j.whole ? ' (' + num(j.done) + ' of ' + num(j.whole) + ')' : '');
+      /* Every second while the pane is open; every five once it is left, so
+         the job's end is still told and the daemon is not asked for nothing. */
+      if (j.running) { DB_WATCHING = setTimeout(step, TAB === 'settings' && PANE === 'db' ? 1000 : 5000); return; }
+      DB_WATCHING = null;
+      dbBusyButtons(false);
+      goingCloser($('db-going'));
+      if (j.error) { toast(j.what + ' failed: ' + j.error, 'bad'); $('db-going-says').textContent = j.error; return; }
+      var r = j.result || {};
+      if (r.rows !== undefined) {
+        toast('everything is in ' + r.where + ': ' + num(r.rows) + ' row(s) — now Start using it', 'good');
+        $('db-going-says').textContent = 'done: ' + num(r.rows) + ' row(s) in ' + r.where
+          + ' · a copy made first: ' + r.copy;
+      } else if (r.erased) {
+        toast('erased; a copy was made first: ' + r.copy, 'good');
+        $('db-going-says').textContent = 'done · a copy made first: ' + r.copy;
+      } else if (r.before !== undefined) {
+        toast('the disk is given back: ' + bytes(r.before) + ' → ' + bytes(r.after), 'good');
+        $('db-going-says').textContent = 'done: ' + bytes(r.before) + ' → ' + bytes(r.after);
+      }
+      if (done) done(r);
+      loadDb();
+    }).catch(function (e) { DB_WATCHING = null; dbBusyButtons(false); oops(e); });
+  };
+  step();
+}
+
+/* ---- the disk under it ----------------------------------------------------- */
+function drawDisk(d) {
+  var host = $('db-disk');
+  clear(host);
+  var disk = d.disk || {};
+  var grew = d.growth || {};
+  var cache = d.cache;
+  if (cache && cache.low) {
+    var slow = el('p', 'note bad');
+    slow.appendChild(el('b', '', cache.engine));
+    slow.appendChild(document.createTextNode(' keeps '));
+    slow.appendChild(el('b', '', bytes(cache.cache)));
+    slow.appendChild(document.createTextNode(' of its own in memory ('));
+    slow.appendChild(noI18n(el('span', 'mono', cache.setting)));
+    slow.appendChild(document.createTextNode(') for a database of '));
+    slow.appendChild(el('b', '', bytes(cache.size)));
+    slow.appendChild(document.createTextNode('. Its indexes do not fit, so a busy minute waits for the disk. A quarter of the machine’s memory is the usual setting.'));
+    host.appendChild(slow);
+    if (ADMIN) {
+      var go = cmdButton('Tune it for this machine…', 'gear', '');
+      go.onclick = openTune;
+      host.appendChild(go);
+    }
+  }
+  if (!disk.total) {
+    host.appendChild(el('p', 'note', 'The disk this is on could not be measured.'));
+    return;
+  }
+  var share = Number(disk.share || 0);
+  var line = el('div', 'disk-bar ' + (share >= 92 ? 'crit' : (share >= 80 ? 'warn' : 'ok')));
+  var fill = el('span');
+  fill.style.width = Math.max(1, Math.min(100, share)) + '%';
+  line.appendChild(fill);
+  host.appendChild(line);
+  var says = el('p', 'note');
+  says.appendChild(el('b', '', bytes(disk.free)));
+  says.appendChild(document.createTextNode(' free of ' + bytes(disk.total) + ' on '));
+  says.appendChild(noI18n(el('span', 'mono', disk.where || '')));
+  says.appendChild(document.createTextNode(' — '));
+  says.appendChild(el('span', '', share + '% of it is used'));
+  if (grew.a_day) {
+    says.appendChild(document.createTextNode(', and this database has been growing '));
+    says.appendChild(el('b', '', bytes(grew.a_day)));
+    says.appendChild(document.createTextNode(' a day over the last ' + grew.over_days + ' day(s).'));
+  } else {
+    says.appendChild(document.createTextNode('. How fast it is growing is not known yet: the size is noted once a day, and two are needed.'));
+  }
+  host.appendChild(says);
+  host.appendChild(el('p', 'note', 'That disk holds ' + (disk.holds || '') + '.'));
+  if (disk.days_left !== null && disk.days_left !== undefined) {
+    host.appendChild(el('p', 'note ' + (disk.days_left < 45 ? 'bad' : ''), disk.days_left > 3650
+      ? 'At that rate the disk has years left.'
+      : 'At that rate the disk has about ' + num(disk.days_left) + ' day(s) left. Forgetting old records, under the keep-for numbers above, is what shortens it.'));
+  }
+  var parts = d.parts || [];
+  if (parts.length) {
+    var wrap = listTable([d.engine !== 'sqlite' ? 'Where' : 'File', 'What it is', {words: 'Size', cls: 'num'}],
+      parts, function (one) {
+        var tr = el('tr');
+        tr.appendChild(noI18n(el('td', 'mono', one.name)));
+        tr.appendChild(el('td', 'muted', one.what));
+        tr.appendChild(el('td', 'num', bytes(one.bytes)));
+        return tr;
+      });
+    wrap.style.marginTop = '10px';
+    host.appendChild(wrap);
+  }
+}
+
+/* ---- what is in it ----------------------------------------------------------- */
+function drawCounts(d) {
+  var host = $('db-counts');
+  clear(host);
+  var rows = (d.tables || []).slice().sort(function (a, b) {
+    return (b.bytes || 0) - (a.bytes || 0) || b.rows - a.rows;
+  });
+  var known = rows.some(function (t) { return t.bytes !== null && t.bytes !== undefined; });
+  host.appendChild(listTable(['What', 'Table', {words: 'Rows', cls: 'num'}]
+      .concat(known ? [{words: 'Size', cls: 'num'}] : []), rows, function (t) {
+    var tr = el('tr');
+    tr.appendChild(el('td', '', TABLE_SAID[t.table] || t.table));
+    tr.appendChild(noI18n(el('td', 'mono muted small', t.table)));
+    tr.appendChild(el('td', 'num', num(t.rows)));
+    if (known) tr.appendChild(el('td', 'num', t.bytes === null || t.bytes === undefined ? '–' : bytes(t.bytes)));
+    return tr;
+  }));
+  var key = el('p', 'note ' + (d.key_there ? '' : 'bad'));
+  key.appendChild(document.createTextNode(d.key_there ? 'The key that opens the tokens: ' : 'The key that opens the tokens is MISSING: '));
+  key.appendChild(noI18n(el('span', 'mono', d.key)));
+  host.appendChild(key);
+  if (d.free) {
+    host.appendChild(el('p', 'btnhelp', d.engine === 'postgres'
+      ? num(d.free) + ' row(s) deleted and not yet given back to the disk.'
+      : bytes(d.free) + ' free inside it, which the engine uses again; Give the disk back hands it to the operating system.'));
+  }
+}
+
+/* ---- the two lists of files kept beside it --------------------------------- */
+function keptTable(into, rows, opts) {
+  clear(into);
+  if (!into || !rows || !rows.length) return;
+  var dump = opts.kind === 'dump';
+  into.appendChild(el('h4', '', opts.head));
+  into.appendChild(listTable(['Name', dump ? 'What it is' : 'Taken off', {words: 'Size', cls: 'num'},
+                              'Made', 'Key beside it', {words: '', cls: 'act'}], rows, function (b) {
+    var line = el('tr');
+    line.appendChild(noI18n(el('td', 'mono', b.name)));
+    var came = (dump ? DUMP_SAID[b.kind] : ENGINE_SAID[b.from]) || '';
+    var mine = !dump || b.mine !== false;
+    var off = el('td', came ? (mine ? '' : 'muted') : 'muted', came || 'not said');
+    if (!mine) explain(off, 'This dump was taken off a different engine from the one this '
+      + 'installation is on now, so it cannot be put back here. Put that engine back on, or '
+      + 'use a copy — a copy goes into any of the three.');
+    else if (dump && b.kind === 'copy') explain(off, 'Made on a night when the program that '
+      + 'dumps this engine was not on the machine, so a portable copy was made instead. It is '
+      + 'a whole copy and goes back into any of the three.');
+    line.appendChild(off);
+    line.appendChild(el('td', 'num', bytes(b.bytes)));
+    line.appendChild(stampCell(b.at));
+    line.appendChild(el('td', b.key ? 'good' : 'bad', b.key ? 'yes' : 'no'));
+    var act = el('td', 'rowtools');
+    if (ADMIN) {
+      var take = cmdButton('Download', 'down', 'small');
+      explain(take, dump
+        ? 'Save this dump to the machine you are sitting at - with the key that opens its tokens, '
+          + 'locked with a passphrase you give, or without it.'
+        : 'Save this copy to the machine you are sitting at - with the key that opens its tokens, '
+          + 'locked with a passphrase you give, or without it.');
+      take.onclick = function () { dbDownloadAsk({name: b.name, kind: dump ? 'dump' : '', key: b.key}); };
+      act.appendChild(take);
+      var back = cmdButton('Restore', 'undo', 'small danger');
+      explain(back, 'Put <b>this</b> one back, without downloading it and uploading it again: '
+        + 'everything in the live database is replaced by what is in this file. You are shown '
+        + 'what is in it and asked first, and a copy of what is being replaced is made before '
+        + 'anything changes.');
+      back.disabled = !mine;
+      if (mine) back.onclick = function () { restoreKept(b, opts.kind); };
+      act.appendChild(back);
+      var gone = cmdButton('Delete', 'trash', 'small danger');
+      explain(gone, 'Delete this file, and the key beside it, from the server. The live database is not touched.');
+      gone.onclick = function () {
+        confirmThen(dump ? 'Delete this dump?' : 'Delete this copy?', 'The file ' + htmlText(b.name)
+          + ' and the key beside it are deleted from this machine. The live database is '
+          + 'not touched, and the others stay where they are.', 'Delete it', function () {
+            api('db', {action: 'delete', name: b.name, kind: opts.kind}).then(function (x) {
+              toast(x.message, 'good');
+              loadDb();
+            }).catch(oops);
+          });
+      };
+      act.appendChild(gone);
+    }
+    line.appendChild(act);
+    return line;
+  }));
+  into.appendChild(el('p', 'btnhelp', opts.where));
+}
+
+function dumpCard(d) {
+  var says = $('db-dump-says');
+  clear(says);
+  var info = d.dump || {};
+  $('db-dump-now').textContent = info.words || '';
+  $('db-dump-make').disabled = false;
+  $('db-dump-get').disabled = false;
+  if (info.ready) {
+    var line = el('p', 'note good');
+    line.appendChild(document.createTextNode('Tonight’s will be '));
+    line.appendChild(el('b', '', info.words || 'a dump'));
+    if (info.suffix) {
+      line.appendChild(document.createTextNode(', written as '));
+      line.appendChild(noI18n(el('code', '', info.suffix)));
+    }
+    line.appendChild(document.createTextNode('.'));
+    says.appendChild(line);
+  } else {
+    says.appendChild(el('p', 'note bad', info.why || 'A dump cannot be made on this machine.'));
+    var fix = el('p', 'note');
+    fix.appendChild(document.createTextNode('Until it is there, the nightly one is made as a portable copy instead — a whole copy, which goes back into any engine, but several times the size of a dump. To have dumps: '));
+    fix.appendChild(noI18n(el('code', '', info.install || '')));
+    says.appendChild(fix);
+  }
+}
+
+/* ---- putting one back ------------------------------------------------------- */
+function restoreKept(b, kind) {
+  api('db', {action: 'restore_kept', name: b.name, kind: kind, check: true}).then(function (d) {
+    askBeforeRestoring(d.says, b.name, function () {
+      return api('db', {action: 'restore_kept', name: b.name, kind: kind});
+    });
+  }).catch(oops);
+}
+
+function askBeforeRestoring(says, what, go) {
+  var n = (says && says.counts) || {};
+  var kind = (says && says.kind) || '';
+  modal('Put this database back?', function (body) {
+    var facts = [['File', noI18n(el('span', 'mono', String(what)))],
+                 ['What it is', DUMP_SAID[kind] || kind], ['Size', bytes(says.bytes || 0)],
+                 ['Tables', num(says.tables || 0)], ['Accounts', num(n.accounts || 0)],
+                 ['Full administrators', num(says.admins || 0)]];
+    if (n.tokens !== undefined) facts.push(['Tokens', num(n.tokens)]);
+    if (n.radius_log !== undefined) facts.push(['RADIUS requests', num(n.radius_log)]);
+    if (n.otp_log !== undefined) facts.push(['Checks of a code', num(n.otp_log)]);
+    if (says.version) facts.push(['Made by upsmon', says.version]);
+    /* Where it was made (1.0.63): the machine's config.json came with it, to
+       be read - it is never put back. */
+    var m = says.machine || null;
+    if (m) {
+      var use = m.in_use || {};
+      facts.push(['Made on', noI18n(el('span', 'mono', String(m.node || '?') + (m.host ? ' (' + m.host + ')' : '')))]);
+      facts.push(['Its database', noI18n(el('span', 'mono', String(use.db_engine || '?')
+        + (use.db_engine && use.db_engine !== 'sqlite' ? ' ' + (use.db_host || '') + ':' + (use.db_port || '') + '/' + (use.db_name || '') : '')))]);
+      if (use.ha_mode) facts.push(['Its cluster', el('span', 'mono', use.ha_mode + ', slot ' + (use.ha_slot || '?') + ', the other node ' + (use.ha_peer || '?'))]);
+    }
+    body.appendChild(peekFacts(facts));
+    if (m && m.config) {
+      var det = el('details', 'note');
+      det.appendChild(el('summary', '', 'Its ' + (m.config_file || 'config.json') + ' (only to read: it is not put back)'));
+      det.appendChild(noI18n(el('pre', 'mono', JSON.stringify(m.config, null, 1))));
+      body.appendChild(det);
+    }
+    if (kind === 'mariadb' || kind === 'postgres') {
+      body.appendChild(el('p', 'note', 'How many records are in a dump is not read from it — that is what putting it back is for.'));
+    }
+    var warn = el('p', 'note bad');
+    warn.textContent = 'Putting it back replaces everything in the live database with what is in that file. A copy of what is being replaced is made first and kept with the others, so this can be undone — but everything recorded since that file was made will only be in that copy.';
+    body.appendChild(warn);
+    body.appendChild(el('p', 'btnhelp', 'You will probably be signed out: who is signed in came with the file like everything else. The key that opens the tokens is taken from beside the file, or from inside a downloaded copy; where there is none, the key in use stays.'));
+  }, [
+    {words: 'No, leave it', close: true},
+    {words: 'Restore it', cls: 'danger', icon: 'undo', close: true, go: function () {
+      go().then(function (done) {
+        if (done && done.job) { setTimeout(function () { rbRestoreWatch('Putting the database back'); }, 50); return; }
+        toast('the database was restored; what it replaced is in ' + done.safety + ' — ' + done.key, 'good');
+        setTimeout(function () { window.location.reload(); }, 2500);
+      }).catch(oops);
+    }}], true);
+}
+
+/* A big file goes to /admin/upload/ (1.0.98): there nginx asks whether a
+   full administrator sends it before it takes a byte. Where that place is
+   not set up (an nginx without auth_request) it answers 404, and the file
+   goes the old way. */
+var BIG_PATH = true;
+function bigFetch(query, file) {
+  var opts = {method: 'POST', body: file, credentials: 'same-origin',
+              headers: {'X-Upsmon-Restore': '1', 'Content-Type': 'application/octet-stream'}};
+  if (!BIG_PATH) return fetch(query, opts);
+  return fetch('/admin/upload/' + query, opts).then(function (r) {
+    if (r.status !== 404) return r;
+    BIG_PATH = false;
+    return fetch(query, opts);
+  });
+}
+function dbSend(file, check) {
+  return bigFetch('?api=db-restore' + (check ? '&check=1' : ''), file)
+    .then(function (r) {
+      return r.json().catch(function () {
+        throw new Error('the server did not answer with anything readable (HTTP ' + r.status + ')');
+      }).then(function (d) {
+        if (!r.ok || d.ok === false) throw new Error(d.error || ('the server said ' + r.status));
+        return d;
+      });
+    });
+}
+
+/* ---- a copy or a dump with its key (1.0.123) ------------------------------
+   Downloaded with the key that opens its tokens, locked with a passphrase -
+   one file that is all of it - or without it; and the same file put back
+   with the passphrase. */
+function dbDownloadAsk(o) {
+  var what = o.kind === 'dump' ? 'dump' : 'copy';
+  modal(o.name ? 'Download ' + o.name : (what === 'dump' ? 'Download a dump made now' : 'Download a copy made now'), function (body) {
+    var seg = el('div', 'seg');
+    var withB = el('button', 'on', 'With the key'), noB = el('button', '', 'Without the key');
+    withB.type = noB.type = 'button';
+    seg.appendChild(withB); seg.appendChild(noB);
+    body.appendChild(seg);
+    var withBox = el('div');
+    withBox.appendChild(el('p', 'note', what === 'dump'
+      ? 'One file that is all of it: the dump and the key that opens its tokens, locked with the passphrase below. Put back here or on another machine (Put a dump back), the passphrase opens the key again. Lost, the key in the file is lost with it - it is not kept anywhere.'
+      : 'One file that is all of it: the copy and the key that opens its tokens, locked with the passphrase below. Put back here or on another machine (Put a copy back), the passphrase opens the key again. Lost, the key in the file is lost with it - it is not kept anywhere.'));
+    var p1 = secretBox('', '10 characters at least', 'mono');
+    var p2 = secretBox('', 'the same again', 'mono');
+    p1.id = 'dbk-p1'; p2.id = 'dbk-p2';
+    var g = el('div', 'formgrid');
+    g.appendChild(formField('Passphrase', p1));
+    g.appendChild(formField('The passphrase again', p2));
+    withBox.appendChild(g);
+    body.appendChild(withBox);
+    var noBox = el('div');
+    noBox.hidden = true;
+    noBox.appendChild(el('p', 'note warn', what === 'dump'
+      ? 'The dump alone opens no token on another machine: the key is the .key file beside it in /var/lib/upsmon/dumps (or /var/lib/upsmon/secrets.key). Keep the two together.'
+      : 'The copy alone opens no token on another machine: the key is the .key file beside it in /var/lib/upsmon/backups (or /var/lib/upsmon/secrets.key). Keep the two together.'));
+    body.appendChild(noBox);
+    body._with = true;
+    withB.onclick = function () { body._with = true; withB.classList.add('on'); noB.classList.remove('on'); withBox.hidden = false; noBox.hidden = true; };
+    noB.onclick = function () { body._with = false; noB.classList.add('on'); withB.classList.remove('on'); withBox.hidden = true; noBox.hidden = false; };
+    MODAL_BODY_DBK = body;
+  }, [
+    {words: 'Cancel', close: true},
+    {words: 'Download', cls: 'primary', icon: 'down', go: function (button) {
+      var body = MODAL_BODY_DBK;
+      if (!body._with) {
+        closeModal();
+        if (o.now) toast('it is being made; the download starts when it is ready', 'good');
+        window.location.href = '?api=db-download' + (o.name ? '&name=' + encodeURIComponent(o.name) : '') + (o.kind === 'dump' ? '&kind=dump' : '');
+        return;
+      }
+      var a = $('dbk-p1').value, b2 = $('dbk-p2').value;
+      if (a.length < 10) { toast('a passphrase of 10 characters at least', 'bad'); return; }
+      if (a !== b2) { toast('the two passphrases are not the same', 'bad'); return; }
+      busy(button, true);
+      if (o.now) toast('it is being made; the download starts when it is ready', 'good');
+      api('db', {action: 'download_ticket', name: o.name || '', kind: o.kind || '', passphrase: a}).then(function (t) {
+        closeModal();
+        window.location.href = '?api=db-download&ticket=' + encodeURIComponent(t.ticket);
+        toast(t.name + ' - keep the passphrase apart from the file', 'good');
+      }).catch(oops).then(function () { busy(button, false); });
+    }}]);
+}
+var MODAL_BODY_DBK = null;
+function dbAskPassphrase(d, fileName) {
+  modal('The key in ' + fileName, function (body) {
+    body.appendChild(el('p', 'note', 'This file holds the database and the key that opens its tokens, locked with a passphrase. Give it, and both are put back.'));
+    var p = secretBox('', '', 'mono');
+    p.id = 'dbk-open';
+    body.appendChild(formField('Passphrase', p));
+    setTimeout(function () { p.focus(); }, 50);
+  }, [
+    {words: 'Cancel', close: true},
+    {words: 'Open it', cls: 'primary', icon: 'key', go: function (button) {
+      var pass = $('dbk-open').value;
+      busy(button, true);
+      api('db', {action: 'upload_restore', upload: d.upload, passphrase: pass, check: true}).then(function (x) {
+        closeModal();
+        setTimeout(function () {
+          askBeforeRestoring(x.says, fileName + ' (with its key)', function () {
+            return api('db', {action: 'upload_restore', upload: d.upload, passphrase: pass});
+          });
+        }, 30);
+      }).catch(oops).then(function () { busy(button, false); });
+    }}]);
+}
+function dropBox(ids, empty) {
+  var box = $(ids.drop);
+  if (!box) return;
+  var go = $(ids.go);
+  function picked(file) {
+    go._held = file || null;
+    var says = $(ids.what);
+    clear(says);
+    says.hidden = !go._held;
+    go.disabled = !go._held;
+    $(ids.says).textContent = go._held ? go._held.name + ' · ' + bytes(go._held.size) : empty;
+    if (!go._held) return;
+    says.appendChild(el('p', 'btnhelp', 'Nothing has happened yet. Press Restore from this file and it will be read first — if it is not one of ours, if it is a dump of a different engine, or if it has no administrator in it, it is refused and nothing here changes.'));
+  }
+  box.onclick = function () { $(ids.file).click(); };
+  $(ids.file).onchange = function () { picked(this.files && this.files[0]); this.value = ''; };
+  ['dragenter', 'dragover'].forEach(function (name) {
+    box.addEventListener(name, function (e) { e.preventDefault(); box.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (name) {
+    box.addEventListener(name, function (e) {
+      e.preventDefault();
+      box.classList.remove('over');
+      if (name === 'drop' && e.dataTransfer && e.dataTransfer.files) picked(e.dataTransfer.files[0]);
+    });
+  });
+  go.onclick = function () {
+    var held = go._held;
+    if (!held) return;
+    busy(go, true);
+    dbSend(held, true).then(function (d) {
+      if (d.upload) { dbAskPassphrase(d, held.name); return; }
+      askBeforeRestoring(d.says, held.name, function () { return dbSend(held, false); });
+    }).catch(oops).then(function () { busy(go, false); });
+  };
+}
+
+/* ---- the database server's own settings ---------------------------------- */
+function drawTune(d) {
+  var host = $('db-tune-says');
+  clear(host);
+  var t = d.tune || {};
+  var file = d.engine === 'sqlite';
+  $('db-tune').hidden = file;
+  var last = t.last;
+  $('db-tune-undo').hidden = file || !last || !!last.undone || last.engine !== d.engine;
+  $('db-tune-restart').hidden = true;
+  if (file) {
+    host.appendChild(el('p', 'note', 'The file on this machine has no server to tune: this program sets it up itself.'));
+    return;
+  }
+  if (last && last.engine === d.engine) {
+    var p = el('p', 'note');
+    if (last.undone) {
+      p.appendChild(document.createTextNode('Put back as it was before'));
+      p.appendChild(document.createTextNode(' ' + stamp(last.undone) + (last.undone_by ? ' · ' + last.undone_by : '') + '.'));
+    } else {
+      p.appendChild(document.createTextNode('Tuned for its machine'));
+      p.appendChild(document.createTextNode(' ' + stamp(last.at) + (last.by ? ' · ' + last.by : '') + ':'));
+      var set = last.set || {};
+      Object.keys(set).sort().forEach(function (n, i) {
+        p.appendChild(document.createTextNode(i ? ', ' : ' '));
+        p.appendChild(noI18n(el('span', 'mono', n + ' = ' + set[n])));
+      });
+    }
+    host.appendChild(p);
+  } else {
+    host.appendChild(el('p', 'note', 'Not tuned from this page yet.'));
+  }
+  if ((t.pending || []).length) {
+    var w = el('p', 'note bad');
+    w.appendChild(document.createTextNode('Waiting for the server’s next start:'));
+    t.pending.forEach(function (n, i) {
+      w.appendChild(document.createTextNode(i ? ', ' : ' '));
+      w.appendChild(noI18n(el('span', 'mono', n)));
+    });
+    host.appendChild(w);
+    if (t.restart && t.restart.may) {
+      $('db-tune-restart').hidden = false;
+    } else {
+      if (t.restart && t.restart.why) host.appendChild(el('p', 'note', 'This program cannot restart it from here: ' + t.restart.why + '.'));
+      host.appendChild(el('p', 'note', 'On the server, as root:'));
+      host.appendChild(noI18n(el('pre', 'mono small', 'systemctl restart ' + ((t.restart && t.restart.unit) || 'postgresql'))));
+      host.appendChild(el('p', 'btnhelp', 'Or let these pages do it: install.sh --upgrade puts in the rule that lets upsmon restart PostgreSQL on this machine, and nothing else (--no-db-restart takes it away).'));
+    }
+  }
+  if ((t.lost || []).length) {
+    var l = el('p', 'note bad');
+    l.appendChild(document.createTextNode('MariaDB has been started again since, and these are back as they were:'));
+    t.lost.forEach(function (n, i) {
+      l.appendChild(document.createTextNode(i ? ', ' : ' '));
+      l.appendChild(noI18n(el('span', 'mono', n)));
+    });
+    host.appendChild(l);
+    host.appendChild(el('p', 'note', 'The file the popup gives keeps them over a restart.'));
+  }
+}
+
+var TUNE = null;
+function tuneAdminBoxes(body, engine) {
+  var g = el('div', 'formgrid');
+  var who = textBox(TUNE && TUNE.user || '', engine === 'postgres' ? 'postgres' : 'root', '');
+  who.autocomplete = 'off';
+  who.setAttribute('data-lpignore', 'true');
+  var word = maskBox('', '', '');
+  word.setAttribute('data-lpignore', 'true');
+  word.value = TUNE && TUNE.pass || '';
+  g.appendChild(formField('An administrator on that server', who, 'Only where upsmon’s own account may not change them. Used for this one request and stored nowhere: not in the settings, not in the database, not in any log.'));
+  g.appendChild(formField('Its password', word));
+  body.appendChild(g);
+  return {who: who, word: word};
+}
+function tuneForget() {
+  TUNE = null;
+  Array.prototype.forEach.call(document.querySelectorAll('#modal-body input'), function (i) { i.value = ''; });
+}
+function tuneAsked() {
+  var out = {machine: {}};
+  if (!TUNE) return out;
+  if (TUNE.boxes) { TUNE.user = TUNE.boxes.who.value.trim(); TUNE.pass = TUNE.boxes.word.value; }
+  if (TUNE.hw) {
+    TUNE.ram = TUNE.hw.ram.value.replace(',', '.').trim();
+    TUNE.cpus = TUNE.hw.cpus.value.trim();
+    TUNE.disk = TUNE.hw.disk.value;
+  }
+  if (TUNE.ram) out.machine.ram_gb = TUNE.ram;
+  if (TUNE.cpus) out.machine.cpus = TUNE.cpus;
+  if (TUNE.disk) out.machine.disk = TUNE.disk;
+  out.admin_user = TUNE.user || '';
+  out.admin_password = TUNE.pass || '';
+  return out;
+}
+function openTune() {
+  TUNE = {user: '', pass: '', ram: '', cpus: '', disk: '', plan: null};
+  modal('Tuning the database server for its machine', function (body) {
+    body.appendChild(el('p', 'note', 'Reading what the machine has and what the server is set to, and timing a few small writes…'));
+  }, [{words: 'Close', close: true}], 'tune');
+  MODAL_CLOSE = tuneForget;
+  tuneLook();
+}
+function tuneLook(button) {
+  var ask = tuneAsked();
+  var ticket = modalTicket();
+  if (button) busy(button, true);
+  api('db', {action: 'tune_plan', machine: ask.machine}).then(function (d) {
+    if (!modalStill(ticket)) return;
+    TUNE.plan = d;
+    tuneDraw(d);
+  }).catch(function (e) {
+    if (!modalStill(ticket)) return;
+    if (button) busy(button, false);
+    oops(e);
+  });
+}
+function tuneValue(v) { return v === null || v === undefined || v === '' ? '–' : String(v); }
+function tuneDraw(d, done) {
+  var changes = (d.items || []).filter(function (it) { return it.change; });
+  var buttons = [
+    {words: 'Read again', icon: 'refresh', left: true, go: function (b) { tuneLook(b); }},
+    {words: 'Close', close: true}
+  ];
+  if (changes.length) {
+    buttons.splice(1, 0, {words: 'Put it in', cls: 'primary', icon: 'gear', admin: true,
+                          go: function (b) { tuneApply(b); }});
+  }
+  /* What waits for the server's next start, started from here - as isemon
+     does - where install.sh let this program restart it. */
+  var waiting = (d.items || []).some(function (it) { return it.waiting || it.pending; });
+  if (waiting && d.restart && d.restart.may) {
+    buttons.splice(1, 0, {words: 'Restart the server…', cls: changes.length ? '' : 'primary',
+                          icon: 'power', admin: true, go: function () { tuneRestartAsk(); }});
+  }
+  modal('Tuning ' + d.words + ' for its machine', function (body) {
+    var f = d.facts || {};
+    body.appendChild(peekFacts([
+      ['Server', String(d.version || d.words).replace(/\s*\(.*\)\s*$/, '')],
+      ['Where', d.where],
+      ['Database', bytes(d.size)],
+      f.ram ? ['Memory', bytes(f.ram)] : null,
+      f.avail ? ['Free now', bytes(f.avail)] : null,
+      f.cpus ? ['Processors', num(f.cpus)] : null,
+      ['Disk', f.disk === 'hdd' ? 'a disk that spins' : 'SSD'],
+      f.commit_ms !== null && f.commit_ms !== undefined
+        ? ['A write made safe in', Number(f.commit_ms).toFixed(1).replace('.', numDecimal()) + ' ms'] : null,
+      d.connections ? ['Connections allowed', num(d.connections)] : null
+    ]));
+    var from = {'this machine': 'Read from this machine, which the server runs on.',
+                'typed': 'As typed below.'}[f.source || ''];
+    if (from) body.appendChild(el('p', 'note', from));
+    if (f.why && f.why !== 'chosen') body.appendChild(el('p', 'note', 'The disk: ' + f.why));
+    if (d.need_facts) {
+      body.appendChild(el('p', 'note bad', 'The server is on another machine and what it has could not be read from here. Type its memory and processors below and press Read again.'));
+    }
+    var row = el('div', 'tune-machine');
+    var hw = {};
+    [['ram', 'Memory, GB', f.ram ? String(Math.round(f.ram / 1073741824 * 10) / 10) : ''],
+     ['cpus', 'Processors', f.cpus ? String(f.cpus) : '']].forEach(function (one) {
+      var box = el('div', 'set-item');
+      box.appendChild(el('label', '', one[1]));
+      var input = el('input');
+      input.type = 'text';
+      input.inputMode = 'decimal';
+      input.value = TUNE[one[0]] || one[2];
+      box.appendChild(input);
+      row.appendChild(box);
+      hw[one[0]] = input;
+    });
+    var dbox = el('div', 'set-item');
+    dbox.appendChild(el('label', '', 'Disk'));
+    var sel = selectBox([['ssd', 'SSD'], ['hdd', 'a disk that spins']], TUNE.disk || f.disk || 'ssd');
+    dbox.appendChild(sel);
+    row.appendChild(dbox);
+    hw.disk = sel;
+    body.appendChild(row);
+    TUNE.hw = hw;
+    body.appendChild(el('p', 'btnhelp', 'Change any of these and press Read again: the settings are worked out afresh for what is typed.'));
+    if (done) {
+      if ((done.done || []).length || (done.later || []).length) {
+        body.appendChild(el('p', 'note good', 'Put in: ' + ((done.done || []).join(', ') || 'nothing at once')
+          + ((done.later || []).length ? ' · at the next start: ' + done.later.join(', ') : '')));
+      }
+      if ((done.failed || []).length) body.appendChild(el('p', 'note bad', 'Refused: ' + done.failed.join('; ')));
+    }
+    if ((d.items || []).length) {
+      body.appendChild(el('h4', '', changes.length
+        ? 'What would change' : 'Nothing to change: every setting is right for this machine'));
+      var wrap = listTable(['Setting', 'Now', 'For this machine', 'Takes', 'Why'], d.items, function (it) {
+        var tr = el('tr', it.change ? 'tune-change' : '');
+        tr.appendChild(noI18n(el('td', 'mono', it.name)));
+        tr.appendChild(noI18n(el('td', 'mono', tuneValue(it.now))));
+        var want = el('td', 'mono ' + (it.change ? 'good' : 'muted'));
+        want.appendChild(noI18n(el('span', '', tuneValue(it.want))));
+        if (it.waiting) { want.appendChild(document.createTextNode(' ')); want.appendChild(el('span', 'tag warn', 'waiting for a start')); }
+        tr.appendChild(want);
+        tr.appendChild(el('td', it.restart ? 'warn' : 'muted', it.takes));
+        tr.appendChild(el('td', 'muted small', it.why));
+        return tr;
+      }, 'plain tune-table');
+      body.appendChild(wrap);
+    }
+    if (d.engine === 'postgres' && waiting && d.restart && !d.restart.may && d.restart.why) {
+      body.appendChild(el('p', 'note bad', 'This program cannot restart it from here: ' + d.restart.why + '.'));
+    }
+    if (d.engine === 'postgres') {
+      body.appendChild(el('p', 'btnhelp', d.restart && d.restart.may
+        ? 'What takes effect only at the next start waits for it: Restart the server, under this popup, does that when you say so.'
+        : 'What takes effect only at the next start waits for it: on the server, as root, systemctl restart ' + ((d.restart && d.restart.unit) || 'postgresql') + '.'));
+    }
+    if (d.engine === 'mariadb' && d.cnf) {
+      body.appendChild(el('h4', '', 'To keep them over a restart'));
+      body.appendChild(el('p', 'note', 'SET GLOBAL lasts until MariaDB is next started, and upsmon may not write in /etc. Put this in /etc/my.cnf.d/zz-upsmon-tuning.cnf on the server; the ones marked at the next start take effect only from there.'));
+      body.appendChild(noI18n(el('pre', 'mono small', d.cnf)));
+    }
+    body.appendChild(el('h4', '', 'Who changes them'));
+    TUNE.boxes = tuneAdminBoxes(body, d.engine);
+  }, buttons, 'tune');
+  MODAL_CLOSE = tuneForget;
+}
+function tuneApply(button) {
+  var ask = tuneAsked();
+  busy(button, true);
+  api('db', {action: 'tune_apply', machine: ask.machine, admin_user: ask.admin_user,
+             admin_password: ask.admin_password}).then(function (d) {
+    TUNE.plan = d;
+    tuneDraw(d, d);
+    loadDb();
+  }).catch(function (e) { busy(button, false); oops(e); });
+}
+
+/* ---- erasing what was collected ----------------------------------------- */
+function drawErasable(d) {
+  var host = $('erase-list');
+  var was = {};
+  Array.prototype.forEach.call(host.querySelectorAll('input[type=checkbox]'),
+    function (b) { was[b.dataset.group] = b.checked; });
+  clear(host);
+  $('erase-size').textContent = bytes(d.bytes || 0) + ' in all';
+  (d.groups || []).forEach(function (g) {
+    var row = el('label', 'erase-one' + (g.rows ? '' : ' empty'));
+    var box = document.createElement('input');
+    box.type = 'checkbox';
+    box.dataset.group = g.key;
+    box.checked = !!was[g.key];
+    box.disabled = !ADMIN || !g.rows;
+    box.onchange = markErase;
+    row.appendChild(box);
+    var words = el('div', 'erase-words');
+    var top = el('div', 'erase-top');
+    top.appendChild(el('span', 'erase-name', g.name));
+    top.appendChild(el('span', 'tag ' + (g.rows ? 'info' : 'dim'), g.rows ? num(g.rows) + ' row(s)' : 'already empty'));
+    words.appendChild(top);
+    words.appendChild(el('div', 'erase-says', g.says));
+    row.appendChild(words);
+    host.appendChild(row);
+  });
+  markErase();
+}
+function erasePicked() {
+  return Array.prototype.filter.call(document.querySelectorAll('#erase-list input[type=checkbox]'),
+    function (b) { return b.checked; }).map(function (b) { return b.dataset.group; });
+}
+function markErase() {
+  var picked = erasePicked();
+  var go = $('erase-go');
+  go.disabled = !ADMIN || !picked.length || !!DB_WATCHING;
+  setButtonIcon(go, 'forget', picked.length ? 'Erase ' + picked.length + ' of these…' : 'Erase what is ticked…');
+}
+
+if ($('db-engine-test')) {
+  $('db-engine-test').onclick = function () {
+    busy($('db-engine-test'), true);
+    api('db', {action: 'try', settings: dbAsked()}).then(function (d) {
+      modal('Trying ' + d.words, function (body) {
+        body.appendChild(el('p', 'note', 'Nothing was saved and nothing was written: this opened it, asked what it is, counted what is in it and closed it again.'));
+        body.appendChild(engineFacts(d));
+        if (!d.reached) body.appendChild(el('p', 'note bad', String(d.trouble || '')));
+        else if (d.in_use) body.appendChild(el('p', 'note', 'This is the database in use.'));
+        else if (!d.writable) body.appendChild(el('p', 'note bad', 'It answers, but this account may not make anything in it. Set it up, or give the account rights on that database.'));
+        else if (!d.rows) body.appendChild(el('p', 'note good', 'It is reachable and empty of ours, which is exactly what something to carry everything into should look like.'));
+      }, [{words: 'Close', close: true}], true);
+    }).catch(oops).then(function () { busy($('db-engine-test'), false); });
+  };
+
+  $('db-engine-setup').onclick = function () {
+    var want = dbAsked();
+    var who, word;
+    modal('Setting up ' + engineWord(want.db_engine), function (body) {
+      body.appendChild(el('p', 'note', 'This makes the database and the account on that server, and gives the account rights on that one database and no other. The first time, it needs an administrator on the server to do it — root on MariaDB, postgres on PostgreSQL, or anyone who may create a database.'));
+      body.appendChild(el('p', 'note', 'That administrator is used for this one connection and is stored nowhere: not in the settings, not in the database, not in any log.'));
+      body.appendChild(el('p', 'note', 'The account this program will use is made with a password of its own, generated here — you do not have to invent one. It is written into the config file, and shown once when this is done so you can keep a copy.'));
+      body.appendChild(el('p', 'note', 'Press this again later and it does the other half of the job: if the account already gets in, nothing is made and no administrator is wanted — it opens the database and puts its tables right. Leave the two boxes empty for that.'));
+      var g = el('div', 'formgrid');
+      who = textBox('', want.db_engine === 'postgres' ? 'postgres' : 'root', '');
+      who.autocomplete = 'off';
+      word = maskBox('', '', '');
+      g.appendChild(formField('An administrator on that server', who, 'Only needed the first time, or if the account cannot get in.'));
+      g.appendChild(formField('Its password', word));
+      body.appendChild(g);
+    }, [{words: 'Close', close: true}, {words: 'Set it up', cls: 'primary', icon: 'key', go: function (b) {
+      var ticket = modalTicket();
+      busy(b, true);
+      api('db', {action: 'setup', settings: want, admin_user: who.value.trim(), admin_password: word.value}).then(function (d) {
+        if (!modalStill(ticket)) modal('The database, set up', function () {}, [{words: 'Close', close: true}]);
+        var body = $('modal-body');
+        clear(body);
+        (d.made || []).forEach(function (line) { body.appendChild(el('p', 'note good', line)); });
+        body.appendChild(engineFacts(d.try || {}));
+        if (d.password) {
+          body.appendChild(el('h4', '', 'The password made for ' + (want.db_user || 'it')));
+          var pw = el('input');
+          pw.type = 'text'; pw.readOnly = true; pw.className = 'mono'; pw.value = d.password;
+          pw.onclick = function () { pw.select(); };
+          noI18n(pw);
+          body.appendChild(pw);
+          var copy = cmdButton('Copy it', 'copy', 'small');
+          copy.style.marginTop = '8px';
+          copy.onclick = function () {
+            pw.select();
+            var ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+            toast(ok ? 'copied' : 'press Ctrl+C — it is selected', ok ? 'good' : 'warn');
+          };
+          body.appendChild(copy);
+          body.appendChild(el('p', 'note', 'It is saved in ' + (d.kept_in || 'the config file') + ' and nowhere else, so nothing has to be typed in above. This is the only time it is shown — keep a copy if you want one, though nothing here needs it again.'));
+        }
+        body.appendChild(el('p', 'note', 'The address is saved. Nothing has moved yet: carry everything across when you are ready.'));
+        clear($('modal-foot'));
+        var close = cmdButton('Close', 'close', '');
+        close.onclick = closeModal;
+        $('modal-foot').appendChild(close);
+        loadSettings();
+      }).catch(function (e) { busy(b, false); oops(e); });
+    }}], 'medium');
+  };
+
+  $('db-engine-move').onclick = function () {
+    var want = dbAsked();
+    var word = engineWord(want.db_engine);
+    modal('Carrying everything into ' + word, function (body) {
+      body.appendChild(el('p', 'note', 'Every token, every request, every setting and every account is copied into ' + word + '. On a large database this takes minutes; you can close this and it carries on.'));
+      body.appendChild(el('p', 'note', 'What is here is not touched, and a copy of it is made first in any case. Nothing starts using the other database until you say so afterwards.'));
+    }, [{words: 'Leave it', close: true}, {words: 'Carry it across', cls: 'primary', icon: 'save', close: true, go: function () {
+      api('db', {action: 'move', settings: want}).then(function () { dbWatch(); }).catch(oops);
+    }}], true);
+  };
+
+  $('db-engine-empty').onclick = function () {
+    var want = dbAsked();
+    var word = engineWord(want.db_engine);
+    modal('Emptying ' + word, function (body) {
+      body.appendChild(el('p', 'note bad', 'This throws away everything of upsmon in the OTHER database — the ' + word + ' above, not the one in use. It is for when a first attempt at moving left something in it and the move will not go on.'));
+      body.appendChild(el('p', 'note', 'Nothing in the database this installation is running on is touched, and this is refused outright if the two are the same.'));
+    }, [{words: 'Leave it', close: true}, {words: 'Empty it', cls: 'danger', icon: 'forget', close: true, go: function () {
+      api('db', {action: 'empty', settings: want}).then(function (d) { toast(d.message, 'good'); loadDb(); }).catch(oops);
+    }}], true);
+  };
+
+  $('db-engine-use').onclick = function () {
+    var want = dbAsked();
+    var word = engineWord(want.db_engine);
+    modal('Start using ' + word, function (body) {
+      body.appendChild(el('p', 'note', 'This writes the address into ' + ((DBSTATE && DBSTATE.config_file) || 'the config file') + ' and restarts the daemon, which takes a few seconds. Nothing in either database is touched.'));
+      body.appendChild(el('p', 'note', want.db_engine === 'sqlite'
+        ? 'Everything will be read out of the file on this machine from then on, and the server may be uninstalled once you are happy.'
+        : 'Everything will be read out of ' + word + ' from then on, and the file on this machine may be deleted once you are happy. Carry everything across first if you have not — this does not move anything.'));
+    }, [{words: 'Not yet', close: true}, {words: 'Start using it', cls: 'primary', icon: 'power', close: true, go: function () {
+      api('db', {action: 'use', settings: want}).then(function (d) {
+        toast(d.message, 'good');
+        setTimeout(function () { location.reload(); }, 9000);
+      }).catch(oops);
+    }}], true);
+  };
+
+  $('db-backup').onclick = function () {
+    busy($('db-backup'), true);
+    api('db', {action: 'backup'}).then(function (x) { toast(x.message, 'good'); loadDb(); })
+      .catch(oops).then(function () { busy($('db-backup'), false); });
+  };
+  $('db-download').onclick = function () { dbDownloadAsk({kind: '', now: true, key: true}); };
+  $('db-dump-make').onclick = function () {
+    busy($('db-dump-make'), true);
+    toast('dumping — this takes as long as the database is big');
+    api('db', {action: 'dump'}).then(function (d) {
+      toast('a dump was made: ' + d.name + ' (' + bytes(d.bytes) + ')', 'good');
+      loadDb();
+    }).catch(oops).then(function () { busy($('db-dump-make'), false); });
+  };
+  $('db-dump-get').onclick = function () { dbDownloadAsk({kind: 'dump', now: true, key: true}); };
+  $('db-tidy').onclick = function () {
+    busy($('db-tidy'), true);
+    api('db', {action: 'tidy'}).then(function (x) { toast(x.message, 'good'); loadDb(); })
+      .catch(oops).then(function () { busy($('db-tidy'), false); });
+  };
+  $('db-check').onclick = function () {
+    busy($('db-check'), true);
+    api('db', {action: 'check'}).then(function (d) {
+      modal(d.ok ? 'Nothing in it is broken' : 'Something in it is broken', function (body) {
+        var ul = el('ul', 'note');
+        (d.said || []).forEach(function (one) { ul.appendChild(noI18n(el('li', 'mono small', one))); });
+        body.appendChild(ul);
+      }, [{words: 'Close', close: true}], true);
+    }).catch(oops).then(function () { busy($('db-check'), false); });
+  };
+  $('db-optimize').onclick = function () {
+    confirmThen('Give the disk back', 'Each table is rebuilt and held shut while it is. In a cluster this node '
+      + 'answers no RADIUS meanwhile and the other node signs everybody in; alone, sign-ins wait for it - do it '
+      + 'when few sign in. It needs room for a second copy of the biggest table. Worth '
+      + 'doing after throwing a lot away, and not otherwise.', 'Give it back',
+      function () { api('db', {action: 'give_back'}).then(function () { dbWatch(); }).catch(oops); }, false);
+  };
+  $('db-prune').onclick = function () {
+    var days, everything;
+    modal('Forget records older than…', function (body) {
+      body.appendChild(el('p', 'note', 'The samples of the UPS, the plug and the sensors, and the events, older than this are '
+        + 'deleted now. The accounts, the certificates and the settings are not touched.'));
+      days = el('input'); days.type = 'number'; days.min = 1; days.value = 90;
+      body.appendChild(formField('Older than (days)', days));
+      everything = switchBox(false);
+      everything._input.addEventListener('change', function () { days.disabled = !!everything._get(); });
+      body.appendChild(formField('Every line, whatever its age — the whole log emptied', everything));
+    }, [{words: 'Close', close: true}, {words: 'Forget them', cls: 'danger', icon: 'forget', go: function (b) {
+      busy(b, true);
+      api('db', {action: 'prune', days: Number(days.value), everything: !!everything._get()}).then(function (d) {
+        toast(d.message, 'good'); closeModal(); loadDb();
+      }).catch(oops).then(function () { busy(b, false); });
+    }}], 'medium');
+  };
+  $('db-tune').onclick = openTune;
+  $('db-tune-restart').onclick = function () { tuneRestartAsk(); };
+}
+function tuneRestartAsk() {
+  {
+    var unit = ((DBSTATE && DBSTATE.tune && DBSTATE.tune.restart) || {}).unit || 'postgresql';
+    modal('Restart ' + unit, function (body) {
+      body.appendChild(el('p', 'note', 'PostgreSQL is stopped and started again so that the settings waiting for its next start take effect. It takes a few seconds; the RADIUS server waits for it meanwhile, and the requests in that moment are answered as soon as it is back.'));
+      body.appendChild(el('p', 'note', 'Not done when it might not come back: a shared_buffers larger than the memory free now, or huge pages.'));
+    }, [{words: 'Not now', close: true}, {words: 'Restart it', cls: 'primary', icon: 'power', go: function (b) {
+      busy(b, true);
+      api('db', {action: 'tune_restart'}).then(function (d) {
+        toast(d.message, 'good'); closeModal(); loadDb();
+      }).catch(function (e) { busy(b, false); oops(e); });
+    }}], true);
+  }
+}
+if ($('db-tune-undo')) {
+  $('db-tune-undo').onclick = function () {
+    var user, pass;
+    modal('Put back as it was', function (body) {
+      body.appendChild(el('p', 'note', 'Every setting this page changed goes back to what it was before. Empty: upsmon’s own account, where it has that right.'));
+      var g = el('div', 'formgrid');
+      user = textBox('', DBSTATE && DBSTATE.engine === 'postgres' ? 'postgres' : 'root', '');
+      pass = maskBox('', '', '');
+      g.appendChild(formField('An administrator on that server', user));
+      g.appendChild(formField('Its password', pass, 'Used for this one request; kept nowhere.'));
+      body.appendChild(g);
+    }, [{words: 'Close', close: true}, {words: 'Put it back', cls: 'primary', icon: 'undo', go: function (b) {
+      busy(b, true);
+      api('db', {action: 'tune_undo', admin_user: user.value.trim(), admin_password: pass.value}).then(function (d) {
+        toast('put back: ' + (d.done || []).join(', '), 'good'); closeModal(); loadDb();
+      }).catch(oops).then(function () { busy(b, false); });
+    }}], 'medium');
+  };
+  $('erase-go').onclick = function () {
+    var picked = erasePicked();
+    if (!picked.length) return;
+    var names = Array.prototype.filter.call(document.querySelectorAll('#erase-list input[type=checkbox]'),
+      function (b) { return b.checked; }).map(function (b) {
+        return b.closest('.erase-one').querySelector('.erase-name').textContent;
+      });
+    modal(picked.length === 1 ? 'Erase this?' : 'Erase these ' + picked.length + '?', function (body) {
+      body.appendChild(el('p', 'note', 'This erases, for good:'));
+      var ul = el('ul', 'ask-list');
+      names.forEach(function (n) { ul.appendChild(el('li', '', n)); });
+      body.appendChild(ul);
+      body.appendChild(el('p', 'note', 'The tokens, the accounts and every setting are not touched.'));
+      body.appendChild(el('p', 'muted', 'A copy of the database is made first, so this can be undone by restoring it.'));
+    }, [{words: 'No, leave it', close: true}, {words: 'Erase it', cls: 'danger', icon: 'forget', close: true, go: function () {
+      api('db', {action: 'erase', groups: picked, tidy: $('erase-tidy').checked}).then(function () {
+        dbWatch();
+      }).catch(oops);
+    }}], true);
+  };
+  dropBox({drop: 'db-drop', file: 'db-file', says: 'db-drop-says', what: 'db-upload-what', go: 'db-restore'},
+          'Drop a database file here, or press to choose one');
+  dropBox({drop: 'dump-drop', file: 'dump-file', says: 'dump-drop-says', what: 'dump-upload-what', go: 'dump-restore'},
+          'Drop a dump here, or press to choose one');
+}
+
+
 /* ======== about (OTP admin.js 5939-6104) ======== */
 /* ---- about ---------------------------------------------------------------- */
 function drawAbout() {
@@ -1805,8 +2849,9 @@ function drawAbout() {
   var host = $('about-state');
   clear(host);
   host.appendChild(el('h2', '', 'upsmon ' + (s.version || '')));
-  host.appendChild(peekFacts([['Running for', span(s.uptime || 0)], ['RADIUS', ((s.radius || {}).listening || []).join(', ') || 'not listening'],
-                              ['Clients', num(s.clients)], ['Realms', num(s.realms)], ['Directories', num(s.directories)],
+  var u = s.ups || {};
+  host.appendChild(peekFacts([['Running for', span(s.uptime || 0)], ['UPS', (u.name || '?') + (u.status ? ' · ' + u.status : '')],
+                              ['Accounts', num(s.accounts)],
                               ['Database', ({sqlite: 'SQLite', mariadb: 'MariaDB', postgres: 'PostgreSQL'})[(s.database || {}).engine] || (s.database || {}).engine]]));
   var c = (s.radius || {}).counts || {};
   host.appendChild(kvTable(Object.keys(c).sort().map(function (k) { return [k, num(c[k])]; })));
@@ -2012,8 +3057,8 @@ function maintenanceAsk(n, on, then) {
   modal('Take ' + n.name + ' out of service', function (body) {
     var p = el('p', 'note');
     p.textContent = alone
-      ? 'This is the only server: while it is in maintenance nobody can sign in to the VPN. Its pages go on working.'
-      : 'It stops answering RADIUS and its /healthz says 503: the VPN and the load balancer go to the other node. Its pages go on working.';
+      ? 'This is the only server: while it is in maintenance the dashboard is away. Its pages go on working.'
+      : 'It is in maintenance while it is upgraded. Its pages go on working.';
     if (alone) p.className = 'note bad';
     body.appendChild(p);
     var why = textBox('', 'why - for the events', '');
@@ -2103,7 +3148,7 @@ function drawUpWeb(d) {
         var many = (d.nodes || []).length > 1;
         var c = chosen();
         confirmThen('Upgrade to upsmon ' + c.version + '?', htmlText('It is fetched from ' + (c.url || o.url) + ', its signature checked, and '
-          + (many ? 'the nodes are upgraded one at a time - each in maintenance while it is, so the service never stops.' : 'this server is upgraded: for a minute nobody can sign in to the VPN.')), 'Upgrade', function () {
+          + (many ? 'the nodes are upgraded one at a time - each in maintenance while it is, so the service never stops.' : 'this server is upgraded: for a minute the dashboard is away.')), 'Upgrade', function () {
           busy(up, true);
           api('upgrade', {action: 'online_get', version: c.version, start: true}).then(function (x) { toast(x.message, 'good'); drawUpgrade(x); })
             .catch(oops).then(function () { busy(up, false); });
@@ -2130,7 +3175,7 @@ function upDownConfirm(version, go) {
   var many = (d.nodes || []).filter(function (n) { return n.alive; }).length > 1;
   confirmThen('Go back to upsmon ' + version + '?', htmlText('The version running now is replaced by the older ' + version + (many
     ? ' on every node, one at a time - each in maintenance while it is, so the service never stops.'
-    : ' - for a minute nobody can sign in to the VPN.') + ' The database stays as it is. What came in the newer versions is gone until you upgrade again.'),
+    : ' - for a minute the dashboard is away.') + ' The database stays as it is. What came in the newer versions is gone until you upgrade again.'),
     'Go back', go, true);
 }
 function upDownChangelog(version) {
@@ -2518,7 +3563,7 @@ if ($('up-drop')) {
       }); return; }
       confirmThen(many ? 'Upgrade every node to ' + p.version : 'Upgrade this server to ' + p.version,
         many ? 'One node at a time: it is taken out of service, upgraded, checked and brought back, and only then the next one. The VPN and the load balancer use the other node meanwhile.'
-             : 'This server is the only one: while it is put in and restarted - a minute or two - nobody can sign in to the VPN, and these pages stop answering for a moment.',
+             : 'This server is the only one: while it is put in and restarted - a minute or two - the dashboard is away, and these pages stop answering for a moment.',
         'Upgrade', function () {
           api('upgrade', {action: 'start'}).then(function (r) { toast(r.message, 'good'); drawUpgrade(r); }).catch(oops);
         }, !many);
@@ -2695,12 +3740,8 @@ function certCard(d, target) {
     if (bef && !bef.ran_out) tools.appendChild(acmePutBackButton(target, bef, function () { loadWeb(); }));
     if (prof && prof.cert) {
       var dl = cmdButton('Download', 'download', 'small');
-      dl.title = 'The certificate and its chain, as PEM - without the key';
-      dl.onclick = function () {
-        api('web', {action: 'tls_pem', target: target}).then(function (x) {
-          saveFile((target === 'vip' ? 'web-address' : target) + '.pem', x.pem);
-        }).catch(oops);
-      };
+      dl.title = 'The certificate in the format you choose - PEM, DER, PFX / PKCS#12 - with its private key and a password, or without';
+      dl.onclick = function () { certExport(target, prof); };
       tools.appendChild(dl);
       var fg = cmdButton('Let go', 'forget', 'small danger-soft');
       fg.title = 'upsmon stops looking after it (nginx keeps what it has)';
@@ -3220,6 +4261,1756 @@ function drawVip(d) {
 
 
 
+/* ======== backups to another machine (OTP admin.js 11075-12159) ======== */
+/* ==== Backups to another machine (1.0.109) ===================================
+   Destinations (a folder, FTP, FTPS, SFTP, SCP, SMB) with their sign-in -
+   passwords, ssh keys made here or brought, the server's host key or its
+   certificate checked, a client certificate for FTPS - a backup sent now or on
+   a schedule, the history, the backups at each destination, and putting one
+   back. Only a full administrator sees any of it. */
+var RB = null;
+var RB_POLL = null;
+var RB_KIND_ICON = {folder: 'db', ftp: 'upload', ftps: 'lock', sftp: 'terminal', scp: 'terminal', smb: 'net'};
+var RB_KIND_SAYS = {
+  folder: 'A folder on this machine - an NFS or other share mounted here.',
+  ftp: 'Plain FTP: the password and the file go over unencrypted - only inside a network you trust (the file itself is locked).',
+  ftps: 'FTP over TLS - explicit (port 21) or implicit (990); the server’s certificate checked, a client certificate if it wants one.',
+  sftp: 'SSH file transfer: a key made here or your own, or a password; the server’s host key checked.',
+  scp: 'scp over SSH, and ssh to list and take away old ones - needs a shell on the server.',
+  smb: 'A Windows or Samba share: the account, its domain, SMB3 encryption.'
+};
+function rbWhen(ts) {
+  if (!ts) return '';
+  var n = Number(ts);
+  return isNaN(n) ? String(ts) : 'until ' + new Date(n * 1000).toLocaleDateString(numLang());
+}
+function rbBytes(n) {
+  n = Number(n || 0);
+  if (n < 1024) return num(n) + ' B';
+  var u = ['kB', 'MB', 'GB', 'TB'], i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n < 10 ? 1 : 0) + ' ' + u[i];
+}
+function rbWhere(t) {
+  if (t.kind === 'folder') return t.path || '';
+  if (t.kind === 'smb') return '\\\\' + t.host + (t.port && t.port !== 445 ? ':' + t.port : '') + '\\' + (t.share || '') + (t.path ? '\\' + String(t.path).replace(/\//g, '\\') : '');
+  return (t.user ? t.user + '@' : '') + t.host + (t.port ? ':' + t.port : '') + '/' + String(t.path || '').replace(/^\//, '');
+}
+function loadRbackup() {
+  var top = $('rb-top');
+  if (!top) return;
+  if (!ME || ME.role !== 'fulladmin') {
+    clear(top);
+    top.appendChild(el('p', 'note', 'Only a full administrator sees and changes the backups: they hold every token.'));
+    return;
+  }
+  api('rbackup').then(function (d) {
+    RB = d;
+    drawRbTop();
+    drawRbTargets();
+    drawRbRuns();
+    rbPassTools();
+    if (d.job && d.job.running) rbWatch();
+  }).catch(oops);
+}
+function rbPassTools() {
+  /* "Make one" beside the password of the backups: a long random one, shown
+     once to be put into the password vault. */
+  var item = document.querySelector('.set-item[data-key="rbackup_password"]');
+  if (!item || item.querySelector('.rb-gen')) return;
+  var b = cmdButton('Make a strong one', 'key', 'small rb-gen');
+  b.style.alignSelf = 'flex-start';
+  b.onclick = function () {
+    var a = new Uint8Array(24);
+    crypto.getRandomValues(a);
+    var abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+    var pw = '';
+    for (var i = 0; i < a.length; i++) { pw += abc.charAt(a[i] % abc.length); if (i % 6 === 5 && i < a.length - 1) pw += '-'; }
+    var box = item.querySelector('input');
+    if (box) {
+      if (box._set) box._set(pw); else box.value = pw;
+      box.dispatchEvent(new Event('input', {bubbles: true}));
+      box.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+    modal('The password of the backups', function (body) {
+      body.appendChild(el('p', 'note', 'Put it into your password vault now - this is the only time it is shown whole. Without it no backup can be opened, by anybody. Then press Save the changes.'));
+      var p = noI18n(el('div', 'rb-pass mono', pw));
+      body.appendChild(p);
+      var c = cmdButton('Copy', 'copy', 'small');
+      c.onclick = function () { copyText(pw, c, 'Copied'); };
+      body.appendChild(c);
+    }, [{words: 'Close', close: true}], true);
+  };
+  var says = item.querySelector('.says');
+  if (says) says.parentNode.insertBefore(b, says); else item.appendChild(b);
+}
+function drawRbTop() {
+  var host = $('rb-top');
+  clear(host);
+  var d = RB;
+  var card = el('div', 'card full rb-hero');
+  var last = (d.runs || [])[0];
+  var mine = (d.runs || []).filter(function (r) { return r.node === d.node; })[0];
+  var on = (d.targets || []).filter(function (t) { return t.enabled; });
+  var state = !on.length ? 'warn' : (!mine ? 'warn' : (mine.ok ? 'good' : 'bad'));
+  card.classList.add(state);
+  var head = el('div', 'rb-hero-head');
+  var ic = el('span', 'rb-hero-ic');
+  ic.innerHTML = iconMarkup(state === 'good' ? 'check' : (state === 'bad' ? 'flag' : 'info'), 22);
+  head.appendChild(ic);
+  var words = el('div', 'rb-hero-words');
+  var title = !on.length ? 'No destination yet - backups go nowhere'
+    : (!mine ? 'No backup of this node has been sent yet'
+      : (mine.ok ? 'The last backup of ' + d.node + ' went to every destination'
+        : 'The last backup of ' + d.node + ' did not reach every destination'));
+  words.appendChild(el('b', '', title));
+  var facts = el('div', 'rb-hero-facts');
+  var fact = function (k, v, cls) {
+    var f = el('span', 'rb-fact ' + (cls || ''));
+    f.appendChild(el('span', 'k', k));
+    f.appendChild(el('span', 'v', v));
+    facts.appendChild(f);
+  };
+  if (mine) fact('Last', ago(mine.at) + ' · ' + rbBytes(mine.bytes));
+  fact('Next', d.next ? new Date(d.next).toLocaleString(numLang(), {weekday: 'short', day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit'}) : 'by hand only', d.next ? '' : 'warn');
+  fact('Locked', d.locked ? 'with the password (AES-256)' : 'NOT locked - set the password', d.locked ? 'good' : 'bad');
+  fact('Destinations', num(on.length) + ' of ' + num((d.targets || []).length) + ' switched on');
+  /* The last try (1.0.169): whether the newest backup can be put back. */
+  var tried = (d.verified || []).filter(function (v) { return v.node === d.node; })[0];
+  fact('Tried', tried ? (tried.ok ? 'can be put back' : 'NOT GOOD') + ' · ' + ago(tried.at) : 'never', tried ? (tried.ok ? 'good' : 'bad') : 'warn');
+  words.appendChild(facts);
+  if (mine && !mine.ok) {
+    var bad = (mine.targets || []).filter(function (x) { return !x.ok; });
+    var why = el('div', 'rb-hero-why small bad');
+    why.textContent = mine.error || bad.map(function (x) { return x.name + ': ' + (x.error || 'failed'); }).join(' · ');
+    words.appendChild(why);
+  }
+  head.appendChild(words);
+  var acts = el('div', 'rb-hero-acts');
+  var now = cmdButton('Back up now', 'upload', 'primary');
+  now.id = 'rb-now';
+  now.disabled = !on.length || (d.job && d.job.running);
+  explain(now, 'A backup made now and sent to every destination switched on - the same as the scheduled one.');
+  now.onclick = function () {
+    busy(now, true);
+    api('rbackup', {action: 'run'}).then(function (x) { toast(x.message, 'good'); RB.job = x.job; rbWatch(); })
+      .catch(function (e) { busy(now, false); oops(e); });
+  };
+  acts.appendChild(now);
+  var tryb = cmdButton('Try the newest', 'check', '');
+  tryb.disabled = !on.length || (d.job && d.job.running);
+  explain(tryb, 'The newest backup of this node fetched back from the first destination, opened with the password, every file checked, the database read through and the tokens tried against the key in it - nothing is put back. And the newest nightly copy here read through.');
+  tryb.onclick = function () {
+    busy(tryb, true);
+    api('rbackup', {action: 'verify'}).then(function (x) { toast(x.message, 'good'); RB.job = x.job; rbWatch(); })
+      .catch(function (e) { busy(tryb, false); oops(e); });
+  };
+  acts.appendChild(tryb);
+  var dl = cmdButton('Download one here', 'download', '');
+  explain(dl, 'A backup made now, saved on the computer you are sitting at - locked with the password as the others.');
+  dl.onclick = function () {
+    if (!d.locked) {
+      confirmThen('Download a backup that is not locked?', 'No password of the backups is set: the file will hold <b>every token’s key</b> readable. Set the password first unless you know where the file goes.', 'Download it', function () { window.location.href = '?api=rbackup-download'; }, false);
+      return;
+    }
+    toast('the backup is being made - the download starts when it is ready', 'good');
+    window.location.href = '?api=rbackup-download';
+  };
+  acts.appendChild(dl);
+  var back = cmdButton('Put one back…', 'undo', '');
+  back.onclick = rbPutBackFile;
+  acts.appendChild(back);
+  var guide = cmdButton('How to put it back', 'book', '');
+  explain(guide, 'RESTORE.md - the exact steps to bring everything back from a backup, filled in with this installation, as every backup carries it. To read now, and to keep apart from the backups.');
+  guide.onclick = rbGuide;
+  acts.appendChild(guide);
+  head.appendChild(acts);
+  card.appendChild(head);
+  var going = el('div', 'going wide');
+  going.id = 'rb-going';
+  going.hidden = !(d.job && d.job.running);
+  going.innerHTML = '<div class="bar"><span id="rb-going-fill"></span></div><div class="says" id="rb-going-says"></div>';
+  card.appendChild(going);
+  if (!d.tools.openssl) card.appendChild(el('p', 'note bad', 'openssl is not on this machine: backups cannot be locked (dnf install openssl).'));
+  host.appendChild(card);
+  /* In a cluster each node backs itself up (1.0.169): every node's last
+     backup and last try, side by side. */
+  var names = Object.keys(d.last_by_node || {});
+  (d.verified || []).forEach(function (v) { if (v.node && names.indexOf(v.node) < 0) names.push(v.node); });
+  if (names.indexOf(d.node) < 0) names.push(d.node);
+  if (names.length > 1) {
+    var grid = nodeGrid();
+    grid.classList.add('rb-nodes');
+    names.sort().forEach(function (n) {
+      var last = (d.last_by_node || {})[n];
+      var tr = (d.verified || []).filter(function (v) { return v.node === n; })[0];
+      var bad = (last && !last.ok) || (tr && !tr.ok);
+      var c = nodeCard({node: n, me: n === d.node}, !last ? 'dim' : (bad ? 'bad' : 'ok'),
+        !last ? 'no backup yet' : (last.ok ? 'went everywhere' : 'did not go everywhere'), !last ? 'dim' : (last.ok ? 'ok' : 'crit'));
+      nodeBig(c, last ? ago(last.at) : '–', last ? 'the last backup' : '');
+      c.appendChild(netFacts([['Size', last && last.bytes ? rbBytes(last.bytes) : ''], ['Tokens', last && last.tokens != null ? num(last.tokens) : ''],
+        ['Tried', tr ? (tr.ok ? 'can be put back' : 'NOT GOOD') + ' · ' + ago(tr.at) : 'never']]));
+      grid.appendChild(c);
+    });
+    host.appendChild(grid);
+  }
+  RB.verified = d.verified || [];
+  drawRbTried();
+}
+/* The backups tried (1.0.169): each try, every check of it; the list can be
+   emptied, or a try taken off - the backups themselves stay. */
+function drawRbTried() {
+  var card = $('rb-tried-card'), host = $('rb-tried'), tools = $('rb-tried-tools');
+  if (!card) return;
+  var rows = RB.verified || [];
+  card.hidden = !rows.length;
+  clear(host);
+  clear(tools);
+  if (!rows.length) return;
+  var forget = function (q) {
+    api('rbackup', Object.assign({action: 'verified_forget'}, q)).then(function (d) {
+      toast(d.message, 'good'); RB.verified = d.verified || []; drawRbTried();
+    }).catch(oops);
+  };
+  var wipe = cmdButton('Clear the list', 'trash', 'small');
+  wipe.onclick = function () {
+    confirmThen('Clear the list of backups tried?', 'Every try goes from this list (for both nodes). <b>The backups themselves stay where they are.</b> Events keeps a line saying who cleared it.', 'Clear the list', function () { forget({all: 1}); }, true);
+  };
+  tools.appendChild(wipe);
+  var list = el('div', 'rb-tried');
+  rows.slice(0, 8).forEach(function (v, i) {
+    var it = el('details', 'rb-try ' + (v.ok ? 'good' : 'bad'));
+    if (i === 0 && !v.ok) it.open = true;
+    var sm = el('summary');
+    sm.appendChild(el('span', 'dot ' + (v.ok ? 'ok' : 'bad')));
+    sm.appendChild(el('b', '', v.ok ? 'Can be put back' : 'Not good'));
+    sm.appendChild(noI18n(el('span', 'mono small', v.file || '?')));
+    sm.appendChild(el('span', 'muted small', '·'));
+    sm.appendChild(el('span', 'muted small', ago(v.at)));
+    sm.appendChild(el('span', 'muted small', '·'));
+    sm.appendChild(noI18n(el('span', 'muted small', (v.node || '') + ' → ' + (v.target_name || ''))));
+    var x = el('button', 'xbtn rb-try-x');
+    x.type = 'button';
+    x.setAttribute('data-icon', 'close');
+    x.title = 'Take it off the list';
+    x.onclick = function (e) { e.preventDefault(); e.stopPropagation(); forget({at: v.at}); };
+    sm.appendChild(x);
+    it.appendChild(sm);
+    var ul = el('div', 'rb-checks');
+    (v.checks || []).forEach(function (k) {
+      var row = el('div', 'rb-check');
+      row.appendChild(el('span', 'dot ' + (k.ok ? 'ok' : 'bad')));
+      row.appendChild(el('span', '', k.what));
+      if (k.said) row.appendChild(noI18n(el('span', 'muted small', '- ' + k.said)));
+      ul.appendChild(row);
+    });
+    it.appendChild(ul);
+    list.appendChild(it);
+  });
+  host.appendChild(list);
+  dressButtons(host);
+}
+/* RESTORE.md on the pages (1.0.110): read here, downloaded as the file. */
+function rbGuide() {
+  api('rbackup', {action: 'restore_md'}).then(function (d) {
+    modal('How to put a backup back', function (body) {
+      var lede = el('p', 'note');
+      lede.innerHTML = 'The <code>RESTORE.md</code> every backup carries, as one made now would have it. Keep a copy apart from the backups - with the password of the backups in a vault.';
+      body.appendChild(lede);
+      var doc = noI18n(el('div', 'md-doc'));
+      doc.appendChild(mdRender(d.md));
+      body.appendChild(doc);
+    }, [{words: 'Close', close: true},
+        {words: 'Download RESTORE.md', cls: 'primary', icon: 'download', go: function () {
+          var a = el('a');
+          a.href = URL.createObjectURL(new Blob([d.md], {type: 'text/markdown;charset=utf-8'}));
+          a.download = d.name || 'RESTORE.md';
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+        }}], 'large');
+  }).catch(oops);
+}
+/* Markdown as the guides are written: headings, paragraphs, lists, tables,
+   fenced code (with a copy button), `code`, **bold**, *italic*. Built from
+   elements - nothing in the text becomes HTML. */
+function mdInline(text) {
+  var frag = document.createDocumentFragment();
+  var re = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g, last = 0, m;
+  while ((m = re.exec(text))) {
+    if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+    var t = m[0];
+    if (t.charAt(0) === '`') frag.appendChild(el('code', '', t.slice(1, -1)));
+    else if (t.slice(0, 2) === '**') frag.appendChild(el('b', '', t.slice(2, -2)));
+    else frag.appendChild(el('i', '', t.slice(1, -1)));
+    last = re.lastIndex;
+  }
+  if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+  return frag;
+}
+function mdRender(md) {
+  var out = document.createDocumentFragment();
+  var lines = String(md || '').split('\n'), i = 0;
+  var para = [];
+  var flush = function () {
+    if (!para.length) return;
+    var p = el('p');
+    p.appendChild(mdInline(para.join(' ')));
+    out.appendChild(p);
+    para = [];
+  };
+  while (i < lines.length) {
+    var ln = lines[i];
+    if (/^```/.test(ln)) {
+      flush();
+      var code = [];
+      i += 1;
+      while (i < lines.length && !/^```/.test(lines[i])) { code.push(lines[i]); i += 1; }
+      i += 1;
+      var wrap = el('div', 'md-code');
+      var pre = el('pre', '', code.join('\n'));
+      wrap.appendChild(pre);
+      var cp = iconButton('copy', 'Copy');
+      (function (txt, b) {
+        b.onclick = function () {
+          (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast('copied', 'good'); }).catch(function () { toast('select it and copy it by hand'); });
+        };
+      })(code.join('\n'), cp);
+      wrap.appendChild(cp);
+      out.appendChild(wrap);
+      continue;
+    }
+    var h = /^(#{1,4})\s+(.*)$/.exec(ln);
+    if (h) { flush(); var hn = el('h' + Math.min(6, h[1].length + 2)); hn.appendChild(mdInline(h[2])); out.appendChild(hn); i += 1; continue; }
+    if (/^\|/.test(ln)) {
+      flush();
+      var rows = [];
+      while (i < lines.length && /^\|/.test(lines[i])) { rows.push(lines[i]); i += 1; }
+      var tbl = el('table', 'md-table');
+      var tb = el('tbody');
+      rows.forEach(function (r, n) {
+        if (/^\|[\s|:-]+\|$/.test(r)) return;
+        var cells = r.replace(/^\|/, '').replace(/\|$/, '').split('|');
+        if (n === 0 && cells.every(function (c) { return !c.trim(); })) return;
+        var tr = el('tr');
+        cells.forEach(function (c) { var td = el(n === 0 && rows.length > 1 && /^\|[\s|:-]+\|$/.test(rows[1]) ? 'th' : 'td'); td.appendChild(mdInline(c.trim())); tr.appendChild(td); });
+        tb.appendChild(tr);
+      });
+      tbl.appendChild(tb);
+      out.appendChild(tbl);
+      continue;
+    }
+    if (/^\s*[-*] /.test(ln)) {
+      flush();
+      var ul = el('ul');
+      var li = null;
+      while (i < lines.length && (/^\s*[-*] /.test(lines[i]) || (li && /^\s{2,}\S/.test(lines[i])))) {
+        if (/^\s*[-*] /.test(lines[i])) { li = el('li'); li._t = lines[i].replace(/^\s*[-*] /, ''); ul.appendChild(li); }
+        else li._t += ' ' + lines[i].trim();
+        i += 1;
+      }
+      Array.prototype.forEach.call(ul.children, function (x) { x.appendChild(mdInline(x._t)); });
+      out.appendChild(ul);
+      continue;
+    }
+    if (/^---+\s*$/.test(ln)) { flush(); out.appendChild(el('hr')); i += 1; continue; }
+    if (!ln.trim()) { flush(); i += 1; continue; }
+    para.push(ln.trim());
+    i += 1;
+  }
+  flush();
+  return out;
+}
+function rbWatch() {
+  if (RB_POLL) return;
+  var step = function () {
+    api('rbackup', {action: 'job'}).then(function (x) {
+      var j = x.job || {};
+      var g = $('rb-going');
+      if (g) {
+        g.hidden = !j.running;
+        var f = $('rb-going-fill');
+        if (f) f.style.width = (j.whole ? Math.round(100 * j.done / j.whole) : 5) + '%';
+        var sy = $('rb-going-says');
+        if (sy) sy.textContent = j.says || '';
+      }
+      if (j.running) { RB_POLL = setTimeout(step, TAB === 'settings' && PANE === 'backup' ? 1000 : 5000); return; }
+      RB_POLL = null;
+      if (j.error) toast('the backup: ' + j.error, 'bad');
+      else if (j.result) toast(j.result.ok ? 'the backup went to every destination' : 'the backup did not reach every destination', j.result.ok ? 'good' : 'bad');
+      if (TAB === 'settings' && PANE === 'backup') loadRbackup();
+    }).catch(function () { RB_POLL = null; });
+  };
+  step();
+}
+function drawRbTargets() {
+  var host = $('rb-targets');
+  clear(host);
+  var add = cmdButton('Add a destination', 'add', 'primary small');
+  add.onclick = rbPickKind;
+  var ah = $('rb-add-host');
+  clear(ah);
+  ah.appendChild(add);
+  var ts = RB.targets || [];
+  if (!ts.length) {
+    var empty = el('div', 'rb-empty');
+    empty.appendChild(el('p', '', 'No destination yet. A backup kept only on this machine is lost with it: add a place on another machine.'));
+    host.appendChild(empty);
+    return;
+  }
+  var grid = el('div', 'rb-grid');
+  ts.forEach(function (t) {
+    var c = el('div', 'rb-card' + (t.enabled ? '' : ' off'));
+    var top = el('div', 'rb-card-top');
+    var ic = el('span', 'rb-kind k-' + t.kind);
+    ic.innerHTML = iconMarkup(RB_KIND_ICON[t.kind] || 'db', 18);
+    top.appendChild(ic);
+    var nm = el('div', 'rb-card-name');
+    nm.appendChild(noI18n(el('b', '', t.name)));
+    nm.appendChild(el('span', 'rb-kind-words', t.kind_words));
+    top.appendChild(nm);
+    var sw = switchBox(t.enabled);
+    explain(sw, t.enabled ? 'Backups go here. Switch off to stop sending, keeping everything set.' : 'Switched off: nothing is sent here.');
+    sw._input.onchange = function () {
+      api('rbackup', {action: 'save', id: t.id, target: {kind: t.kind, enabled: sw._get(), name: t.name, host: t.host, port: t.port, path: t.path, user: t.user, share: t.share, domain: t.domain, smb_encrypt: t.smb_encrypt, implicit: t.implicit, tls_check: t.tls_check, passive: t.passive}})
+        .then(function () { loadRbackup(); }).catch(function (e) { oops(e); loadRbackup(); });
+    };
+    top.appendChild(sw);
+    c.appendChild(top);
+    c.appendChild(noI18n(el('div', 'rb-where mono', rbWhere(t))));
+    var chips = el('div', 'rb-chips');
+    var chip = function (w, cls, tip) { var x = el('span', 'tag ' + (cls || 'dim'), w); if (tip) x.title = tip; chips.appendChild(x); };
+    if (t.has_password) chip('password', 'dim');
+    if (t.has_key) chip('ssh key', 'violet');
+    if (t.ssh_cert) chip('ssh certificate', 'violet');
+    if (t.kind === 'sftp' || t.kind === 'scp') chip(t.hostkey ? 'host key trusted' : 'host key not trusted yet', t.hostkey ? 'ok' : 'warn', (t.hostkey_fp || []).join('\n'));
+    if (t.kind === 'ftps') chip({system: 'certificate: system authorities', ca: 'certificate: own authority', pin: 'certificate pinned', none: 'certificate NOT checked'}[t.tls_check] || '', t.tls_check === 'none' ? 'warn' : 'ok');
+    if (t.has_client_key) chip('client certificate', 'violet');
+    if (t.kind === 'smb' && t.smb_encrypt) chip('SMB3 encrypted', 'ok');
+    if (t.kind === 'ftp') chip('not encrypted on the way', 'warn');
+    c.appendChild(chips);
+    var last = t.last;
+    var ls = el('div', 'rb-last ' + (last ? (last.ok ? 'good' : 'bad') : 'muted'));
+    ls.textContent = last ? (last.ok ? '✓ last sent ' + ago(last.at) + ' · ' + rbBytes(last.bytes) : '✗ ' + ago(last.at) + ': ' + (last.error || 'failed')) : 'nothing sent here yet';
+    c.appendChild(ls);
+    var acts = el('div', 'rb-acts');
+    var tr = cmdButton('Try it', 'play', 'small');
+    tr.onclick = function () { rbTry(t, null, tr); };
+    acts.appendChild(tr);
+    var ed = cmdButton('Edit', 'edit', 'small');
+    ed.onclick = function () { rbEdit(t); };
+    acts.appendChild(ed);
+    var ls2 = cmdButton('Backups there', 'list', 'small');
+    ls2.onclick = function () { rbListThere(t); };
+    acts.appendChild(ls2);
+    var del = iconButton('trash', 'Take this destination away');
+    del.onclick = function () {
+      confirmThen('Take the destination ' + htmlText(t.name) + ' away?', 'Nothing is deleted on the server; backups simply stop going there, and its keys and certificates set here are forgotten.', 'Take it away', function () {
+        api('rbackup', {action: 'delete', id: t.id}).then(function (x) { toast(x.message, 'good'); loadRbackup(); }).catch(oops);
+      });
+    };
+    acts.appendChild(del);
+    c.appendChild(acts);
+    grid.appendChild(c);
+  });
+  host.appendChild(grid);
+}
+function drawRbRuns() {
+  var host = $('rb-runs');
+  clear(host);
+  var runs = RB.runs || [];
+  /* The list can be emptied, or a line taken off (1.0.110) - the backups
+     themselves stay where they went. */
+  var tools = $('rb-runs-tools');
+  if (tools) {
+    clear(tools);
+    if (runs.length) {
+      var wipe = cmdButton('Clear the list', 'trash', 'small');
+      wipe.onclick = function () {
+        confirmThen('Clear the list of backups sent?', 'Every line goes from this list (for both nodes). <b>The backups themselves stay where they went</b> - delete them under <i>Backups there</i> on a destination. Events keeps a line saying who cleared it.', 'Clear the list', function () {
+          api('rbackup', {action: 'runs_forget', all: 1}).then(function (d) { toast(d.message, 'good'); RB.runs = d.runs || []; drawRbRuns(); }).catch(oops);
+        }, true);
+      };
+      tools.appendChild(wipe);
+    }
+  }
+  if (!runs.length) { host.appendChild(el('p', 'note', 'No backup sent yet.')); return; }
+  host.appendChild(listTable(['When', 'Node', 'File', 'Size', 'Where it went', 'Who', ''], runs, function (r) {
+    var tr = el('tr');
+    tr.appendChild(el('td', 'muted', new Date(r.at * 1000).toLocaleString(numLang())));
+    tr.appendChild(noI18n(el('td', '', r.node || '')));
+    var f = el('td', 'mono small');
+    f.appendChild(noI18n(el('span', '', r.file || '–')));
+    if (r.file && !r.encrypted) { f.appendChild(document.createTextNode(' ')); f.appendChild(el('span', 'tag bad', 'not locked')); }
+    tr.appendChild(f);
+    tr.appendChild(el('td', 'num', r.bytes ? rbBytes(r.bytes) : '–'));
+    var w = el('td');
+    if (r.error) w.appendChild(el('span', 'small bad', r.error));
+    (r.targets || []).forEach(function (x) {
+      var s = el('span', 'tag namepill ' + (x.ok ? 'ok' : 'crit'), (x.ok ? '✓ ' : '✗ ') + x.name);
+      s.title = x.ok ? (x.secs + ' s' + ((x.taken_away || []).length ? ' · taken away: ' + x.taken_away.join(', ') : '')) : (x.error || '');
+      noI18n(s);
+      w.appendChild(s);
+      w.appendChild(document.createTextNode(' '));
+    });
+    tr.appendChild(w);
+    tr.appendChild(noI18n(el('td', 'muted small', r.by || '')));
+    var a = el('td', 'rowtools');
+    var del = iconButton('trash', 'Take it off the list');
+    del.onclick = function () {
+      api('rbackup', {action: 'runs_forget', at: r.at, file: r.file || ''}).then(function (d) { toast(d.message, 'good'); RB.runs = d.runs || []; drawRbRuns(); }).catch(oops);
+    };
+    a.appendChild(del);
+    tr.appendChild(a);
+    return tr;
+  }, 'plain'));
+}
+function rbPickKind() {
+  modal('Where should the backups go?', function (body) {
+    var g = el('div', 'rb-kinds');
+    (RB.kinds || []).forEach(function (k) {
+      var b = el('button', 'rb-kind-tile');
+      b.type = 'button';
+      var ic = el('span', 'rb-kind k-' + k.kind);
+      ic.innerHTML = iconMarkup(RB_KIND_ICON[k.kind] || 'db', 20);
+      b.appendChild(ic);
+      b.appendChild(el('b', '', k.words));
+      b.appendChild(el('span', 'small muted', RB_KIND_SAYS[k.kind] || ''));
+      var need = {sftp: ['ssh', 'sftp'], scp: ['ssh', 'scp'], smb: ['smbclient']}[k.kind] || [];
+      var missing = need.filter(function (x) { return !RB.tools[x]; });
+      if (missing.length) {
+        b.appendChild(el('span', 'small bad', 'missing here: ' + missing.join(', ') + (k.kind === 'smb' ? ' (dnf install samba-client)' : ' (dnf install openssh-clients)')));
+      }
+      b.onclick = function () { closeModal(); setTimeout(function () { rbEdit({kind: k.kind, enabled: 1, port: k.port}); }, 30); };
+      if (hsOn('backup:ftp') && k.kind === 'ftp') { b.disabled = true; b.appendChild(el('span', 'small hs-note', 'not under high security')); }
+      g.appendChild(b);
+    });
+    body.appendChild(g);
+  }, [{words: 'Close', close: true}], 'medium');
+}
+/* The editor of one destination. A new one is saved before a key or a
+   certificate is made for it - they are kept with it. */
+function rbEdit(t) {
+  t = t || {};
+  var isNew = !t.id;
+  var cur = {id: t.id};
+  modal(isNew ? 'A new destination: ' + (t.kind_words || (RB.kinds.filter(function (k) { return k.kind === t.kind; })[0] || {}).words || t.kind) : t.name, function (body) {
+    body.classList.add('rb-ed');
+    var f = {};
+    var sec = function (title, says) {
+      var s = el('div', 'rb-sec');
+      s.appendChild(el('h4', '', title));
+      if (says) s.appendChild(el('p', 'small muted', says));
+      var g = el('div', 'formgrid');
+      s.appendChild(g);
+      body.appendChild(s);
+      return g;
+    };
+    var g0 = sec('What it is called', '');
+    f.name = textBox(t.name || '', 'NAS in the server room');
+    g0.appendChild(formField('Name', f.name));
+    f.enabled = switchBox(t.enabled === undefined ? 1 : t.enabled);
+    g0.appendChild(formField('Backups go here', f.enabled));
+    var g1 = sec('Where', t.kind === 'folder' ? 'A whole path on this machine; the upsmon account must be able to write into it.' : '');
+    if (t.kind === 'folder') {
+      f.path = textBox(t.path || '', '/mnt/backup/upsmon', 'mono');
+      var fp = formField('The folder', f.path);
+      fp.classList.add('wide');
+      g1.appendChild(fp);
+    } else {
+      f.host = textBox(t.host || '', 'backup.example.cz', 'mono');
+      g1.appendChild(formField('The server', f.host));
+      f.port = textBox(t.port || '', String({ftp: 21, ftps: t.implicit ? 990 : 21, sftp: 22, scp: 22, smb: 445}[t.kind] || ''), 'mono');
+      g1.appendChild(formField('Port', f.port));
+      if (t.kind === 'smb') {
+        f.share = textBox(t.share || '', 'backup', 'mono');
+        g1.appendChild(formField('The share', f.share));
+        f.path = textBox(t.path || '', 'upsmon\\nightly', 'mono');
+        g1.appendChild(formField('The folder in it', f.path, 'Made if it is not there.'));
+      } else {
+        f.path = textBox(t.path || '', t.kind === 'ftp' || t.kind === 'ftps' ? 'upsmon/backups' : '/home/backup/upsmon', 'mono');
+        g1.appendChild(formField('The folder there', f.path, 'Made if it is not there. Without / at the start: under the account’s home.'));
+      }
+    }
+    if (t.kind !== 'folder') {
+      var g2 = sec('Signing in', t.kind === 'sftp' || t.kind === 'scp' ? 'A key (below) or a password - or both.' : '');
+      f.user = textBox(t.user || '', t.kind === 'smb' ? 'backup' : 'upsmon-backup', 'mono');
+      g2.appendChild(formField('Account', f.user));
+      f.password = maskBox(t.password || '', t.has_password ? '' : '(none)', 'mono');
+      g2.appendChild(formField('Password', f.password, t.has_password ? 'Kept, sealed. Type a new one to change it.' : ''));
+      if (t.kind === 'smb') {
+        f.domain = textBox(t.domain || '', 'CORP', 'mono');
+        g2.appendChild(formField('Domain (workgroup)', f.domain));
+        f.smb_encrypt = switchBox(t.smb_encrypt === undefined ? 1 : t.smb_encrypt);
+        if (hsOn('backup:smb') && f.smb_encrypt._get()) f.smb_encrypt._input.disabled = true;
+        g2.appendChild(formField('SMB3 encryption required', f.smb_encrypt, 'Everything on the wire encrypted; a server that cannot is refused.'));
+      }
+      if (t.kind === 'ftp' || t.kind === 'ftps') {
+        f.passive = switchBox(t.passive === undefined ? 1 : t.passive);
+        g2.appendChild(formField('Passive mode', f.passive, 'The usual one, through firewalls and NAT.'));
+      }
+    }
+    if (t.kind === 'ftps') rbFtpsBlock(body, t, f, cur);
+    if (t.kind === 'sftp' || t.kind === 'scp') rbSshBlock(body, t, f, cur);
+    var out = el('div', 'rb-try-out');
+    out.id = 'rb-try-out';
+    body.appendChild(out);
+    rbEdit.form = f;
+  }, [
+    {words: 'Close', close: true},
+    {words: 'Try it', icon: 'play', go: function (b) { rbTry(cur.id ? rbTarget(cur.id) || t : t, rbFormData(t.kind), b, true); }},
+    {words: 'Save', cls: 'primary', icon: 'save', go: function (b) {
+      busy(b, true);
+      rbSaveForm(t.kind, cur).then(function () { busy(b, false); toast('saved', 'good'); closeModal(); loadRbackup(); })
+        .catch(function (e) { busy(b, false); oops(e); });
+    }}], 'large');
+}
+function rbTarget(id) { return (RB.targets || []).filter(function (x) { return x.id === id; })[0]; }
+function rbFormData(kind) {
+  var f = rbEdit.form || {};
+  var v = function (k) { return f[k] ? (f[k]._get ? f[k]._get() : f[k].value) : undefined; };
+  var d = {kind: kind};
+  ['name', 'enabled', 'host', 'port', 'path', 'user', 'password', 'share', 'domain', 'smb_encrypt', 'passive', 'implicit', 'tls_check', 'ca', 'pin', 'ssh_cert'].forEach(function (k) {
+    var x = v(k);
+    if (x !== undefined) d[k] = typeof x === 'string' ? x.trim() : x;
+  });
+  if (f.password) d.password = f.password.value;
+  return d;
+}
+function rbSaveForm(kind, cur) {
+  return api('rbackup', {action: 'save', id: cur.id || '', target: rbFormData(kind)}).then(function (x) {
+    cur.id = x.target.id;
+    var i = (RB.targets || []).map(function (t) { return t.id; }).indexOf(x.target.id);
+    if (i >= 0) RB.targets[i] = x.target; else RB.targets.push(x.target);
+    return x.target;
+  });
+}
+function rbNeedSaved(kind, cur) {
+  return cur.id ? Promise.resolve(rbTarget(cur.id)) : rbSaveForm(kind, cur);
+}
+function rbKeyBox(text) {
+  var w = el('div', 'rb-keybox');
+  var pre = noI18n(el('pre', 'mono', text));
+  w.appendChild(pre);
+  var c = cmdButton('Copy', 'copy', 'small');
+  c.onclick = function () { copyText(text, c, 'Copied'); };
+  w.appendChild(c);
+  return w;
+}
+/* The key and the certificates, as isemon has them (1.0.109): one box each,
+   a line saying what it is, the same row of buttons always there (Make,
+   Use my own, Download, Forget - the last two greyed until there is one),
+   Try it at the end of the row, and below it the half to copy - a click on
+   it copies it. */
+function rbConfirm(title, words, yes, go, danger) {
+  /* Over the editor, which stays as it is underneath. */
+  modalOver(function () { confirmThen(title, words, yes, go, danger); });
+}
+function rbCopyme(text, said) {
+  var code = noI18n(el('code', 'copyme', text));
+  explain(code, 'Click to copy.');
+  code.onclick = function () { copyText(text, code, said || 'Copied'); };
+  return code;
+}
+function rbPanel(note) {
+  var box = el('div', 'subpanel rb-panel');
+  var p = el('p', 'note');
+  p.innerHTML = note;
+  box.appendChild(p);
+  var row = el('div', 'btnrow');
+  box.appendChild(row);
+  var below = el('div', 'rb-below');
+  box.appendChild(below);
+  return {box: box, row: row, below: below};
+}
+function rbTryButton(t, cur) {
+  var b = cmdButton('Try reaching it', 'pulse', 'primary');
+  explain(b, 'Sign in, write a small file, find it in the list and take it away again - with what is typed above, saved or not.');
+  b.onclick = function () { rbTry(cur.id ? (rbTarget(cur.id) || t) : t, rbFormData(t.kind), b, true); };
+  return b;
+}
+function rbSshBlock(body, t, f, cur) {
+  var s = el('div', 'rb-sec');
+  s.appendChild(el('h4', '', 'The SSH key'));
+  var P = rbPanel('A key is better than a password: made here, it never leaves this machine except when you download it, and the server holds only its <b>public</b> half - in <code>~/.ssh/authorized_keys</code> of the account.');
+  if (!RB.tools['ssh-keygen']) {
+    var miss = el('p', 'note');
+    miss.style.color = 'var(--warn)';
+    miss.textContent = 'ssh-keygen is not on this machine, so a key cannot be made or read here: dnf install openssh-clients. A password still works.';
+    P.box.insertBefore(miss, P.row);
+  }
+  var mk = cmdButton('Make a key', 'key', '');
+  explain(mk, 'Make a fresh ed25519 pair here. The private half stays on this machine, sealed; the public half is shown below for you to put on the server. Any key already kept is replaced.');
+  var own = cmdButton('Use my own', 'upload', '');
+  explain(own, 'Use a private key you already have. Paste it whole, with its BEGIN and END lines; its public half is worked out here.');
+  var dl = cmdButton('Download it', 'download', '');
+  explain(dl, 'The private half as a file, for keeping somewhere safe. That it was downloaded, and by whom, is written into Events.');
+  var fg = cmdButton('Forget it', 'forget', 'danger');
+  explain(fg, 'Delete the private key from this machine. Unless the server takes a password instead, nothing here reaches it until a new key is made and put on it.');
+  [mk, own, dl, fg].forEach(function (b) { P.row.appendChild(b); });
+  P.row.appendChild(el('span', 'spacer'));
+  P.row.appendChild(rbTryButton(t, cur));
+  var state = {pub: t.pub, has: !!t.has_key};
+  var paint = function () {
+    clear(P.below);
+    dl.disabled = !state.has;
+    fg.disabled = !state.has;
+    mk.disabled = own.disabled = !RB.tools['ssh-keygen'];
+    if (!state.has || !state.pub) {
+      P.below.appendChild(el('p', 'btnhelp', 'No key yet — make one, or let it sign in with a password.'));
+      return;
+    }
+    P.below.appendChild(el('p', 'btnhelp', 'The public half. Click it to copy.'));
+    P.below.appendChild(rbCopyme(state.pub, 'the public key is on the clipboard'));
+    var u = (f.user && f.user.value) || 'the account';
+    P.below.appendChild(el('p', 'btnhelp', 'On the server, as ' + u + ':'));
+    P.below.appendChild(rbCopyme("mkdir -p ~/.ssh && chmod 700 ~/.ssh && echo '" + state.pub + "' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"));
+  };
+  mk.onclick = function () {
+    rbConfirm('Make a key for ' + ((f.name && f.name.value) || t.name || 'this destination'),
+      'A fresh ed25519 pair is made here. The private half stays on this machine and the public half is shown for you to put on the server.' + (state.has ? '<br><br><b>The key kept now is replaced</b>, so until the new public half is on the server, backups cannot sign in there.' : ''),
+      'Make one', function () {
+        rbNeedSaved(t.kind, cur).then(function () { return api('rbackup', {action: 'keygen', id: cur.id}); })
+          .then(function (x) { state.pub = x.pub; state.has = true; paint(); toast('a new key was made — put the public half on the server', 'good'); })
+          .catch(oops);
+      }, false);
+  };
+  own.onclick = function () {
+    modalOver(function () {
+      modal('Use my own key', function (body2) {
+        var p = el('p', 'note');
+        p.innerHTML = 'An OpenSSH private key, whole, including its <code>BEGIN</code> and <code>END</code> lines. It is kept in this machine’s database, sealed, and never shown back. Its public half is worked out here, so you do not have to hand that over as well.';
+        body2.appendChild(p);
+        var area = el('textarea', 'mono');
+        area.rows = 11;
+        area.id = 'rb-paste-area';
+        area.spellcheck = false;
+        area.placeholder = '-----BEGIN OPENSSH PRIVATE KEY-----';
+        body2.appendChild(area);
+        var pp = maskBox('', '', 'mono');
+        pp.id = 'rb-paste-pp';
+        body2.appendChild(formField('Its passphrase, if it has one', pp));
+        setTimeout(function () { area.focus(); }, 60);
+      }, [{words: 'Cancel', close: true},
+          {words: 'Keep this key', cls: 'primary', close: true, go: function () {
+            var key = $('rb-paste-area').value, pass = $('rb-paste-pp').value;
+            rbNeedSaved(t.kind, cur).then(function () { return api('rbackup', {action: 'key_paste', id: cur.id, key: key, passphrase: pass}); })
+              .then(function (x) { state.pub = x.pub; state.has = true; paint(); toast('the key was stored', 'good'); })
+              .catch(oops);
+          }}]);
+    });
+  };
+  dl.onclick = function () {
+    rbConfirm('Download the private key', 'The private half leaves this machine as a file. Anybody holding it can sign in to the server as <code>' + htmlText((f.user && f.user.value) || 'that account') + '</code>. That it was downloaded, and by whom, is written into Events.', 'Download it', function () {
+      api('rbackup', {action: 'key_download', id: cur.id}).then(function (x) {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([x.pem], {type: 'application/octet-stream'}));
+        a.download = x.file;
+        document.body.appendChild(a); a.click(); a.remove();
+      }).catch(oops);
+    }, false);
+  };
+  fg.onclick = function () {
+    rbConfirm('Forget the key', 'The private key is deleted from this machine. Unless the server takes a password instead, backups will not reach it until a new key is made and put on it.', 'Forget it', function () {
+      api('rbackup', {action: 'key_forget', id: cur.id}).then(function () { state.has = false; state.pub = ''; paint(); toast('the key is gone'); }).catch(oops);
+    });
+  };
+  paint();
+  s.appendChild(P.box);
+  f.ssh_cert = el('textarea', 'mono rb-area small');
+  f.ssh_cert.value = t.ssh_cert || '';
+  f.ssh_cert.placeholder = 'ssh-ed25519-cert-v01@openssh.com AAAA…';
+  var cf = formField('SSH certificate of the key (only if the server wants one)', f.ssh_cert);
+  cf.style.marginTop = '12px';
+  s.appendChild(cf);
+  body.appendChild(s);
+  var h = el('div', 'rb-sec');
+  h.appendChild(el('h4', '', 'The server’s host key'));
+  var H = rbPanel('The key the server proves itself with. Trusted once, after comparing its fingerprint with the server’s own (<code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> on it); a server answering with any other is refused - somebody in between, or the server reinstalled.');
+  var hf = cmdButton('Forget it', 'forget', 'danger');
+  H.row.appendChild(hf);
+  H.row.appendChild(el('span', 'spacer'));
+  H.row.appendChild(rbTryButton(t, cur));
+  var paintHost = function (fps) {
+    clear(H.below);
+    hf.disabled = !(fps && fps.length);
+    if (fps && fps.length) {
+      H.below.appendChild(el('p', 'btnhelp ro', 'Trusted. Click to copy.'));
+      fps.forEach(function (x) { H.below.appendChild(rbCopyme(x)); });
+    } else {
+      H.below.appendChild(el('p', 'btnhelp', 'Not trusted yet — Try reaching it shows the fingerprint to trust.'));
+    }
+  };
+  hf.onclick = function () {
+    rbConfirm('Forget the host key', 'Backups stop going there until it is trusted again.', 'Forget it', function () {
+      api('rbackup', {action: 'hostkey_forget', id: cur.id}).then(function () { paintHost([]); }).catch(oops);
+    });
+  };
+  paintHost(t.hostkey_fp);
+  rbSshBlock.paintHost = paintHost;
+  h.appendChild(H.box);
+  body.appendChild(h);
+}
+function rbFtpsBlock(body, t, f, cur) {
+  var s = el('div', 'rb-sec');
+  s.appendChild(el('h4', '', 'TLS'));
+  var g = el('div', 'formgrid');
+  f.implicit = selectBox([['0', 'explicit - AUTH TLS on port 21'], ['1', 'implicit - TLS from the start, port 990']], t.implicit ? '1' : '0');
+  f.implicit._get = function () { return f.implicit.value === '1' ? 1 : 0; };
+  f.implicit.onchange = function () { if (f.port && (!f.port.value || f.port.value === '21' || f.port.value === '990')) f.port.value = f.implicit.value === '1' ? '990' : '21'; };
+  g.appendChild(formField('TLS', f.implicit));
+  f.tls_check = selectBox([['system', 'against the authorities this machine trusts'], ['ca', 'against an authority of my own'], ['pin', 'pinned: exactly this certificate'], ['none', 'not checked (not safe)']], t.tls_check || 'system');
+  hsOptions(f.tls_check, ['none'], 'backup:ftps');
+  g.appendChild(formField('The server’s certificate is checked', f.tls_check));
+  s.appendChild(g);
+  f.ca = el('textarea', 'mono rb-area small');
+  f.ca.value = t.ca || '';
+  f.ca.placeholder = '-----BEGIN CERTIFICATE-----';
+  var caf = formField('The authority (PEM)', f.ca, t.ca_info ? 'Now: ' + (t.ca_info.subject || '') + ' · ' + rbWhen(t.ca_info.not_after) : 'The certificate of the authority that signed the server’s.');
+  s.appendChild(caf);
+  f.pin = textBox(t.pin || '', '64 hex digits - Try reaching it shows the server’s', 'mono');
+  var pinf = formField('Pinned SHA-256 fingerprint', f.pin);
+  s.appendChild(pinf);
+  var show = function () { caf.hidden = f.tls_check.value !== 'ca'; pinf.hidden = f.tls_check.value !== 'pin'; };
+  f.tls_check.onchange = show;
+  show();
+  rbFtpsBlock.pin = f.pin;
+  rbFtpsBlock.check = f.tls_check;
+  body.appendChild(s);
+  var cc = el('div', 'rb-sec');
+  cc.appendChild(el('h4', '', 'Client certificate'));
+  var P = rbPanel('Only for a server that asks for one. Made here, its key never leaves this machine except when you download it; the server gets the <b>certificate</b> - give it to its administrator.');
+  var mk = cmdButton('Make one', 'key', '');
+  explain(mk, 'A key and a certificate for it, made here (EC P-256, five years). Any one kept is replaced.');
+  var own = cmdButton('Use my own', 'upload', '');
+  explain(own, 'A certificate and its key you have: PEM (both, in any order) or a PFX / PKCS#12 file with its password.');
+  var dl = cmdButton('Download it', 'download', '');
+  explain(dl, 'The certificate as a file (not its key), for the server’s administrator.');
+  var fg = cmdButton('Forget it', 'forget', 'danger');
+  [mk, own, dl, fg].forEach(function (b) { P.row.appendChild(b); });
+  P.row.appendChild(el('span', 'spacer'));
+  P.row.appendChild(rbTryButton(t, cur));
+  var state = {cert: t.client_cert, info: t.client_cert_info};
+  var paint = function () {
+    clear(P.below);
+    dl.disabled = fg.disabled = !state.cert;
+    if (!state.cert) {
+      P.below.appendChild(el('p', 'btnhelp', 'No client certificate — most servers want none.'));
+      return;
+    }
+    if (state.info) P.below.appendChild(noI18n(el('p', 'btnhelp ro', (state.info.subject || '') + ' · ' + rbWhen(state.info.not_after))));
+    P.below.appendChild(el('p', 'btnhelp', 'The certificate. Click it to copy.'));
+    P.below.appendChild(rbCopyme(state.cert, 'the certificate is on the clipboard'));
+  };
+  mk.onclick = function () {
+    rbConfirm('Make a client certificate', 'A key and a certificate for it are made here; the key stays on this machine.' + (state.cert ? '<br><br><b>The one kept now is replaced</b>: the server has to be given the new certificate.' : ''), 'Make one', function () {
+      rbNeedSaved(t.kind, cur).then(function () { return api('rbackup', {action: 'cert_make', id: cur.id, cn: 'upsmon-backup-' + (RB.node || '')}); })
+        .then(function (x) { state.cert = x.cert; state.info = x.info; paint(); toast('made — give the certificate to the server', 'good'); }).catch(oops);
+    }, false);
+  };
+  own.onclick = function () {
+    modalOver(function () {
+      modal('Use my own client certificate', function (body2) {
+        var p = el('p', 'note');
+        p.innerHTML = 'The certificate and its private key, as PEM - pasted, in any order - or a <code>.pfx</code> / <code>.p12</code> file. The key is kept sealed and never shown back.';
+        body2.appendChild(p);
+        var area = el('textarea', 'mono');
+        area.rows = 11;
+        area.id = 'rb-cert-area';
+        area.spellcheck = false;
+        area.placeholder = '-----BEGIN CERTIFICATE-----\n…\n-----BEGIN PRIVATE KEY-----';
+        body2.appendChild(area);
+        var file = el('input');
+        file.type = 'file';
+        file.accept = '.pem,.crt,.key,.pfx,.p12';
+        file.onchange = function () {
+          var fl = file.files[0];
+          if (!fl) return;
+          if (/\.(pfx|p12)$/i.test(fl.name)) fl.arrayBuffer().then(function (buf) {
+            var b = new Uint8Array(buf), s2 = '';
+            for (var i = 0; i < b.length; i++) s2 += String.fromCharCode(b[i]);
+            area.value = btoa(s2);
+          });
+          else fl.text().then(function (x) { area.value = (area.value ? area.value + '\n' : '') + x; });
+        };
+        body2.appendChild(formField('Or a file', file));
+        var pw = maskBox('', '', 'mono');
+        pw.id = 'rb-cert-pw';
+        body2.appendChild(formField('The password of the key or of the PFX, if it has one', pw));
+      }, [{words: 'Cancel', close: true},
+          {words: 'Keep this certificate', cls: 'primary', close: true, go: function () {
+            var text = $('rb-cert-area').value, pass = $('rb-cert-pw').value;
+            rbNeedSaved(t.kind, cur).then(function () { return api('rbackup', {action: 'cert_given', id: cur.id, text: text, password: pass}); })
+              .then(function (x) { state.cert = x.cert; state.info = x.info; paint(); toast('the certificate was stored', 'good'); }).catch(oops);
+          }}]);
+    });
+  };
+  dl.onclick = function () {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([state.cert], {type: 'application/x-pem-file'}));
+    a.download = 'upsmon-backup-client.crt';
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+  fg.onclick = function () {
+    rbConfirm('Forget the client certificate', 'Its key is deleted from this machine. A server that asks for one will refuse backups until another is made and given to it.', 'Forget it', function () {
+      api('rbackup', {action: 'cert_forget', id: cur.id}).then(function () { state.cert = ''; state.info = null; paint(); }).catch(oops);
+    });
+  };
+  paint();
+  cc.appendChild(P.box);
+  body.appendChild(cc);
+}
+function rbTry(t, data, button, inEditor) {
+  if (button) busy(button, true);
+  var ask = {action: 'try', id: t.id || ''};
+  if (data) ask.target = data;
+  api('rbackup', ask).then(function (x) {
+    if (button) busy(button, false);
+    var show = function (host) {
+      clear(host);
+      if (x.hostkey_needed) {
+        host.appendChild(el('p', 'note warn', 'The server shows this host key. Compare it with the server’s own fingerprint before you trust it:'));
+        (x.fingerprints || []).forEach(function (fp) { host.appendChild(noI18n(el('div', 'mono small', fp))); });
+        var tb = cmdButton('Trust it', 'check', 'small primary');
+        tb.onclick = function () {
+          var save = (inEditor && rbEdit.form) ? rbSaveForm(t.kind, {id: t.id}) : Promise.resolve(t);
+          save.then(function (saved) {
+            return api('rbackup', {action: 'hostkey_trust', id: saved.id, hostkey: x.hostkey}).then(function (y) {
+              toast('trusted', 'good');
+              if (rbSshBlock.paintHost) rbSshBlock.paintHost(y.fingerprints);
+              t.id = saved.id;
+              rbTry(saved, inEditor ? rbFormData(t.kind) : null, button, inEditor);
+            });
+          }).catch(oops);
+        };
+        host.appendChild(tb);
+        return;
+      }
+      var box = el('div', 'note ' + (x.ok ? 'good' : 'bad'));
+      box.appendChild(el('b', '', x.ok ? 'It works (' + x.secs + ' s)' : 'It does not work'));
+      var ul = el('ul', 'rb-steps');
+      (x.steps || []).forEach(function (s) { ul.appendChild(el('li', '', '✓ ' + s)); });
+      if (x.error) ul.appendChild(el('li', 'bad', '✗ ' + x.error));
+      box.appendChild(ul);
+      var sc = x.server_cert;
+      if (sc && sc.fingerprint) {
+        var p = el('div', 'small');
+        p.appendChild(el('span', '', 'The server’s certificate: '));
+        p.appendChild(noI18n(el('span', 'mono', ((sc.cert || {}).subject || '') + ' · SHA-256 ' + sc.fingerprint)));
+        box.appendChild(p);
+        if (inEditor && rbFtpsBlock.pin) {
+          var pin = cmdButton('Pin this certificate', 'pin', 'small');
+          pin.onclick = function () { rbFtpsBlock.check.value = 'pin'; rbFtpsBlock.check.onchange(); rbFtpsBlock.pin.value = sc.fingerprint; toast('pinned - Save to keep it', 'good'); };
+          box.appendChild(pin);
+        }
+      }
+      host.appendChild(box);
+      if (inEditor) host.appendChild(hideBar(function () { clear(host); }));
+    };
+    var host = inEditor ? $('rb-try-out') : null;
+    if (host) show(host);
+    else modal('Trying ' + (t.name || ''), function (body) { var h = el('div'); body.appendChild(h); show(h); }, [{words: 'Close', close: true}], 'medium');
+    if (!inEditor) loadRbackup();
+  }).catch(function (e) { if (button) busy(button, false); oops(e); });
+}
+function rbListThere(t) {
+  modal('Backups at ' + t.name, function (body) {
+    var host = el('div');
+    host.appendChild(el('p', 'center muted', 'Asking…'));
+    body.appendChild(host);
+    api('rbackup', {action: 'list', id: t.id}).then(function (x) {
+      clear(host);
+      var files = x.files || [];
+      if (!files.length) { host.appendChild(el('p', 'note', 'No backup of upsmon there.')); return; }
+      host.appendChild(listTable(['Made', 'Node', 'Size', '', ''], files, function (fl) {
+        var tr = el('tr');
+        var w = el('td');
+        w.appendChild(el('div', '', new Date(fl.when * 1000).toLocaleString(numLang())));
+        w.appendChild(noI18n(el('div', 'mono small muted', fl.name)));
+        tr.appendChild(w);
+        var n = el('td');
+        n.appendChild(noI18n(el('span', '', fl.node)));
+        if (fl.mine) { n.appendChild(document.createTextNode(' ')); n.appendChild(el('span', 'tag info', 'this node')); }
+        tr.appendChild(n);
+        var sz = el('td', 'num');
+        sz.textContent = rbBytes(fl.bytes);
+        if (!fl.encrypted) { sz.appendChild(document.createTextNode(' ')); sz.appendChild(el('span', 'tag bad', 'not locked')); }
+        tr.appendChild(sz);
+        var a = el('td', 'rowtools');
+        var dl = iconButton('download', 'Download it');
+        dl.onclick = function () { window.location.href = '?api=rbackup-download&id=' + encodeURIComponent(t.id) + '&name=' + encodeURIComponent(fl.name); };
+        a.appendChild(dl);
+        var pb = iconButton('undo', 'Put this back…');
+        pb.onclick = function () { rbPutBackConfirm({id: t.id, name: fl.name, encrypted: fl.encrypted, when: fl.when, node: fl.node}); };
+        a.appendChild(pb);
+        var del = iconButton('trash', 'Delete it there');
+        del.onclick = function () {
+          confirmThen('Delete ' + htmlText(fl.name) + '?', 'It is deleted at ' + htmlText(t.name) + ', with its checksum and its RESTORE.md.', 'Delete it', function () {
+            api('rbackup', {action: 'delete_file', id: t.id, name: fl.name}).then(function () { toast('deleted', 'good'); rbListThere(t); }).catch(oops);
+          });
+        };
+        a.appendChild(del);
+        tr.appendChild(a);
+        return tr;
+      }, 'plain'));
+    }).catch(function (e) { clear(host); host.appendChild(el('p', 'note bad', String(e.message || e))); });
+  }, [{words: 'Close', close: true}], 'large');
+}
+function rbPutBackConfirm(what) {
+  modal('Put this backup back?', function (body) {
+    var facts = [];
+    if (what.when) facts.push(['Made', new Date(what.when * 1000).toLocaleString(numLang())]);
+    if (what.node) facts.push(['On', what.node]);
+    if (what.manifest) {
+      var m = what.manifest;
+      facts = [['Made', m.made_words], ['On', m.node + ' (' + (m.host || '') + ')'], ['upsmon', m.upsmon], ['Tokens', String(m.tokens)], ['Database', m.engine_words || m.engine]];
+    }
+    if (facts.length) body.appendChild(peekFacts(facts));
+    body.appendChild(el('p', 'note warn', 'Everything in the database is replaced with what the backup holds - tokens, accounts, settings, certificates, logs, and who is signed in: you sign in again afterwards, with an account the backup has. A copy of what is here now is made first (Settings → The database → Copies). In a cluster it goes over to the other node too.'));
+    var pw = maskBox('', what.encrypted === false ? '(not locked)' : 'the password of the backups - empty: the one set here', 'mono');
+    body.appendChild(formField('Its password', pw, 'Only when it was locked with another password than the one set here now.'));
+    rbPutBackConfirm.pw = pw;
+  }, [{words: 'No, leave it', close: true},
+      {words: 'Put it back', cls: 'danger', icon: 'undo', close: true, go: function () {
+        var ask = {action: 'restore', password: rbPutBackConfirm.pw.value};
+        if (what.upload) ask.upload = what.upload; else { ask.id = what.id; ask.name = what.name; }
+        api('rbackup', ask).then(function (x) {
+          toast(x.message, 'good');
+          rbRestoreWatch();
+        }).catch(oops);
+      }}], 'medium');
+}
+function rbRestoreWatch(title) {
+  modal(title || 'Putting the backup back', function (body) {
+    var bar = el('div', 'going wide');
+    bar.innerHTML = '<div class="bar"><span id="rbr-fill"></span></div><div class="says" id="rbr-says"></div>';
+    body.appendChild(bar);
+  }, [{words: 'Close', close: true}], 'medium');
+  var step = function () {
+    api('db', {action: 'job'}).then(function (d) {
+      var j = d.job || {};
+      if ($('rbr-fill')) $('rbr-fill').style.width = (j.whole ? Math.round(100 * j.done / j.whole) : 5) + '%';
+      if ($('rbr-says')) $('rbr-says').textContent = (j.what || '') + (j.says ? ' — ' + j.says : '');
+      if (j.running) { setTimeout(step, 1000); return; }
+      if (!j.what && !j.result && !j.error) { setTimeout(step, 1000); return; }
+      if (j.error) { if ($('rbr-says')) $('rbr-says').textContent = j.error; toast('putting it back failed: ' + j.error, 'bad'); return; }
+      var r = j.result || {};
+      if ($('rbr-says')) {
+        var said = $('rbr-says');
+        clear(said);
+        said.appendChild(el('div', '', 'Put back.'));
+        (r.said || []).concat(r.key ? [r.key] : []).forEach(function (x) { said.appendChild(el('div', 'small', x)); });
+        if (r.safety) said.appendChild(el('div', 'small muted', 'What was here is kept as ' + r.safety));
+      }
+      toast(title ? 'the database is back' : 'the backup is back', 'good');
+      if (title) setTimeout(function () { location.reload(); }, 4000);
+    }).catch(function (e) {
+      /* Who was signed in is what the backup says now: the sign-in page. */
+      if (/signed in|401/i.test(String(e && e.message || e))) {
+        if ($('rbr-says')) $('rbr-says').textContent = 'Put back. Sign in again - with an account the backup has.';
+        setTimeout(function () { location.reload(); }, 3500);
+        return;
+      }
+      setTimeout(step, 2000);
+    });
+  };
+  setTimeout(step, 500);
+}
+function rbPutBackFile() {
+  var file = el('input');
+  file.type = 'file';
+  file.accept = '.enc,.gz';
+  file.onchange = function () {
+    var fl = file.files[0];
+    if (!fl) return;
+    toast('sending ' + fl.name + '…', 'good');
+    bigFetch('?api=rbackup-upload', fl).then(function (r) {
+      return r.json().then(function (d) {
+        if (!r.ok || d.ok === false) throw new Error(d.error || ('the server said ' + r.status));
+        return d;
+      });
+    }).then(function (d) {
+      if (d.said) toast(d.said, 'bad');
+      rbPutBackConfirm({upload: d.upload, encrypted: d.locked, manifest: d.manifest});
+    }).catch(oops);
+  };
+  file.click();
+}
+
+/* A button busy with something slow, the seconds counted beside its words
+   (1.0.109). Returns the function that ends it. */
+function busyCount(button) {
+  busy(button, true);
+  var began = Date.now();
+  var tag = el('span', 'busy-secs', '');
+  button.appendChild(tag);
+  var tick = setInterval(function () { tag.textContent = ' · ' + Math.round((Date.now() - began) / 1000) + ' s'; }, 500);
+  return function () { clearInterval(tick); tag.remove(); busy(button, false); };
+}
+
+
+/* ======== restart and power off (OTP admin.js 12494-12648) ======== */
+/* ---- Settings → Restart and power off (1.0.119) ------------------------------- */
+var PW = {d: null, poll: null, failSince: 0, mine: false, reload: false};
+function loadPower() {
+  api('power').then(function (d) { PW.d = d; PW.failSince = 0; drawPower(); pwPollFor(); }).catch(oops);
+}
+function pwPollFor() {
+  var live = PW.d && PW.d.plan && PW.d.plan.id && !pwAllDone(PW.d);
+  if (live && !PW.poll) PW.poll = setInterval(pwPoll, 2000);
+  if (!live && PW.poll) { clearInterval(PW.poll); PW.poll = null; }
+}
+function pwPoll() {
+  if (TAB !== 'settings' || PANE !== 'power') { clearInterval(PW.poll); PW.poll = null; return; }
+  api('power').then(function (d) {
+    var wasAway = !!PW.failSince;
+    PW.d = d; PW.failSince = 0;
+    drawPower(true);
+    if (pwAllDone(d)) {
+      clearInterval(PW.poll); PW.poll = null;
+      toast(d.plan.how === 'reboot' ? 'every node is up again' : 'switched off', 'good');
+      if (wasAway || PW.reload) setTimeout(function () { location.reload(); }, 2500);
+    }
+  }).catch(function () { if (!PW.failSince) PW.failSince = Date.now(); drawPowerAway(); });
+}
+function pwStateOf(d, n) {
+  var r = n.row || {};
+  var plan = d.plan || {};
+  if (!r.state) return {k: 'wait', w: plan.order === 'rolling' ? 'waits its turn' : 'asked'};
+  if (r.state === 'failed') return {k: 'bad', w: 'failed: ' + (r.said || '')};
+  if (r.state === 'back') return {k: 'ok', w: 'up again'};
+  if (r.state === 'going') {
+    if (plan.how === 'poweroff') return n.alive && (d.now - (r.down_at || 0)) < 20 ? {k: 'going', w: 'switching off'} : {k: 'ok', w: 'switched off'};
+    if (n.alive && (n.started || 0) > (r.down_at || 0)) return {k: 'going', w: 'starting'};
+    if (n.alive && d.now < (r.down_at || 0) + 15) return {k: 'going', w: 'going down'};
+    return {k: 'going', w: 'restarting'};
+  }
+  return {k: 'wait', w: r.state};
+}
+function pwAllDone(d) {
+  if (!d.plan || !d.plan.id) return true;
+  return d.nodes.filter(function (n) { return (d.plan.targets || []).indexOf(n.name) >= 0; })
+    .every(function (n) { var s = pwStateOf(d, n); return s.k === 'ok' || s.k === 'bad'; });
+}
+function drawPower(live) {
+  var real = $('pw-host');
+  if (!real || !PW.d) return;
+  liveFill(real, function (host) {
+  var d = PW.d;
+  if (d.plan && d.plan.id) host.appendChild(pwProgress(d));
+  var grid = el('div', 'pw-grid');
+  d.nodes.forEach(function (n) {
+    var c = el('div', 'card pw-node');
+    var h = el('div', 'pw-head');
+    h.appendChild(el('span', 'dot ' + (n.alive ? 'ok' : 'bad')));
+    h.appendChild(noI18n(el('b', '', n.name)));
+    if (n.me) h.appendChild(el('span', 'tag info', 'this page'));
+    c.appendChild(h);
+    c.appendChild(netFacts([
+      ['State', n.alive ? 'answering' : 'not answering'],
+      ['Address', n.address || '', true],
+      ['Running for', n.started ? span(d.now - n.started) : ''],
+      ['Version', n.version || '', true]
+    ]));
+    var row = el('div', 'btnrow');
+    var rb = cmdButton('Restart', 'refresh', '');
+    var off = cmdButton('Power off', 'power', 'danger');
+    rb.disabled = off.disabled = !!d.busy || !n.alive;
+    rb.onclick = function () { pwAsk('reboot', [n.name], 'one', n); };
+    off.onclick = function () { pwAsk('poweroff', [n.name], 'one', n); };
+    row.appendChild(rb); row.appendChild(off);
+    c.appendChild(row);
+    grid.appendChild(c);
+  });
+  host.appendChild(grid);
+  if (d.cluster) {
+    var both = el('div', 'card full');
+    both.appendChild(el('h2', '', 'Both nodes'));
+    var all = d.nodes.map(function (n) { return n.name; });
+    var row2 = el('div', 'btnrow');
+    var r1 = cmdButton('Restart one after the other', 'refresh', 'primary');
+    explain(r1, 'The other node first, then this one - each in maintenance while it restarts, so the VIP address and the service never stop.');
+    var r2 = cmdButton('Restart both at once', 'refresh', '');
+    var r3 = cmdButton('Power off both', 'power', 'danger');
+    [r1, r2, r3].forEach(function (b) { b.disabled = !!d.busy; });
+    r1.onclick = function () { pwAsk('reboot', all, 'rolling'); };
+    r2.onclick = function () { pwAsk('reboot', all, 'together'); };
+    r3.onclick = function () { pwAsk('poweroff', all, 'together'); };
+    row2.appendChild(r1); row2.appendChild(r2); row2.appendChild(r3);
+    both.appendChild(row2);
+    host.appendChild(both);
+  }
+  }, live, function () { explainWhatWasDrawn(real); });
+}
+function pwAsk(how, targets, order, n) {
+  var d = PW.d;
+  var who = targets.join(', ');
+  var words;
+  if (how === 'poweroff') words = targets.length > 1 ? 'Both nodes are switched off. Nothing answers - the dashboard, the pages - until somebody switches them on again at the machines.'
+    : (d.cluster ? n.name + ' is switched off; the VIP address moves to the other node, which goes on answering alone. It has to be switched on again at the machine.' : 'The server is switched off. Nothing answers until somebody switches it on again at the machine.');
+  else if (order === 'rolling') words = 'One after the other: each goes into maintenance, the VIP address moves to the other node, it restarts and comes back into service - then the next. RADIUS and the pages go on answering all the time.';
+  else if (targets.length > 1) words = 'Both restart at the same moment: for a minute or two nothing answers - the dashboard and the pages.';
+  else words = d.cluster ? n.name + ' goes into maintenance, the VIP address moves to the other node, and it restarts; back up, it comes back into service by itself.' : 'The server restarts: for a minute or two nothing answers.';
+  confirmThen((how === 'reboot' ? 'Restart ' : 'Power off ') + who + '?', htmlText(words), how === 'reboot' ? 'Restart' : 'Power off', function () {
+    api('power', {how: how, targets: targets, order: order}).then(function (r) {
+      toast(r.message, 'good');
+      PW.reload = targets.indexOf(((d.nodes.filter(function (x) { return x.me; })[0]) || {}).name) >= 0;
+      loadPower();
+    }).catch(oops);
+  }, how === 'poweroff');
+}
+function pwProgress(d) {
+  var plan = d.plan;
+  var card = el('div', 'card full net-job');
+  var done = pwAllDone(d);
+  card.appendChild(el('h2', '', (plan.how === 'reboot' ? 'Restart' : 'Power-off') + (done ? ' - done' : ' under way')));
+  var ol = el('ol', 'net-steps done');
+  d.nodes.filter(function (n) { return (plan.targets || []).indexOf(n.name) >= 0; })
+    .sort(function (a, b) { return plan.targets.indexOf(a.name) - plan.targets.indexOf(b.name); })
+    .forEach(function (n) {
+      var st = pwStateOf(d, n);
+      var li = el('li', st.k === 'ok' ? 'good' : (st.k === 'bad' ? 'bad' : ''));
+      li.appendChild(el('span', 'mark', st.k === 'ok' ? '✓' : (st.k === 'bad' ? '✗' : '…')));
+      li.appendChild(noI18n(el('b', '', n.name + ' ')));
+      li.appendChild(el('span', '', st.w));
+      var r = n.row || {};
+      if (st.k === 'going' && r.down_at) {
+        var t = Math.max(0, d.now - r.down_at);
+        var bar = el('div', 'going wide');
+        bar.innerHTML = '<div class="bar"><span></span></div>';
+        bar.querySelector('span').style.width = Math.min(100, Math.round(t / 120 * 100)) + '%';
+        li.appendChild(el('span', 'muted small', ' ' + span(t)));
+        li.appendChild(bar);
+      }
+      ol.appendChild(li);
+    });
+  card.appendChild(ol);
+  if (done) card.appendChild(hideBar(function () {
+    return api('power', {action: 'hide'}).then(function (x) { PW.d = x; drawPower(); });
+  }, 'Hidden by itself half an hour after it began.'));
+  return card;
+}
+function drawPowerAway() {
+  var host = $('pw-host');
+  if (!host) return;
+  var box = $('pw-away');
+  if (!box) { box = el('div', 'card full net-job'); box.id = 'pw-away'; host.insertBefore(box, host.firstChild); }
+  clear(box);
+  var away = Math.round((Date.now() - PW.failSince) / 1000);
+  box.appendChild(el('h2', '', 'This page\'s server is restarting'));
+  var bar = el('div', 'going wide');
+  bar.innerHTML = '<div class="bar"><span></span></div>';
+  bar.querySelector('span').style.width = Math.min(100, Math.round(away / 120 * 100)) + '%';
+  box.appendChild(bar);
+  box.appendChild(el('p', 'note', 'Not answering for ' + span(away) + ' - asked again every two seconds; the page comes back by itself.'));
+}
+
+
+/* ======== the time (OTP admin.js 12649-12904) ======== */
+/* ---- Settings → Time (1.0.120) -------------------------------------------------
+   Each node's clock as chrony sees it, its sources, and the time servers for the
+   whole cluster. */
+var NTP = {d: null, poll: null, draft: null, node: ''};
+function loadNtp() {
+  api('ntp').then(function (d) {
+    NTP.d = d;
+    if (!NTP.node) NTP.node = (d.nodes[0] || {}).name;
+    drawNtp();
+    if (!NTP.poll) NTP.poll = setInterval(function () {
+      if (TAB !== 'settings' || PANE !== 'time') { clearInterval(NTP.poll); NTP.poll = null; return; }
+      api('ntp').then(function (x) { NTP.d = x; drawNtp(true); }).catch(function () {});
+    }, 10000);
+  }).catch(oops);
+}
+function ntpMs(s) {
+  if (s === undefined || s === null || isNaN(s)) return '–';
+  var ms = s * 1000;
+  var a = Math.abs(ms);
+  return (ms >= 0 ? '+' : '−') + (a >= 1000 ? (a / 1000).toFixed(2) + ' s' : (a >= 10 ? a.toFixed(1) : a.toFixed(3)) + ' ms');
+}
+function ntpHealth(n) {
+  var d = (n.now || {}).data || {};
+  var t = d.tracking || {};
+  if (!d.time) return {k: 'bad', w: n.alive ? 'not read yet' : 'not answering'};
+  if (!d.chrony) return {k: d.ntpsynchronized === 'yes' ? 'ok' : 'bad', w: d.ntpsynchronized === 'yes' ? 'synchronised (not chrony)' : 'chrony is not installed'};
+  if (t.leap === 'Not synchronised' || !t.stratum) return {k: 'bad', w: 'not synchronised'};
+  var off = Math.abs(t.offset || 0);
+  if (off > 1) return {k: 'bad', w: 'synchronised, but off'};
+  if (off > 0.1) return {k: 'warn', w: 'synchronised'};
+  return {k: 'ok', w: 'synchronised'};
+}
+function drawNtp(quiet) {
+  var real = $('ntp-host');
+  if (!real || !NTP.d) return;
+  /* What the server has, until something is changed here. */
+  if (!NTP.draft || !PENDING.ntp) NTP.draft = JSON.parse(JSON.stringify(NTP.d.conf));
+  liveFill(real, function (host) {
+  var d = NTP.d;
+  var grid = el('div', 'pw-grid');
+  d.nodes.forEach(function (n) {
+    var nd = (n.now || {}).data || {};
+    var t = nd.tracking || {};
+    var h = ntpHealth(n);
+    var c = el('div', 'card ntp-node');
+    var head = el('div', 'pw-head');
+    head.appendChild(el('span', 'dot ' + (h.k === 'ok' ? 'ok' : (h.k === 'warn' ? 'warn' : 'bad'))));
+    head.appendChild(noI18n(el('b', '', n.name)));
+    if (n.me) head.appendChild(el('span', 'tag info', 'this page'));
+    head.appendChild(el('span', 'tag ' + (h.k === 'ok' ? 'ok' : (h.k === 'warn' ? 'warn' : 'crit')), h.w));
+    c.appendChild(head);
+    var big = el('div', 'ntp-big');
+    big.appendChild(noI18n(el('span', 'ntp-off', ntpMs(t.offset))));
+    big.appendChild(el('span', 'muted small', ' off the time servers'));
+    c.appendChild(big);
+    var clock = '';
+    if (nd.time) {
+      var dt = new Date((nd.time + (d.now - (n.now.at || d.now))) * 1000);
+      clock = dt.toLocaleString(numLang());
+    }
+    c.appendChild(netFacts([
+      ['Follows', t.ref || t.ref_id || '', true],
+      ['Stratum', t.stratum !== undefined ? String(t.stratum) : '', true],
+      ['Last correction', ntpMs(t.last_offset), true],
+      ['Frequency', t.freq !== undefined ? t.freq.toFixed(3) + ' ppm' : '', true],
+      ['Root delay / dispersion', t.root_delay !== undefined ? ntpMs(t.root_delay).replace('+', '') + ' / ' + ntpMs(t.root_disp).replace('+', '') : '', true],
+      ['Leap status', t.leap || ''],
+      ['Time zone', nd.timezone || '', true],
+      ['Its time', clock],
+      ['Read', n.now && n.now.at ? ago(n.now.at) : '']
+    ]));
+    var ap = n.applied || {};
+    if (ap.at) {
+      var st = el('p', 'small ' + (ap.ok ? 'muted' : 'bad'));
+      st.textContent = (ap.ok ? 'Time servers set ' : 'Time servers NOT set ') + ago(ap.at) + (ap.said ? ': ' + ap.said : '');
+      c.appendChild(st);
+    }
+    var row = el('div', 'btnrow');
+    var re = cmdButton('Read it again', 'refresh', 'small');
+    re.onclick = function () { api('ntp', {action: 'read', node: n.name}).then(function (r) { toast(r.message, 'good'); setTimeout(loadNtp, 4000); }).catch(oops); };
+    var sy = cmdButton('Step it now', 'clock', 'small');
+    explain(sy, 'The clock set to the time servers at once (chronyc makestep), not slewed slowly - for a clock that is far off.');
+    sy.onclick = function () {
+      confirmThen('Step the clock of ' + n.name + ' now?', htmlText('The clock jumps to the time servers\' time at once. Codes and logs written in that moment may look out of order.'), 'Step it', function () {
+        api('ntp', {action: 'sync', node: n.name}).then(function (r) { toast(r.message, 'good'); setTimeout(loadNtp, 6000); }).catch(oops);
+      }, false);
+    };
+    row.appendChild(re); row.appendChild(sy);
+    c.appendChild(row);
+    grid.appendChild(c);
+  });
+  host.appendChild(grid);
+  if (d.cluster && d.nodes.length > 1) {
+    var a = ((d.nodes[0].now || {}).data || {}).tracking || {};
+    var b = ((d.nodes[1].now || {}).data || {}).tracking || {};
+    if (a.offset !== undefined && b.offset !== undefined) {
+      var diff = Math.abs(a.offset - b.offset);
+      host.appendChild(el('p', 'note ' + (diff > 1 ? 'bad' : (diff > 0.1 ? 'warn' : 'good')), 'Between the two nodes: ' + ntpMs(diff).replace('+', '') + (diff > 1 ? ' - codes right on one node may be refused on the other' : '')));
+    }
+  }
+  /* Sources, per node. */
+  var sc = el('div', 'card full');
+  var sh = el('h2', '', 'Where the time comes from');
+  sc.appendChild(sh);
+  if (d.cluster) {
+    var seg = el('div', 'seg');
+    d.nodes.forEach(function (n) {
+      var bt = el('button', n.name === NTP.node ? 'on' : '', n.name);
+      bt.type = 'button';
+      noI18n(bt);
+      bt.onclick = function () { NTP.node = n.name; drawNtp(false); };
+      seg.appendChild(bt);
+    });
+    sc.appendChild(seg);
+  }
+  var sn = d.nodes.filter(function (x) { return x.name === NTP.node; })[0] || d.nodes[0];
+  var srcs = (((sn || {}).now || {}).data || {}).sources || [];
+  var STATES = {'*': ['ok', 'followed'], '+': ['ok', 'combined'], '-': ['', 'not combined'], '?': ['crit', 'unreachable'],
+                'x': ['crit', 'false ticker'], '~': ['warn', 'too variable']};
+  if (!srcs.length) sc.appendChild(el('p', 'note', 'No source - chrony has none, or is not installed.'));
+  else sc.appendChild(listTable(['State', 'Source', 'Stratum', 'Asked every', 'Reached', 'Last heard', 'Offset'], srcs, function (s) {
+    var tr = el('tr');
+    var stt = STATES[s.state] || ['', s.state];
+    var td = el('td');
+    td.appendChild(el('span', 'tag ' + stt[0], stt[1]));
+    if (s.mode === '=') td.appendChild(el('span', 'muted small', ' peer'));
+    tr.appendChild(td);
+    tr.appendChild(noI18n(el('td', 'mono', s.name)));
+    tr.appendChild(el('td', 'num', String(s.stratum)));
+    tr.appendChild(el('td', 'num', span(Math.pow(2, s.poll || 0))));
+    var r = el('td');
+    var bits = el('span', 'reach');
+    for (var i = 7; i >= 0; i--) bits.appendChild(el('i', (s.reach >> i) & 1 ? 'on' : ''));
+    bits.title = (s.reach || 0).toString(2).padStart(8, '0') + ' - the last 8 tries';
+    r.appendChild(bits);
+    tr.appendChild(r);
+    tr.appendChild(el('td', 'muted', s.last_rx === null || s.last_rx === undefined ? '–' : span(s.last_rx) + ' ago'));
+    tr.appendChild(noI18n(el('td', 'num mono', ntpMs(s.offset) + ' ± ' + ntpMs(s.error).replace('+', ''))));
+    return tr;
+  }, 'plain'));
+  var own = (((sn || {}).now || {}).data || {}).own || [];
+  if (own.length && !(((sn || {}).now || {}).data || {}).managed) {
+    sc.appendChild(el('p', 'muted small', 'Its own /etc/chrony.conf: '));
+    sc.appendChild(noI18n(el('pre', 'mono small', own.join('\n'))));
+  }
+  host.appendChild(sc);
+  host.appendChild(ntpForm());
+  }, !!quiet, function () { explainWhatWasDrawn(real); });
+}
+function ntpForm() {
+  var d = NTP.d;
+  var dr = NTP.draft;
+  var card = el('div', 'card full');
+  card.id = 'ntp-form';
+  /* Anything changed here waits for the save bar at the bottom. */
+  ['input', 'change'].forEach(function (ev) { card.addEventListener(ev, function () { ntpDirty(); }); });
+  card.addEventListener('click', function (e) { if (e.target.closest && e.target.closest('button')) ntpDirty(); });
+  card.appendChild(el('h2', '', 'The time servers'));
+  var on = switchBox(dr.manage);
+  var g0 = el('div', 'formgrid');
+  g0.appendChild(formField('upsmon sets the time servers', on, 'Off: each machine keeps its own /etc/chrony.conf (AlmaLinux\'s pool, or what you set by hand) - shown and checked here, not changed. On: the servers below, the same on every node; the file\'s own server and pool lines are commented out, and put back when switched off again.'));
+  card.appendChild(g0);
+  var body = el('div');
+  card.appendChild(body);
+  var draw = function () {
+    clear(body);
+    body.hidden = !dr.manage;
+    var list = el('div', 'ntp-servers');
+    (dr.servers || []).forEach(function (s, i) {
+      var row = el('div', 'ntp-srv');
+      var hostIn = textBox(s.host, 'ntp.example.cz', 'mono');
+      hostIn.oninput = function () { s.host = hostIn.value.trim(); };
+      var kind = selectBox([['server', 'one server'], ['pool', 'a pool (several addresses)']], s.pool ? 'pool' : 'server');
+      kind.onchange = function () { s.pool = kind.value === 'pool'; };
+      row.appendChild(hostIn); row.appendChild(kind);
+      [['iburst', 'iburst', 'Four quick questions at the start: synchronised in seconds, not minutes.'],
+       ['prefer', 'preferred', 'Followed before the others when it is good.'],
+       ['nts', 'NTS', 'Network Time Security: the server proves who it is (time.cloudflare.com, ptbtime1.ptb.de, nts.netnod.se…). Needs TCP 4460 out.']].forEach(function (o) {
+        var l = el('label', 'check small');
+        var cb = el('input'); cb.type = 'checkbox'; cb.checked = !!s[o[0]];
+        cb.onchange = function () { s[o[0]] = cb.checked; };
+        l.appendChild(cb); l.appendChild(el('span', '', o[1]));
+        explain(l, o[2]);
+        row.appendChild(l);
+      });
+      var x = iconButton('trash', 'Take it away');
+      x.onclick = function () { dr.servers.splice(i, 1); draw(); };
+      row.appendChild(x);
+      list.appendChild(row);
+    });
+    body.appendChild(list);
+    var adds = el('div', 'btnrow');
+    var add = cmdButton('Add a server', 'add', 'small');
+    add.onclick = function () { dr.servers.push({host: '', pool: false, iburst: true, prefer: false, nts: false}); draw(); };
+    adds.appendChild(add);
+    [['cz.pool.ntp.org', true, false], ['pool.ntp.org', true, false], ['time.cloudflare.com', false, true], ['tik.cesnet.cz', false, false], ['tak.cesnet.cz', false, false]].forEach(function (p) {
+      var b = cmdButton('+ ' + p[0], '', 'small');
+      noI18n(b);
+      b.onclick = function () {
+        if (dr.servers.some(function (s) { return s.host === p[0]; })) return;
+        dr.servers.push({host: p[0], pool: p[1], iburst: true, prefer: false, nts: p[2]}); draw();
+      };
+      adds.appendChild(b);
+    });
+    body.appendChild(adds);
+    var g = el('div', 'formgrid');
+    g.style.marginTop = '14px';
+    if (d.cluster) {
+      var peers = switchBox(dr.peers);
+      peers._input.onchange = function () { dr.peers = !!peers._get(); };
+      g.appendChild(formField('The nodes take each other too', peers, 'Each node is one more source for the other: if the servers above are out of reach, the two nodes at least keep one time - which is what codes need.'));
+    }
+    var stepS = textBox(String((dr.makestep || [1, 3])[0]), '1', 'mono');
+    stepS.oninput = function () { dr.makestep = [stepS.value, (dr.makestep || [1, 3])[1]]; };
+    var stepN = textBox(String((dr.makestep || [1, 3])[1]), '3', 'mono');
+    stepN.oninput = function () { dr.makestep = [(dr.makestep || [1, 3])[0], stepN.value]; };
+    g.appendChild(formField('Step when off by more than (s)', stepS, 'Further off than this, the clock jumps to the right time instead of being slowed or sped up gently.'));
+    g.appendChild(formField('…in the first updates', stepN, 'How many updates after chronyd starts may step it: 3 is after a boot; -1 any time.'));
+    var mins = textBox(String(dr.minsources || 1), '1', 'mono');
+    mins.oninput = function () { dr.minsources = mins.value; };
+    g.appendChild(formField('Sources that have to agree', mins, 'The clock is set only when at least this many sources agree. 1 with one server; 2 or 3 with several.'));
+    var allow = textBox((dr.allow || []).join(', '), '192.0.2.0/24', 'mono');
+    /* A list, as it came (1.0.146): kept as the typed text, the next drawing
+       of the pane broke on .join and it stopped refreshing. */
+    allow.oninput = function () { dr.allow = allow.value.split(/[\s,;]+/).filter(Boolean); };
+    g.appendChild(formField('Serve the time to', allow, 'Networks that may ask these nodes for the time (UDP 123) - for the VPN concentrators, say. Empty: nobody. The firewall opens it by itself.'));
+    body.appendChild(g);
+  };
+  on._input.onchange = function () { dr.manage = !!on._get(); draw(); };
+  draw();
+  var zones = d.zones || [];
+  var tz = selectBox([['', '- as each machine has it -']].concat(zones.map(function (z) { return [z, z]; })), dr.timezone || '');
+  tz.onchange = function () { dr.timezone = tz.value; };
+  var g2 = el('div', 'formgrid');
+  g2.style.marginTop = '14px';
+  g2.appendChild(formField('Time zone', tz, 'Of the machines: the logs and the times on these pages. Codes do not depend on it.'));
+  card.appendChild(g2);
+  card.appendChild(el('p', 'muted small', 'Saved with the bar at the bottom; each node then puts them in by itself within seconds.'));
+  return card;
+}
+function ntpDirty() {
+  pendingSet('ntp', {pane: 'time', save: ntpSave, reset: function () {
+    NTP.draft = JSON.parse(JSON.stringify(NTP.d.conf)); drawNtp(false);
+  }});
+}
+function ntpSave() {
+  var dr = NTP.draft;
+  if (!dr) return Promise.resolve(true);
+  var c = {manage: dr.manage, servers: (dr.servers || []).filter(function (s) { return s.host; }), peers: dr.peers,
+           allow: dr.allow, step_s: (dr.makestep || [1, 3])[0], step_n: (dr.makestep || [1, 3])[1],
+           minsources: dr.minsources, timezone: dr.timezone};
+  return api('ntp', {action: 'save', conf: c}).then(function (r) {
+    toast(r.message, 'good'); NTP.draft = null; setTimeout(loadNtp, 5000); return true;
+  });
+}
+
+
+/* ======== the updates of the system (OTP admin.js 13215-13460) ======== */
+/* ---- Settings → System updates (1.0.158) ----------------------------------------
+   What each node has waiting, the update one node at a time - out of service,
+   dnf or apt, back in service - with its output as it comes, and the restart
+   it needs offered at the end. */
+var OU = {d: null, poll: null, node: '', hide: false, reboot: 'ask', asked: 0};
+try { OU.hide = localStorage.getItem('upsmon-ou-hide') === '1'; } catch (e) { /* only a convenience */ }
+var OU_STATE = {waiting: ['waits its turn', 'dim'], draining: ['out of service', 'warn'],
+                updating: ['updating', 'info'], rebooting: ['restarting', 'warn'],
+                done: ['done', 'good'], failed: ['failed', 'bad'], skipped: ['left out', 'dim']};
+function loadOsup() {
+  api('osup').then(function (d) { OU.d = d; drawOsup(); ouPoll(ouLive(d)); }).catch(oops);
+}
+function ouLive(d) {
+  d = d || OU.d || {};
+  /* Just asked: the node has not begun yet, followed until it says (1.0.159). */
+  if (Date.now() - OU.asked < 30000) return true;
+  return (d.plan && d.plan.state === 'running') || (d.nodes || []).some(function (n) { return (n.check || {}).state === 'running'; }) || !!(d.power && d.power.id);
+}
+function ouPoll(on) {
+  if (on && !OU.poll) {
+    OU.poll = setInterval(function () {
+      if (TAB !== 'settings' || PANE !== 'osup') { ouPoll(false); return; }
+      api('osup').then(function (d) { OU.d = d; OU.away = 0; drawOsup(true); if (!ouLive(d)) ouPoll(false); })
+        .catch(function () { OU.away = OU.away || Date.now(); drawOsup(true); });
+    }, 2500);
+  }
+  if (!on && OU.poll) { clearInterval(OU.poll); OU.poll = null; }
+}
+/* Something asked of the nodes: followed from now on. */
+function ouAsked() { OU.asked = Date.now(); ouPoll(true); }
+/* A button clicked keeps the focus, and a live redraw leaves alone what has
+   it - the window that was clicked in stayed as it was (1.0.159). */
+function liveLetGo(host) {
+  if (!host || host._letGo) return;
+  host._letGo = true;
+  host.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('button') : null;
+    if (b && host.contains(b)) setTimeout(function () { if (document.activeElement === b) b.blur(); }, 0);
+  });
+}
+function ouPercent(r) {
+  var st = (r || {}).state;
+  if (st === 'done' || st === 'failed') return 100;
+  if (st === 'draining') return Math.min(8, 3 + Math.round((Date.now() / 1000 - Number(r.drain_at || r.at || 0)) / 3));
+  if (st === 'updating') return Math.max(8, Math.min(95, Number(r.pct || 0)));
+  if (st === 'rebooting') return 96;
+  return 0;
+}
+function drawOsup(live) {
+  var real = $('ou-host');
+  if (!real || !OU.d) return;
+  liveLetGo(real);
+  liveFill(real, function (host) {
+    var d = OU.d, plan = d.plan || {}, nodes = d.nodes || [];
+    var running = plan.state === 'running';
+    if (OU.away) host.appendChild(el('p', 'note warn', 'This page\'s server is not answering for ' + span(Math.round((Date.now() - OU.away) / 1000)) + ' - restarting, or the VIP address moving; asked again every few seconds.'));
+    /* A restart the update left to do. */
+    var need = nodes.filter(function (n) { return n.reboot; });
+    if (need.length && !(d.power && d.power.id)) {
+      var rb = el('div', 'card full notice warn ou-reboot');
+      rb.appendChild(el('h2', '', need.length > 1 ? 'The nodes need a restart' : need[0].name + ' needs a restart'));
+      rb.appendChild(el('p', 'note', 'A new kernel or libraries are in that only a restart brings into use. ' + (d.cluster ? 'Restarted one after the other, each in maintenance while it is, the service never stops.' : 'For a minute or two the dashboard is away.')));
+      var go = cmdButton(need.length > 1 ? 'Restart them, one at a time' : 'Restart ' + need[0].name, 'refresh', 'primary');
+      go.onclick = function () {
+        confirmThen('Restart after the update', 'Restarted now: ' + htmlText(need.map(function (n) { return n.name; }).join(', ')) + (need.length > 1 ? ', one after the other.' : '.'), 'Restart', function () {
+          api('osup', {action: 'reboot', nodes: need.map(function (n) { return n.name; })}).then(function (x) { toast(x.message, 'good'); ouAsked(); }).catch(oops);
+        }, false);
+      };
+      rb.appendChild(go);
+      host.appendChild(rb);
+    }
+    if (d.power && d.power.id) host.appendChild(el('p', 'note', 'Restarting: ' + (d.power.targets || []).join(', ') + ' - followed on Restart and power off.'));
+    /* What each node has waiting. */
+    var grid = el('div', 'pw-grid');
+    nodes.forEach(function (n) {
+      var c = el('div', 'card pw-node');
+      var hd = el('div', 'pw-head');
+      hd.appendChild(el('span', 'dot ' + (n.alive ? 'ok' : 'bad')));
+      hd.appendChild(noI18n(el('b', '', n.name)));
+      if (n.me) hd.appendChild(el('span', 'tag info', 'this page'));
+      var ck = n.check || {};
+      if (ck.state === 'running') hd.appendChild(el('span', 'tag info', 'looking…'));
+      else if (ck.checked && ck.state === 'done') hd.appendChild(el('span', 'tag ' + (ck.count ? 'warn' : 'good'), ck.count ? num(ck.count) + ' waiting' : 'up to date'));
+      if (n.reboot) hd.appendChild(el('span', 'tag warn', 'restart needed'));
+      else if (ck.reboot_after && ck.count) hd.appendChild(el('span', 'tag info', 'restart after the update'));
+      c.appendChild(hd);
+      c.appendChild(netFacts([
+        ['Updates waiting', ck.checked ? num(ck.count || 0) : 'not looked yet'],
+        ['Of them security', ck.security !== undefined && ck.security !== null ? num(ck.security) : ''],
+        ['A restart', !ck.checked ? '' : (ck.reboot_now ? 'needed now, before any update'
+          : (ck.reboot_after && ck.count ? 'needed after the update - ' + (ck.reboot_why || []).join(', ') : 'not needed by these updates'))],
+        ['Looked', ck.checked ? ago(ck.checked) : ''],
+        ['Updated by', ck.pm || '', true]
+      ]));
+      if (ck.error) c.appendChild(el('p', 'note bad', ck.error));
+      if ((ck.packages || []).length) {
+        var more = el('details', 'fold');
+        more.appendChild(el('summary', '', 'what is waiting'));
+        more.appendChild(noI18n(el('pre', 'lines', ck.packages.slice(0, 300).join('\n') + (ck.packages.length > 300 ? '\n…' : ''))));
+        OU.pkOpen = OU.pkOpen || {};
+        if (OU.pkOpen[n.name]) more.open = true;
+        more.ontoggle = function () { OU.pkOpen[n.name] = more.open; };
+        c.appendChild(more);
+      }
+      var row = el('div', 'btnrow');
+      var look = cmdButton('Look for updates', 'search', '');
+      look.disabled = !n.alive || ck.state === 'running' || running;
+      look.onclick = function () { busy(look, true); api('osup', {action: 'check', nodes: [n.name]}).then(function (x) { toast(x.message); OU.node = n.name; ouAsked(); }).catch(function (e) { busy(look, false); oops(e); }); };
+      row.appendChild(look);
+      c.appendChild(row);
+      grid.appendChild(c);
+    });
+    host.appendChild(grid);
+    /* The update itself. */
+    if (!running) {
+      var uc = el('div', 'card full');
+      uc.appendChild(el('h2', '', d.cluster ? 'Update the nodes' : 'Update this server'));
+      uc.appendChild(el('p', 'note', d.cluster
+        ? 'The other node first, then this one - each out of service while it is updated, the VIP address on the other, RADIUS answered there; back in service before the next one starts.'
+        : 'dnf (or apt) updates every package. The UPS goes on being watched meanwhile; a restart it needs is offered at the end.'));
+      var segb = el('div', 'seg');
+      [['ask', 'Ask me when a restart is needed'], ['auto', 'Restart by itself when needed' + (d.cluster ? ', one at a time' : '')]].forEach(function (o) {
+        var b = el('button', OU.reboot === o[0] ? 'on' : '', o[1]);
+        b.type = 'button';
+        b.onclick = function () { OU.reboot = o[0]; drawOsup(); };
+        segb.appendChild(b);
+      });
+      var after = nodes.filter(function (n) { var k = n.check || {}; return k.reboot_after && k.count; });
+      if (after.length) {
+        var an = el('p', 'note warn', (after.length === nodes.length && nodes.length > 1 ? 'Both nodes need' : after.map(function (n) { return n.name; }).join(', ') + (after.length > 1 ? ' need' : ' needs'))
+          + ' a restart after this update: ' + after.map(function (n) { return (n.check.reboot_why || []).join(', '); }).filter(function (x, i, a) { return x && a.indexOf(x) === i; }).join('; ') + '.');
+        uc.appendChild(an);
+      }
+      var seg2 = el('div', 'seg');
+      [['all', 'Every update'], ['security', 'Only the security updates']].forEach(function (o) {
+        var b = el('button', (OU.what || 'all') === o[0] ? 'on' : '', o[1]);
+        b.type = 'button';
+        b.onclick = function () { OU.what = o[0]; drawOsup(); };
+        seg2.appendChild(b);
+      });
+      uc.appendChild(formField('Which', seg2));
+      uc.appendChild(formField('After the update', segb));
+      var row2 = el('div', 'btnrow');
+      var start = cmdButton(d.cluster ? 'Update them, one at a time' : 'Update it now', 'download', 'primary');
+      start.disabled = !d.helper || nodes.some(function (n) { return !n.alive; }) || !!(d.power && d.power.id);
+      start.onclick = function () {
+        confirmThen(d.cluster ? 'Update the nodes' : 'Update this server', 'Every package of the system is updated' + (d.cluster ? ', on ' + htmlText(nodes.map(function (n) { return n.name; }).join(' and then ')) + ', each out of service while it is.' : '.')
+          + (OU.reboot === 'auto' ? '<br><br>A node that needs it is <b>restarted by itself</b>.' : '<br><br>A restart it needs is offered when it is done.'),
+          'Update', function () {
+            api('osup', {action: 'start', reboot: OU.reboot, security: OU.what === 'security'}).then(function (x) { toast(x.message, 'good'); OU.node = ''; ouAsked(); loadOsup(); }).catch(oops);
+          }, false);
+      };
+      var lookAll = cmdButton('Look on every node', 'search', '');
+      lookAll.onclick = function () { busy(lookAll, true); api('osup', {action: 'check'}).then(function (x) { toast(x.message); ouAsked(); }).catch(function (e) { busy(lookAll, false); oops(e); }); };
+      row2.appendChild(start); row2.appendChild(lookAll);
+      uc.appendChild(row2);
+      if (!d.helper) uc.appendChild(el('p', 'note bad', 'The root helper of this node is not installed (install.sh --upgrade puts it in).'));
+      host.appendChild(uc);
+    }
+    /* How far it is. */
+    if (plan.id) {
+      var pc = el('div', 'card full');
+      var ph = el('h2', '', 'The update');
+      if (running) {
+        var stop = cmdButton('Stop it', 'cancel', 'small danger');
+        explain(stop, 'The nodes not begun stay as they are; a node being updated finishes.');
+        stop.onclick = function () { confirmThen('Stop the update', 'The nodes not yet begun stay as they are; one being updated finishes.', 'Stop it', function () { api('osup', {action: 'cancel'}).then(function (x) { toast(x.message); loadOsup(); }).catch(oops); }, true); };
+        var tl = el('span', 'right'); tl.appendChild(stop); ph.appendChild(tl);
+      }
+      pc.appendChild(ph);
+      pc.appendChild(el('p', 'note', 'Started by ' + (plan.by || '?') + ' · ' + ago(plan.at) + ' · ' + ({running: 'going on', done: 'done', failed: 'failed', cancelled: 'stopped'})[plan.state || 'running']
+        + (plan.reboot === 'auto' ? ' · restarted where needed' : '') + (plan.security ? ' · security updates only' : '')));
+      var steps = (plan.order || []).map(function (nm) {
+        var n = nodes.filter(function (x) { return x.name === nm; })[0] || {name: nm};
+        return {name: nm, row: n.row || {}};
+      });
+      var all = steps.length ? Math.round(steps.reduce(function (m, s) { return m + ouPercent(s.row); }, 0) / steps.length) : 0;
+      pc.appendChild(upBar(all, plan.state === 'failed' ? 'bad' : (plan.state === 'done' ? 'good' : ''),
+        num(all) + ' % · ' + steps.filter(function (s) { return s.row.state === 'done'; }).length + ' of ' + steps.length + ' node(s) done', true));
+      var t = listTable(['Node', 'Step', 'How far', 'What happened', 'When'], steps, function (s) {
+        var tr = el('tr');
+        tr.appendChild(noI18n(el('td', 'mono', s.name)));
+        var w = OU_STATE[s.row.state] || OU_STATE.waiting;
+        var c = el('td'); c.appendChild(el('span', 'tag ' + w[1], w[0])); tr.appendChild(c);
+        var b2 = el('td', 'up-how');
+        var p2 = ouPercent(s.row);
+        b2.appendChild(upBar(p2, s.row.state === 'failed' ? 'bad' : (s.row.state === 'done' ? 'good' : ''), num(p2) + ' %' + (s.row.state === 'updating' && s.row.phase ? ' · ' + txT(s.row.phase) : '')));
+        tr.appendChild(b2);
+        tr.appendChild(el('td', 'small', s.row.said || ''));
+        tr.appendChild(el('td', 'muted', s.row.at ? ago(s.row.at) : '–'));
+        return tr;
+      }, 'plain');
+      (t.querySelector('table') || t).classList.add('up-plan-table');
+      pc.appendChild(t);
+      if (!running) pc.appendChild(hideBar(function () { return api('osup', {action: 'hide'}).then(function (x) { OU.d = x; drawOsup(); }); }));
+      host.appendChild(pc);
+    }
+    /* What the package manager says, a node at a time. */
+    var have = nodes.filter(function (n) { return ((n.row || {}).lines || []).length || ((n.check || {}).lines || []).length; });
+    if (have.length) {
+      if (!OU.node || !have.some(function (n) { return n.name === OU.node; })) {
+        var busyOne = have.filter(function (n) { return (n.row || {}).state === 'updating' || (n.check || {}).state === 'running'; })[0];
+        OU.node = (busyOne || have[0]).name;
+      }
+      var lc = el('div', 'card full');
+      var lh = el('h2', '', 'What it says');
+      var lt = el('span', 'right');
+      var hb = cmdButton(OU.hide ? 'Show it' : 'Hide it', OU.hide ? 'unfold' : 'fold', 'small');
+      hb.onclick = function () { OU.hide = !OU.hide; try { localStorage.setItem('upsmon-ou-hide', OU.hide ? '1' : '0'); } catch (e) { /* only a convenience */ } drawOsup(); };
+      var cb = cmdButton('Clear the window', 'broom', 'small');
+      explain(cb, 'Empty the window of every node - for every page, and after a reload too; what comes after is shown.');
+      lt.appendChild(hb); lt.appendChild(cb);
+      lh.appendChild(lt);
+      lc.appendChild(lh);
+      if (have.length > 1) {
+        var sg = el('div', 'seg');
+        sg.style.marginBottom = '10px';
+        have.forEach(function (n) {
+          var b3 = noI18n(el('button', OU.node === n.name ? 'on' : '', n.name));
+          b3.type = 'button';
+          b3.onclick = function () { OU.node = n.name; OU.picked = Date.now(); drawOsup(); };
+          sg.appendChild(b3);
+        });
+        lc.appendChild(sg);
+      }
+      var one = have.filter(function (n) { return n.name === OU.node; })[0];
+      var lines = (one.row || {}).lines && (one.row || {}).lines.length ? one.row.lines : ((one.check || {}).lines || []);
+      var from = 0;
+      cb.onclick = function () {
+        busy(cb, true);
+        api('osup', {action: 'clear'}).then(function (x) { OU.d = x; drawOsup(); toast('the window is empty'); })
+          .catch(function (e) { busy(cb, false); oops(e); });
+      };
+      if (!OU.hide) {
+        var pre = noI18n(el('pre', 'lines ou-log', lines.slice(from).join('\n') || '–'));
+        lc.appendChild(pre);
+        setTimeout(function () { pre.scrollTop = pre.scrollHeight; }, 0);
+      } else {
+        lc.appendChild(el('p', 'muted small', 'Hidden - ' + num(lines.length) + ' line(s).'));
+      }
+      host.appendChild(lc);
+    }
+  }, live);
+}
+
+
+
 /* ======== automatic certificates (OTP admin.js 14225-14570) ======== */
 /* ---- Settings → Automatic certificates (1.0.169) -------------------------------
    One card a certificate - the VIP address's, each node's - who orders it, what
@@ -3568,6 +6359,129 @@ function acmeDnsGuide(d) {
 }
 
 
+/* ---- a certificate exported, in the format asked for (upsmon 4.1) ----------------
+   PEM with its chain, the certificate alone (PEM or DER), with its private key
+   (PEM, the key locked with a password or not), the key alone, or PFX / PKCS#12 -
+   AES-256, or 3DES for older Windows and Java. A password is typed unseen. */
+var CERT_FORMATS = [
+  {fmt: 'pem', name: 'PEM with the chain', ext: '.pem', key: false, icon: 'lock',
+   says: 'The certificate and the certificates between it and the root - what nginx, Apache and most servers take.'},
+  {fmt: 'crt', name: 'The certificate, PEM', ext: '.crt', key: false, icon: 'lock',
+   says: 'The certificate alone, without its chain.'},
+  {fmt: 'der', name: 'The certificate, DER', ext: '.der', key: false, icon: 'lock',
+   says: 'The certificate alone, binary - for Windows and Java tools that want DER.'},
+  {fmt: 'pfx', name: 'PFX / PKCS#12', ext: '.pfx', key: true, pw: 'need', icon: 'key',
+   says: 'The certificate, its chain and its private key in one file, locked with a password (AES-256) - for Windows, IIS, Exchange, a load balancer.'},
+  {fmt: 'pfx_legacy', name: 'PFX, compatible', ext: '.pfx', key: true, pw: 'need', icon: 'key',
+   says: 'The same, locked the old way (3DES, SHA-1) - for Windows Server 2016 and older, Java 8, appliances that refuse the new one.'},
+  {fmt: 'pem_key', name: 'PEM with the private key', ext: '-with-key.pem', key: true, pw: 'may', icon: 'key',
+   says: 'The certificate, its chain and its private key as text; the key locked with the password when one is given.'},
+  {fmt: 'key', name: 'The private key alone', ext: '.key', key: true, pw: 'may', icon: 'key',
+   says: 'The key alone, PEM; locked with the password when one is given.'}
+];
+function certExport(target, prof) {
+  var base = /^[A-Za-z0-9*.-]{1,100}$/.test(String((prof.info || {}).cn || '')) ? String(prof.info.cn).replace('*', '_') : (target === 'vip' ? 'web-address' : target);
+  var info = prof.info || {};
+  var hasKey = !!prof.has_key;
+  var pick = 'pem';
+  var p1 = secretBox('', '8 characters at least', 'mono');
+  var p2 = secretBox('', 'the same again', 'mono');
+  p1.autocomplete = p2.autocomplete = 'new-password';
+  var tiles = {}, pwBox, keyWarn, nameLine, meter, pwWhy;
+  function strength(s) {
+    var n = 0;
+    if (s.length >= 8) n++;
+    if (s.length >= 14) n++;
+    if (/[a-z]/.test(s) && /[A-Z]/.test(s)) n++;
+    if (/\d/.test(s)) n++;
+    if (/[^A-Za-z0-9]/.test(s)) n++;
+    return s ? Math.max(1, Math.min(4, n)) : 0;
+  }
+  function paint() {
+    var f = CERT_FORMATS.filter(function (x) { return x.fmt === pick; })[0];
+    Object.keys(tiles).forEach(function (k) { tiles[k].classList.toggle('on', k === pick); });
+    pwBox.hidden = !f.key;
+    keyWarn.hidden = !f.key;
+    pwWhy.textContent = f.pw === 'need' ? 'A PFX file is always locked: whoever opens it needs this password.'
+      : 'Optional: without a password the private key is written in the clear.';
+    clear(nameLine);
+    nameLine.appendChild(document.createTextNode('The file: '));
+    nameLine.appendChild(noI18n(el('b', 'mono', base + f.ext)));
+    var s = strength(p1.value);
+    meter.className = 'cx-meter s' + s;
+    meter.title = ['', 'weak', 'fair', 'good', 'strong'][s];
+  }
+  modal('Download the certificate', function (body) {
+    var head = el('div', 'cx-head');
+    head.appendChild(noI18n(el('div', 'cx-cn mono', info.cn || info.subject || target)));
+    var sub = [];
+    if (info.issuer) sub.push('issued by ' + (String(info.issuer).match(/CN=([^,]+)/) || [0, info.issuer])[1]);
+    if (info.not_after) sub.push('good until ' + new Date(info.not_after * 1000).toLocaleDateString(window.OTP_LANG === 'cs' ? 'cs-CZ' : undefined));
+    head.appendChild(el('div', 'muted small', sub.join(' · ')));
+    body.appendChild(head);
+    body.appendChild(el('h4', 'cx-h', 'The format'));
+    var grid = el('div', 'cx-grid');
+    CERT_FORMATS.forEach(function (f) {
+      var t = el('button', 'cx-tile');
+      t.type = 'button';
+      var top = el('div', 'cx-top');
+      top.appendChild(el('span', 'cx-name', f.name));
+      top.appendChild(el('span', 'tag ' + (f.key ? 'warn' : 'info'), f.key ? 'with the key' : 'public'));
+      t.appendChild(top);
+      t.appendChild(el('div', 'cx-says', f.says));
+      t.appendChild(noI18n(el('div', 'cx-ext mono', f.ext)));
+      if (f.key && !hasKey) {
+        t.disabled = true;
+        t.title = 'The private key of this certificate is not kept here.';
+      }
+      t.onclick = function () { pick = f.fmt; paint(); if (f.key) setTimeout(function () { p1.focus(); }, 30); };
+      tiles[f.fmt] = t;
+      grid.appendChild(t);
+    });
+    body.appendChild(grid);
+    pwBox = el('div', 'cx-pw');
+    var g = el('div', 'formgrid');
+    g.appendChild(formField('Password', p1));
+    g.appendChild(formField('The password again', p2));
+    pwBox.appendChild(g);
+    var row = el('div', 'cx-row');
+    meter = el('span', 'cx-meter s0');
+    for (var i = 0; i < 4; i++) meter.appendChild(el('i'));
+    row.appendChild(meter);
+    pwWhy = el('span', 'muted small', '');
+    row.appendChild(pwWhy);
+    pwBox.appendChild(row);
+    body.appendChild(pwBox);
+    keyWarn = el('p', 'note warn cx-warn', 'The private key leaves the server: whoever has the file and its password can be this server. Every export with the key is written into Events.');
+    body.appendChild(keyWarn);
+    nameLine = el('p', 'btnhelp');
+    body.appendChild(nameLine);
+    p1.addEventListener('input', paint);
+    paint();
+  }, [{words: 'Cancel', close: true},
+      {words: 'Download', cls: 'primary', icon: 'download', go: function (b) {
+        var f = CERT_FORMATS.filter(function (x) { return x.fmt === pick; })[0];
+        var pw = f.key ? p1.value : '';
+        if (f.key && (pw || f.pw === 'need')) {
+          if (pw.length < 8) { toast('a password of 8 characters at least', 'bad'); p1.focus(); return; }
+          if (pw !== p2.value) { toast('the two passwords are not the same', 'bad'); p2.focus(); return; }
+        }
+        busy(b, true);
+        api('web', {action: 'tls_export', target: target, format: pick, password: pw}).then(function (x) {
+          var raw = atob(x.data), bytes_ = new Uint8Array(raw.length);
+          for (var i = 0; i < raw.length; i++) bytes_[i] = raw.charCodeAt(i);
+          var a = el('a');
+          a.href = URL.createObjectURL(new Blob([bytes_], {type: x.mime || 'application/octet-stream'}));
+          a.download = x.name;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+          closeModal();
+          toast(x.with_key ? x.name + ' - with the private key; keep it, and its password, safe' : x.name, 'good');
+        }).catch(oops).then(function () { busy(b, false); });
+      }}], 'medium');
+}
+
 /* ======== helpers of the panes above, from OTP admin.js ======== */
 var MODAL_GO = null;
 
@@ -3610,17 +6524,6 @@ function askInModal(title, lede, fields, words, icon, go) {
   }, [{words: 'Close', close: true}, {words: words, cls: 'primary', icon: icon, go: function (b) {
     go(boxes.map(function (x) { return x.value; }), b);
   }}], 'medium');
-}
-
-function bigFetch(query, file) {
-  var opts = {method: 'POST', body: file, credentials: 'same-origin',
-              headers: {'X-Upsmon-Restore': '1', 'Content-Type': 'application/octet-stream'}};
-  if (!BIG_PATH) return fetch(query, opts);
-  return fetch('/admin/upload/' + query, opts).then(function (r) {
-    if (r.status !== 404) return r;
-    BIG_PATH = false;
-    return fetch(query, opts);
-  });
 }
 
 /** Kept certificates as a table: who, signed by whom, from when to when, the
@@ -3784,17 +6687,6 @@ function hideBar(go, words) {
   return row;
 }
 
-/* A button clicked keeps the focus, and a live redraw leaves alone what has
-   it - the window that was clicked in stayed as it was (1.0.159). */
-function liveLetGo(host) {
-  if (!host || host._letGo) return;
-  host._letGo = true;
-  host.addEventListener('click', function (e) {
-    var b = e.target && e.target.closest ? e.target.closest('button') : null;
-    if (b && host.contains(b)) setTimeout(function () { if (document.activeElement === b) b.blur(); }, 0);
-  });
-}
-
 /* In a cluster, which node a line of a log was written on (1.0.45). */
 function manyNodes() {
   return !!(STATUS && ((STATUS.nodes || []).length > 1 || (STATUS.replication || {}).mode));
@@ -3884,38 +6776,6 @@ function nodeValWords(s, v) {
   return String(v);
 }
 
-function rbPassTools() {
-  /* "Make one" beside the password of the backups: a long random one, shown
-     once to be put into the password vault. */
-  var item = document.querySelector('.set-item[data-key="rbackup_password"]');
-  if (!item || item.querySelector('.rb-gen')) return;
-  var b = cmdButton('Make a strong one', 'key', 'small rb-gen');
-  b.style.alignSelf = 'flex-start';
-  b.onclick = function () {
-    var a = new Uint8Array(24);
-    crypto.getRandomValues(a);
-    var abc = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
-    var pw = '';
-    for (var i = 0; i < a.length; i++) { pw += abc.charAt(a[i] % abc.length); if (i % 6 === 5 && i < a.length - 1) pw += '-'; }
-    var box = item.querySelector('input');
-    if (box) {
-      if (box._set) box._set(pw); else box.value = pw;
-      box.dispatchEvent(new Event('input', {bubbles: true}));
-      box.dispatchEvent(new Event('change', {bubbles: true}));
-    }
-    modal('The password of the backups', function (body) {
-      body.appendChild(el('p', 'note', 'Put it into your password vault now - this is the only time it is shown whole. Without it no backup can be opened, by anybody. Then press Save the changes.'));
-      var p = noI18n(el('div', 'rb-pass mono', pw));
-      body.appendChild(p);
-      var c = cmdButton('Copy', 'copy', 'small');
-      c.onclick = function () { copyText(pw, c, 'Copied'); };
-      body.appendChild(c);
-    }, [{words: 'Close', close: true}], true);
-  };
-  var says = item.querySelector('.says');
-  if (says) says.parentNode.insertBefore(b, says); else item.appendChild(b);
-}
-
 /** A certificate file read into a box: PEM as it is, a DER .cer written out as PEM. */
 function readCertFile(file, box) {
   var reader = new FileReader();
@@ -3956,6 +6816,11 @@ function saveFile(name, text) {
   setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
 
+function txT(s) {
+  var got = typeof i18nText === 'function' ? i18nText(String(s)) : null;
+  return got == null ? String(s) : got;      /* untranslated, or English: as it is */
+}
+
 function whoisPeek(name, kind) {
   peek(name + ' in the directory', function () { return api('directories', {action: 'whois', user: name, kind: kind}); }, function (body, d) {
     if (!d.entry) { body.appendChild(el('p', 'note', d.directory + ' has nobody by that name.')); return; }
@@ -3965,12 +6830,6 @@ function whoisPeek(name, kind) {
 }
 
 /* ======== helpers of the panes above, from OTP admin.js ======== */
-/* A big file goes to /admin/upload/ (1.0.98): there nginx asks whether a
-   full administrator sends it before it takes a byte. Where that place is
-   not set up (an nginx without auth_request) it answers 404, and the file
-   goes the old way. */
-var BIG_PATH = true;
-
 var NODE_EMPTY = {isemon_hostname: 'the machine’s own name', mail_helo: 'the machine’s own name',
                   radius_bind: 'every address', siem_hostname: 'the machine’s own name',
                   acme_node_name: 'the name of its certificate, else its full host name'};

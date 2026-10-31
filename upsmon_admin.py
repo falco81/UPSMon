@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import ftplib
 import getpass
 import hashlib
 import hmac
@@ -59,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.0.0'
+__version__ = '4.1.0'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -386,6 +387,165 @@ PANES = {
 }
 HIDDEN_KEYS = ('acme_for',)
 
+# ---- the settings of The database, Backups, System updates, Restart and power off (4.1)
+DEFAULTS.update({'backup_daily': 1,
+ 'backup_keep': 14,
+ 'backup_at': '03:30',
+ 'rbackup': 0,
+ 'rbackup_at': '04:15',
+ 'rbackup_every': 'daily',
+ 'rbackup_day': 7,
+ 'rbackup_keep': 30,
+ 'rbackup_keep_days': 0,
+ 'rbackup_password': '',
+ 'rbackup_verify': 'off',
+ 'osup_check': 0,
+ 'osup_check_at': '06:15',
+ 'osup_auto': 0,
+ 'osup_auto_what': 'security',
+ 'osup_auto_every': 'weekly',
+ 'osup_auto_day': '7',
+ 'osup_auto_at': '04:45',
+ 'osup_auto_reboot': 'auto',
+ 'power_auto': 0,
+ 'power_auto_every': 'weekly',
+ 'power_auto_day': '7',
+ 'power_auto_at': '05:40',
+ 'power_auto_needed': 1})
+
+NAMES.update({'backup_daily': 'A copy of the database every day',
+ 'backup_keep': 'Copies kept',
+ 'backup_at': 'At',
+ 'rbackup': 'Backups to the destinations on a schedule',
+ 'rbackup_at': 'At',
+ 'rbackup_every': 'How often',
+ 'rbackup_day': 'On (1 Monday - 7 Sunday)',
+ 'rbackup_keep': 'Backups kept at each destination',
+ 'rbackup_keep_days': 'And none older than (days)',
+ 'rbackup_password': 'The password of the backups',
+ 'rbackup_verify': 'Try the backups',
+ 'osup_check': 'Look for updates every day',
+ 'osup_check_at': 'At',
+ 'osup_auto': 'Updates on a schedule',
+ 'osup_auto_what': 'Which',
+ 'osup_auto_every': 'How often',
+ 'osup_auto_day': 'On the day',
+ 'osup_auto_at': 'At',
+ 'osup_auto_reboot': 'After the update',
+ 'power_auto': 'A restart on a schedule',
+ 'power_auto_every': 'How often',
+ 'power_auto_day': 'On the day',
+ 'power_auto_at': 'At',
+ 'power_auto_needed': 'Only the nodes that need one'})
+
+SAYS.update({'backup_daily': 'A copy of the database once a day, into <code>/var/lib/upsmon/backups</code>, with '
+                 'the key that opens the tokens beside it.',
+ 'backup_keep': 'How many of those copies are kept; the oldest goes first.',
+ 'backup_at': 'When, as <code>HH:MM</code> on this machine’s clock.',
+ 'rbackup': 'Each node makes its backup and sends it to every destination switched on, at the time '
+            'below. Without it, only Back up now sends one.',
+ 'rbackup_at': 'When, as <code>HH:MM</code> on this machine’s clock.',
+ 'rbackup_every': 'daily, or weekly on the day below.',
+ 'rbackup_day': 'The day of a weekly backup: 1 is Monday, 7 Sunday.',
+ 'rbackup_keep': 'How many of this node’s backups each destination keeps; the oldest go first, the '
+                 'newest never.',
+ 'rbackup_keep_days': 'Older ones are taken away too - 0: only the count above decides.',
+ 'rbackup_password': 'Every backup is locked with it (AES-256, opened with upsmon or with openssl '
+                     'alone). Keep it apart from the backups as well - in a password vault: '
+                     'without it nobody, you included, opens them. Empty: the backups are not '
+                     'locked, and anybody with one has every token.',
+ 'rbackup_verify': 'The newest backup fetched back, opened with the password, every file checked, '
+                   'the database read through and the tokens tried against the key in it - nothing '
+                   'is put back. After every backup, or once a week.',
+ 'osup_check': 'Each node looks what dnf (or apt) has waiting, every day at the time below - for '
+               'the cards here, the alerts and the report. Nothing is put in.',
+ 'osup_check_at': 'When, as <code>HH:MM</code> on this machine’s clock.',
+ 'osup_auto': 'The updates put in by themselves in the window below, one node at a time as by hand '
+              '- each out of service while it is updated, the VIP address on the other. Off until '
+              'switched on.',
+ 'osup_auto_what': 'Only the security updates (dnf --security, unattended-upgrade on apt), or '
+                   'every update.',
+ 'osup_auto_every': 'A day, a week or a month.',
+ 'osup_auto_day': 'The day a weekly update goes.',
+ 'osup_auto_at': 'When, as <code>HH:MM</code> - a quiet hour, away from the backups.',
+ 'osup_auto_reboot': 'A node that needs a restart after the update - restarted by itself, one '
+                     'after the other, or offered on the page.',
+ 'power_auto': 'The nodes restarted in the window below, one after the other, each out of service '
+               'while it is. Off until switched on.',
+ 'power_auto_every': 'A week or a month.',
+ 'power_auto_day': 'The day a weekly restart goes.',
+ 'power_auto_at': 'When, as <code>HH:MM</code> on this machine’s clock.',
+ 'power_auto_needed': 'Only the nodes an update left waiting for a restart; off: every node, every '
+                      'time.'})
+
+SAYS_SHORT.update({})
+
+TUNABLE.update({'backup_daily': (0, 1),
+ 'backup_keep': (1, 365),
+ 'rbackup': (0, 1),
+ 'rbackup_every': ('daily', 'weekly'),
+ 'rbackup_day': (1, 7),
+ 'rbackup_keep': (1, 1000),
+ 'rbackup_keep_days': (0, 3650),
+ 'rbackup_verify': ('off', 'after', 'weekly'),
+ 'osup_check': (0, 1),
+ 'osup_auto': (0, 1),
+ 'osup_auto_what': ('security', 'all'),
+ 'osup_auto_every': ('daily', 'weekly', 'monthly'),
+ 'osup_auto_day': ('1', '2', '3', '4', '5', '6', '7'),
+ 'osup_auto_reboot': ('ask', 'auto'),
+ 'power_auto': (0, 1),
+ 'power_auto_every': ('weekly', 'monthly'),
+ 'power_auto_day': ('1', '2', '3', '4', '5', '6', '7'),
+ 'power_auto_needed': (0, 1)})
+
+CHOICE_WORDS.update({'rbackup_verify': {'off': 'only by hand',
+                    'after': 'after every backup, the one just sent',
+                    'weekly': 'once a week, the newest one'},
+ 'osup_auto_what': {'security': 'only the security updates', 'all': 'every update'},
+ 'osup_auto_every': {'daily': 'every day',
+                     'weekly': 'every week, on the day below',
+                     'monthly': 'on the first of every month'},
+ 'osup_auto_day': {'1': 'Monday',
+                   '2': 'Tuesday',
+                   '3': 'Wednesday',
+                   '4': 'Thursday',
+                   '5': 'Friday',
+                   '6': 'Saturday',
+                   '7': 'Sunday'},
+ 'osup_auto_reboot': {'auto': 'restarted by itself where an update needs it',
+                      'ask': 'a restart offered on the page'},
+ 'power_auto_every': {'weekly': 'every week, on the day below',
+                      'monthly': 'on the first of every month'},
+ 'power_auto_day': {'1': 'Monday',
+                    '2': 'Tuesday',
+                    '3': 'Wednesday',
+                    '4': 'Thursday',
+                    '5': 'Friday',
+                    '6': 'Saturday',
+                    '7': 'Sunday'}})
+
+ONLY_WHEN.update({'backup_at': ['backup_daily', '1'],
+ 'backup_keep': ['backup_daily', '1'],
+ 'osup_auto_at': ['osup_auto', '1'],
+ 'osup_auto_day': ['osup_auto_every', 'weekly'],
+ 'osup_auto_every': ['osup_auto', '1'],
+ 'osup_auto_reboot': ['osup_auto', '1'],
+ 'osup_auto_what': ['osup_auto', '1'],
+ 'osup_check_at': ['osup_check', '1'],
+ 'power_auto_at': ['power_auto', '1'],
+ 'power_auto_day': ['power_auto_every', 'weekly'],
+ 'power_auto_every': ['power_auto', '1'],
+ 'power_auto_needed': ['power_auto', '1'],
+ 'rbackup_at': ['rbackup', '1'],
+ 'rbackup_day': ['rbackup_every', 'weekly'],
+ 'rbackup_every': ['rbackup', '1']})
+
+PANES.update({'db': ['backup_daily', 'backup_keep', 'backup_at'], 'backup': ['rbackup', 'rbackup_at', 'rbackup_every', 'rbackup_day', 'rbackup_keep', 'rbackup_keep_days', 'rbackup_password', 'rbackup_verify'], 'osup': ['osup_check', 'osup_check_at', 'osup_auto', 'osup_auto_what', 'osup_auto_every', 'osup_auto_day', 'osup_auto_at', 'osup_auto_reboot'], 'power': ['power_auto', 'power_auto_every', 'power_auto_day', 'power_auto_at', 'power_auto_needed']})
+
+SECRET_KEYS = SECRET_KEYS + ('rbackup_password',)
+SEALED_KEYS = SECRET_KEYS
+
 CONFIG = dict(DEFAULTS)
 FILE_CONFIG = dict(DEFAULTS)
 FILE_KEYS = set()
@@ -635,6 +795,26 @@ def console_at_login_set(on):
 
 
 CONSOLE_WORK = {'busy': False, 'seen': 0.0}
+
+
+def norm_name(name):
+    return str(name or '').strip().lower()[:190]
+
+
+def hisec_backup_target(t):
+    return None
+
+
+def write_file_settings(changes, path=None):
+    return None
+
+
+def node_carry(store, old, new, by=''):
+    return None
+
+
+def ha_lead(store):
+    return True
 
 
 # ======== carried over from OTP 1.0.187 (lines 1576-1634): settings: coerced ========
@@ -4644,6 +4824,2861 @@ def acme_dns_check(store):
 
 
 
+# ======== carried over from OTP 1.0.187 (lines 26989-26994): the root helper asked: names ========
+NET_ASK_NAME = 'net.ask'
+NET_ANSWER_NAME = 'net.json'
+NET_READ_S = 300                # how often each node says what its network is
+NET_JOB_LIVE_S = 1800           # a job not moving for this long is over
+NET_WORK = {'busy': False, 'read_at': 0.0}
+NET_WORK_LOCK = threading.Lock()
+
+
+# ======== carried over from OTP 1.0.187 (lines 27015-27045): the root helper asked, one at a time ========
+
+NET_ROOT_LOCK = threading.Lock()
+
+
+def net_root(data, wait=60):
+    """One request to the root helper (upsmon_web.py) and its answer - one at a
+    time (1.0.146): "Read it again" on the pages during a job wrote over the
+    job's request, or took its answer, and the job waited for nothing."""
+    with NET_ROOT_LOCK:
+        ask_id = secrets.token_hex(8)
+        data = dict(data, id=ask_id)
+        tmp = WEB_DIR / ('.%s.%s' % (NET_ASK_NAME, secrets.token_hex(6)))
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write(json.dumps(data))
+        os.replace(str(tmp), str(WEB_DIR / NET_ASK_NAME))
+        end = time.time() + wait
+        while time.time() < end:
+            try:
+                got = json.loads((WEB_DIR / NET_ANSWER_NAME).read_text())
+            except (OSError, ValueError):
+                got = None
+            if isinstance(got, dict) and got.get('id') == ask_id:
+                if not got.get('ok'):
+                    raise ValueError(got.get('said') or 'the root helper said no')
+                return got.get('data') or {}
+            time.sleep(0.4)
+    raise ValueError('the root helper of this node did not answer in %d s - is upsmon-web.path '
+                     'running?  systemctl status upsmon-web.path' % wait)
+
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 27765-27932): restart and power off ========
+# ---- restart and power off ------------------------------------------------------------
+POWER_LIVE_S = 1800
+
+
+def power_plan(store):
+    return _meta_json(store, 'power:plan') or {}
+
+
+def power_busy(store):
+    p = power_plan(store)
+    if not p or time.time() - float(p.get('at') or 0) > POWER_LIVE_S:
+        return False
+    for n in p.get('targets') or []:
+        row = _meta_json(store, 'power:node:' + n) or {}
+        if row.get('id') != p.get('id') or row.get('state') in ('asked', 'going'):
+            if p.get('how') == 'poweroff' and row.get('state') == 'going':
+                continue
+            return True
+    return False
+
+
+def power_ask(store, how, targets, order, by, keep_service=False):
+    """`keep_service` (1.0.165): a node goes down only while another one
+    answers - asked of every restart one after the other, on a schedule and
+    after an update; a node that does not come back stops the rest."""
+    if how not in ('reboot', 'poweroff'):
+        raise ValueError('reboot or poweroff')
+    known = [node_name()] + [n['name'] for n in ha_nodes(store) if n['name'] != node_name()]
+    targets = [t for t in known if t in (targets or [])]
+    if not targets:
+        raise ValueError('which node?')
+    if order not in ('one', 'rolling', 'together'):
+        order = 'one' if len(targets) == 1 else 'rolling'
+    if how == 'poweroff' and order == 'rolling':
+        order = 'together'
+    if power_busy(store):
+        raise ValueError('a restart or a power-off is under way already')
+    for t in targets:
+        if net_job_active(_meta_json(store, 'net:job:' + t)):
+            raise ValueError('%s is changing its network' % t)
+    if order == 'rolling':
+        # The node this page is not on last: the page stays with the other
+        # while the first restarts.
+        targets.sort(key=lambda n: n == node_name())
+    keep_service = bool(keep_service or (order == 'rolling' and len(targets) > 1))
+    if keep_service and CONFIG.get('ha_mode') and how == 'reboot':
+        alive = [n['name'] for n in ha_nodes(store) if n.get('alive') or n.get('me')]
+        if len(alive) < 2:
+            raise ValueError('only %s answers: restarting it would stop the service - bring the '
+                             'other node back first' % (', '.join(alive) or 'this node'))
+    plan = {'id': secrets.token_hex(6), 'how': how, 'targets': targets, 'order': order,
+            'by': by, 'at': time.time(), 'from': node_name(), 'keep_service': keep_service}
+    store.set_meta('power:plan', json.dumps(plan))
+    store.add_event('starting and stopping', '%s asked for a %s of %s%s' % (
+        by, 'restart' if how == 'reboot' else 'power-off', ', '.join(targets),
+        ' one after the other' if order == 'rolling' and len(targets) > 1 else
+        (' at once' if len(targets) > 1 else '')), 'warn', who=by)
+    return plan
+
+
+def _power_put(store, row, state, words=''):
+    row.update(state=state, moved=time.time())
+    if words:
+        row['said'] = str(words)[:300]
+    store.set_meta('power:node:' + node_name(), json.dumps(row))
+
+
+def power_go(daemon, plan):
+    store = daemon.store
+    row = {'id': plan['id'], 'how': plan['how'], 'at': time.time(), 'boot': boot_time()}
+    try:
+        many = bool(CONFIG.get('ha_mode'))
+        if many and plan.get('keep_service') and plan['how'] == 'reboot' and \
+                not any(n.get('alive') and not n.get('me') for n in ha_nodes(store)):
+            # Its turn come, nobody else answers (1.0.165): it stays up.
+            raise ValueError('no other node answers now - not restarted, the service goes on here')
+        if many and plan.get('order') != 'together' and not (maintenance_row(store) or {}).get('on'):
+            maintenance_set(store, True, 'a %s asked by %s' % (
+                'restart' if plan['how'] == 'reboot' else 'power-off', plan.get('by')),
+                plan.get('by') or '')
+            row['maint'] = True
+            v = vip_conf(store)
+            end = time.time() + 90
+            while v.get('on') and vip_here(v.get('address')) and time.time() < end:
+                time.sleep(1)
+            if v.get('on') and vip_here(v.get('address')) and plan.get('keep_service'):
+                # The VIP address did not move (1.0.165): not restarted under it.
+                raise ValueError('the VIP address did not move to the other node in 90 s - not '
+                                 'restarted')
+        row['down_at'] = time.time() + 5
+        _power_put(store, row, 'going', 'going down')
+        net_root({'do': 'power', 'how': plan['how'], 'in': 5}, 30)
+        log('starting and stopping: %s in 5 s, asked by %s' % (plan['how'], plan.get('by')),
+            'warn')
+    except Exception as e:                              # noqa: BLE001
+        if row.get('maint'):
+            try:
+                maintenance_set(store, False, '', plan.get('by') or '')
+            except Exception:                           # noqa: BLE001
+                pass
+        _power_put(store, row, 'failed', str(e))
+
+
+def power_back(daemon, row):
+    store = daemon.store
+    if row.get('maint'):
+        maintenance_set(store, False, '', 'after the restart')
+    _power_put(store, row, 'back', 'up again')
+    store.add_event('starting and stopping', '%s is up again after the restart' % node_name())
+
+
+def power_tick(daemon):
+    """This node's part of a restart or power-off: its turn, and after it."""
+    store = daemon.store
+    me = node_name()
+    plan = power_plan(store)
+    row = _meta_json(store, 'power:node:' + me) or {}
+    if row.get('state') == 'going' and row.get('how') == 'reboot':
+        if boot_time() > float(row.get('boot') or 0) + 1:
+            _net_thread(power_back, daemon, row)
+            return True
+        if time.time() - float(row.get('moved') or 0) > 900:
+            _power_put(store, row, 'failed', 'it did not restart in 15 minutes')
+        return False
+    if not plan or me not in (plan.get('targets') or []) or row.get('id') == plan.get('id'):
+        return False
+    if time.time() - float(plan.get('at') or 0) > POWER_LIVE_S:
+        return False
+    if plan.get('order') == 'rolling':
+        for t in plan['targets']:
+            if t == me:
+                break
+            other = _meta_json(store, 'power:node:' + t) or {}
+            if other.get('id') != plan['id'] or other.get('state') not in ('back', 'failed'):
+                return False                # not my turn yet
+            if other.get('state') == 'failed' and plan.get('keep_service'):
+                # One before did not come back (1.0.165): the rest stays up.
+                _power_put(store, {'id': plan['id'], 'how': plan['how'], 'at': time.time(),
+                                   'boot': boot_time()}, 'failed',
+                           'not restarted: %s did not restart and come back' % t)
+                store.add_event('starting and stopping', '%s was not restarted: %s did not come '
+                                'back - the service goes on here' % (me, t), 'bad')
+                return False
+    _net_thread(power_go, daemon, plan)
+    return True
+
+
+def power_view(store):
+    plan = power_plan(store)
+    nodes = []
+    hb = {n['name']: n for n in ha_nodes(store)}
+    names = [node_name()] + [n for n in hb if n != node_name()]
+    for n in names:
+        b = hb.get(n) or {}
+        row = _meta_json(store, 'power:node:' + n) or {}
+        nodes.append({'name': n, 'me': n == node_name(), 'alive': bool(b.get('alive', True)
+                                                                      if n == node_name() else
+                                                                      b.get('alive')),
+                      'started': b.get('started'), 'age': b.get('age'),
+                      'address': b.get('address') or '', 'version': b.get('version') or '',
+                      'row': row if row.get('id') == plan.get('id') else {}})
+    # Hidden from the page by whoever pressed Hide this (1.0.123).
+    seen = store.get_meta('power:seen') == str(plan.get('id') or '')
+    return {'plan': plan if plan and not seen and time.time() - float(plan.get('at') or 0) < POWER_LIVE_S
+            else {}, 'nodes': nodes, 'now': time.time(), 'cluster': len(nodes) > 1,
+            'busy': power_busy(store)}
+
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 28228-28241): the time: chrony ========
+# ---- the time: chrony on every node (1.0.120) ----------------------------------------
+# Codes from the app are worked out from the clock: a node whose clock is off by
+# more than half a period refuses codes that are right. Settings → Time shows
+# each node's clock as chrony sees it (offset, stratum, its sources) and sets
+# the time servers for the whole cluster: kept in meta 'ntp:conf', put in by
+# each node's root helper when it changes ('ntp:applied:NODE'), and in a
+# cluster each node also takes the other as one more source.
+NTP_READ_S = 60
+NTP_WORK = {'busy': False, 'read_at': 0.0, 'last': {}}
+NTP_WORK_LOCK = threading.Lock()
+NTP_DEFAULT = {'manage': False, 'servers': [], 'peers': True, 'allow': [],
+               'makestep': [1.0, 3], 'minsources': 1, 'timezone': ''}
+
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 28265-28471): the time: chrony ========
+def ntp_conf(store):
+    c = dict(NTP_DEFAULT)
+    c.update(_meta_json(store, 'ntp:conf') or {})
+    return c
+
+
+def ntp_desired(store):
+    c = ntp_conf(store)
+    peers = []
+    if c.get('manage') and c.get('peers') and CONFIG.get('ha_mode') and CONFIG.get('ha_peer'):
+        try:
+            peers = [str(ipaddress.ip_address(str(CONFIG['ha_peer'])))]
+        except ValueError:
+            peers = []
+    return {'manage': bool(c.get('manage')), 'servers': c.get('servers') or [],
+            'peers': peers, 'allow': c.get('allow') or [],
+            'makestep': c.get('makestep') or [1.0, 3], 'minsources': c.get('minsources') or 1,
+            'timezone': c.get('timezone') or ''}
+
+
+def ntp_checked(b):
+    """The settings from the page, made whole - the root helper checks them
+    again."""
+    out = dict(NTP_DEFAULT)
+    out['manage'] = bool(b.get('manage'))
+    servers = []
+    for x in (b.get('servers') or [])[:12]:
+        if not isinstance(x, dict):
+            continue
+        host = str(x.get('host') or '').strip().lower().rstrip('.')
+        if not host:
+            continue
+        try:
+            host = str(ipaddress.ip_address(host))
+        except ValueError:
+            if not re.match(r'^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?'
+                            r'(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$', host):
+                raise ValueError('%r is not a host name or an address' % host)
+        servers.append({'host': host, 'pool': bool(x.get('pool')),
+                        'iburst': bool(x.get('iburst', True)), 'prefer': bool(x.get('prefer')),
+                        'nts': bool(x.get('nts'))})
+    if out['manage'] and not servers:
+        raise ValueError('at least one time server - or let the machines keep their own')
+    out['servers'] = servers
+    out['peers'] = bool(b.get('peers', True))
+    allow = []
+    for a in re.split(r'[\s,;]+', b.get('allow') if isinstance(b.get('allow'), str)
+                      else ' '.join(b.get('allow') or [])):
+        if not a:
+            continue
+        try:
+            allow.append(str(ipaddress.ip_network(a, strict=False)))
+        except ValueError:
+            raise ValueError('%r is not a network (192.0.2.0/24)' % a)
+    out['allow'] = allow[:20]
+    try:
+        th = float(b.get('step_s', 1.0))
+        lim = int(b.get('step_n', 3))
+    except (TypeError, ValueError):
+        raise ValueError('the step: seconds, and how many updates')
+    if not (0.001 <= th <= 3600) or not (-1 <= lim <= 1000):
+        raise ValueError('the step: 0.001 to 3600 s; -1 (always) to 1000 updates')
+    out['makestep'] = [th, lim]
+    try:
+        out['minsources'] = max(1, min(10, int(b.get('minsources') or 1)))
+    except (TypeError, ValueError):
+        raise ValueError('how many sources have to agree is a number')
+    tz = str(b.get('timezone') or '').strip()
+    if tz and not re.match(r'^[A-Za-z0-9_+-]{1,40}(/[A-Za-z0-9_+-]{1,40}){0,3}\Z', tz):
+        raise ValueError('%r is not a time zone' % tz)
+    out['timezone'] = tz
+    return out
+
+
+def ntp_save(store, b, by):
+    c = ntp_checked(b)
+    c.update(at=time.time(), by=by)
+    store.set_meta('ntp:conf', json.dumps(c))
+    what = ('the servers %s%s' % (', '.join(x['host'] for x in c['servers']),
+                                  '; the nodes take each other too' if c['peers'] and
+                                  CONFIG.get('ha_mode') else '')) if c['manage'] \
+        else 'each machine keeps its own servers'
+    if c['timezone']:
+        what += '; time zone %s' % c['timezone']
+    store.add_event('settings', '%s set the time: %s' % (by, what), 'warn', who=by)
+    return c
+
+
+def ntp_publish(store, zones=False):
+    data = root_ask('ntp.ask', 'ntp.json', {'do': 'read', 'zones': zones}, 30)
+    now = {'at': time.time(), 'data': {k: v for k, v in data.items() if k != 'zones'}}
+    store.set_meta('ntp:now:' + node_name(), json.dumps(now))
+    NTP_WORK['read_at'] = time.time()
+    NTP_WORK['last'] = now
+    if zones and data.get('zones'):
+        store.set_meta('ntp:zones', json.dumps(data['zones']))
+    return now
+
+
+def ntp_apply(store):
+    want = ntp_desired(store)
+    h = hashlib.sha256(json.dumps(want, sort_keys=True).encode()).hexdigest()[:24]
+    row = {'hash': h, 'at': time.time()}
+    try:
+        got = root_ask('ntp.ask', 'ntp.json', dict(want, do='apply'), 300)
+        row.update(ok=True, said='; '.join(got.get('said') or []) or 'as it was')
+        log('the time: %s' % row['said'])
+    except ValueError as e:
+        row.update(ok=False, said=str(e)[:300])
+        log('the time servers could not be set: %s' % e, 'warn')
+    store.set_meta('ntp:applied:' + node_name(), json.dumps(row))
+    try:
+        ntp_publish(store)
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
+def _ntp_thread(fn, *args):
+    def go():
+        try:
+            fn(*args)
+        except Exception as e:                          # noqa: BLE001
+            log('the time: %s' % e, 'warn')
+        finally:
+            with NTP_WORK_LOCK:
+                NTP_WORK['busy'] = False
+    with NTP_WORK_LOCK:
+        if NTP_WORK['busy']:
+            return False
+        NTP_WORK['busy'] = True
+    threading.Thread(target=go, name='upsmon-ntp', daemon=True).start()
+    return True
+
+
+def ntp_sync(store):
+    got = root_ask('ntp.ask', 'ntp.json', {'do': 'sync'}, 60)
+    store.add_event('settings', '%s: the clock stepped to the time servers now (%s)' % (
+        node_name(), '; '.join(got.get('said') or [])), 'warn')
+    time.sleep(3)
+    ntp_publish(store)
+
+
+def ntp_tick(daemon):
+    if HA_REBUILDING.is_set() or not WEB_DIR.is_dir():
+        return
+    store = daemon.store
+    me = node_name()
+    if NTP_WORK['busy']:
+        return
+    conf = _meta_json(store, 'ntp:conf')
+    if conf:
+        want = ntp_desired(store)
+        h = hashlib.sha256(json.dumps(want, sort_keys=True).encode()).hexdigest()[:24]
+        done = _meta_json(store, 'ntp:applied:' + me) or {}
+        if done.get('hash') != h and time.time() - float(done.get('at') or 0) > 30:
+            _ntp_thread(ntp_apply, store)
+            return
+    sync_at = float(store.get_meta('ntp:sync:' + me) or 0)
+    if sync_at > float(NTP_WORK.get('synced') or 0) and time.time() - sync_at < 300:
+        NTP_WORK['synced'] = sync_at
+        _ntp_thread(ntp_sync, store)
+        return
+    wanted = float(store.get_meta('ntp:read:' + me) or 0)
+    if time.time() - NTP_WORK['read_at'] > NTP_READ_S or wanted > NTP_WORK['read_at']:
+        _ntp_thread(ntp_publish, store, wanted > NTP_WORK['read_at'] or
+                    not store.get_meta('ntp:zones'))
+
+
+def ntp_problem():
+    """Words for the status when this node's clock is not to be trusted."""
+    now = NTP_WORK.get('last') or {}
+    d = now.get('data') or {}
+    if not d or time.time() - float(now.get('at') or 0) > 600:
+        return ''
+    t = d.get('tracking') or {}
+    if d.get('chrony') and t:
+        if t.get('leap') == 'Not synchronised' or not t.get('stratum'):
+            return ('the clock is not synchronised to a time server (chrony) - codes from the '
+                    'app are worked out from it: Settings → Time')
+        if abs(float(t.get('offset') or 0)) > 1.0:
+            return ('the clock is %.1f s off the time servers - codes from the app are worked '
+                    'out from it: Settings → Time' % abs(float(t['offset'])))
+    elif d.get('ntpsynchronized') == 'no':
+        return 'the clock is not synchronised (timedatectl): Settings → Time'
+    return ''
+
+
+def ntp_view(store):
+    hb = {n['name']: n for n in ha_nodes(store)}
+    names = [node_name()] + sorted(n for n in hb if n != node_name())
+    nodes = []
+    for n in names:
+        nodes.append({'name': n, 'me': n == node_name(),
+                      'alive': True if n == node_name() else bool((hb.get(n) or {}).get('alive')),
+                      'now': _meta_json(store, 'ntp:now:' + n) or {},
+                      'applied': _meta_json(store, 'ntp:applied:' + n) or {}})
+    try:
+        zones = json.loads(store.get_meta('ntp:zones') or '[]')
+    except ValueError:
+        zones = []
+    conf = ntp_conf(store)
+    want = ntp_desired(store)
+    h = hashlib.sha256(json.dumps(want, sort_keys=True).encode()).hexdigest()[:24]
+    return {'nodes': nodes, 'conf': conf, 'zones': zones, 'cluster': len(nodes) > 1,
+            'hash': h if _meta_json(store, 'ntp:conf') else '', 'now': time.time()}
+
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 28582-28597): the machine: its nodes ========
+HOST_WORK = {'ssh': False, 'ssh_seen': 0.0, 'ssh_since': 0.0, 'osup': False, 'osup_read': 0.0}
+
+
+def host_nodes(store):
+    return [node_name()] + [n['name'] for n in ha_nodes(store) if n['name'] != node_name()]
+
+
+def host_alive(store):
+    """{node: whether it is heard from}."""
+    out = {node_name(): True}
+    for n in ha_nodes(store):
+        if n['name'] != node_name():
+            out[n['name']] = bool(n.get('alive'))
+    return out
+
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 28835-29192): the updates of the system ========
+OSUP_STATES = ('waiting', 'draining', 'updating', 'rebooting', 'done', 'failed', 'skipped')
+
+
+def osup_plan(store):
+    return _meta_json(store, 'host:osup:plan') or {}
+
+
+def osup_row(store, name):
+    return _meta_json(store, 'host:osup:node:' + name) or {}
+
+
+def osup_put(store, row, **kw):
+    row.update(kw, at=time.time())
+    store.set_meta('host:osup:node:' + node_name(), json.dumps(row))
+    return row
+
+
+def osup_view(store):
+    plan = osup_plan(store)
+    seen = store.get_meta('host:osup:seen')
+    alive = host_alive(store)
+    nodes = []
+    for n in host_nodes(store):
+        row = osup_row(store, n)
+        chk = _meta_json(store, 'host:osup:check:' + n) or {}
+        nodes.append({'name': n, 'me': n == node_name(), 'alive': alive.get(n, False),
+                      'row': row if row.get('plan') == plan.get('id') else {},
+                      'check': chk, 'reboot': bool(row.get('reboot') and not row.get('rebooted')) or
+                      bool(chk.get('reboot_now') and chk.get('state') == 'done'),
+                      'started': (_meta_json(store, 'node:' + n) or {}).get('started')})
+    _osup_cleared(store, nodes)
+    hidden = bool(plan) and seen == plan.get('id') and plan.get('state') != 'running'
+    return {'plan': {} if hidden else plan, 'nodes': nodes, 'now': time.time(),
+            'cluster': bool(CONFIG.get('ha_mode')), 'helper': WEB_DIR.is_dir(),
+            'power': power_plan(store) if power_busy(store) else {}}
+
+
+def _osup_mark(part):
+    """Which run a part's lines are of: the same mark, the same run."""
+    return '%s|%s' % (part.get('plan') or part.get('id') or '', part.get('began') or '')
+
+
+def _osup_cleared(store, nodes):
+    """The lines cleared from the window (1.0.159) left out: of the run they
+    were cleared in, only what came after the last line then shown. Kept in
+    the database, so for every page and after a reload."""
+    cl = _meta_json(store, 'host:osup:cleared') or {}
+    for n in nodes:
+        for part in ('row', 'check'):
+            p = n.get(part) or {}
+            c = (cl.get(n['name']) or {}).get(part) or {}
+            lines = p.get('lines') or []
+            if not lines or not c or c.get('mark') != _osup_mark(p):
+                continue
+            last = c.get('last')
+            at = max((i for i, ln in enumerate(lines) if ln == last), default=None)
+            n[part] = dict(p, lines=lines[at + 1:] if at is not None else lines)
+
+
+def osup_clear(store, by):
+    """The window of every node emptied: the lines there now not shown again."""
+    plan = osup_plan(store)
+    cl = {}
+    for n in host_nodes(store):
+        row = osup_row(store, n)
+        parts = {'row': row if row.get('plan') == plan.get('id') else {},
+                 'check': _meta_json(store, 'host:osup:check:' + n) or {}}
+        cl[n] = {k: {'mark': _osup_mark(p), 'last': (p.get('lines') or [''])[-1]}
+                 for k, p in parts.items() if p.get('lines')}
+    store.set_meta('host:osup:cleared', json.dumps(cl))
+
+
+def osup_check_ask(store, nodes, by):
+    nodes = [n for n in host_nodes(store) if n in (nodes or [])]
+    if not nodes:
+        raise ValueError('which node?')
+    for n in nodes:
+        store.set_meta(node_key('host:osup:checkwant', n),
+                       json.dumps({'id': secrets.token_hex(6), 'by': by, 'at': time.time()}))
+    return nodes
+
+
+def osup_start(store, nodes, reboot, by, security=False):
+    plan = osup_plan(store)
+    if plan.get('state') == 'running':
+        raise ValueError('an update is going on already')
+    if upgrade_plan(store) and upgrade_plan(store).get('state') == 'running':
+        raise ValueError('an upgrade of upsmon is going on - wait for it to end')
+    if power_busy(store):
+        raise ValueError('a restart or a power off is going on - wait for it to end')
+    known = host_nodes(store)
+    alive = host_alive(store)
+    nodes = [n for n in known if n in (nodes or known)]
+    if not nodes:
+        raise ValueError('which node?')
+    gone = [n for n in nodes if not alive.get(n)]
+    if gone:
+        raise ValueError('%s is not heard from: bring it back first' % ', '.join(gone))
+    if reboot not in ('ask', 'auto'):
+        reboot = 'ask'
+    # The others first, this one last - the page the person looks at stays
+    # up the longest, as in an upgrade of upsmon.
+    me = node_name()
+    order = sorted(n for n in nodes if n != me) + ([me] if me in nodes else [])
+    plan = {'id': secrets.token_hex(6), 'order': order, 'reboot': reboot, 'by': by,
+            'at': time.time(), 'state': 'running', 'from': me, 'security': bool(security)}
+    store.set_meta('host:osup:plan', json.dumps(plan))
+    store.add_event('settings', '%s started the update of the system%s: %s, one at a time%s'
+                    % (by, ' (security updates only)' if security else '', ', '.join(order),
+                       ', each restarted when it needs it' if reboot == 'auto' else ''),
+                    'warn', who=by)
+    return plan
+
+
+def osup_cancel(store, by):
+    plan = osup_plan(store)
+    if plan.get('state') != 'running':
+        raise ValueError('no update is going on')
+    plan.update(state='cancelled', ended=time.time(), cancelled_by=by)
+    store.set_meta('host:osup:plan', json.dumps(plan))
+    store.add_event('settings', '%s stopped the update of the system - a node being updated '
+                    'finishes' % by, 'warn', who=by)
+
+
+def _osup_job(kind, security=False):
+    """The helper asked to start the work; its id."""
+    got = root_ask('osup.ask', 'osup.ans', {'do': 'run', 'kind': kind,
+                                             'security': bool(security),
+                                             # dnf and apt through Settings → Proxy (1.0.166)
+                                             'proxy': proxy_full('os'),
+                                             'proxy_no': ','.join(proxy_no_list())}, 60)
+    return got
+
+
+def _osup_read():
+    try:
+        return json.loads((WEB_DIR / 'osup.json').read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def osup_tick(daemon):
+    """Every few seconds: a look for updates asked of this node; its turn in an
+    update; what the helper says while it works."""
+    store = daemon.store
+    me = node_name()
+    if HOST_WORK['osup'] or HA_REBUILDING.is_set():
+        return
+    # Back up after a restart the update asked for: done, and back in service.
+    row = osup_row(store, me)
+    if row.get('reboot') and not row.get('rebooted') and \
+            boot_time() > float(row.get('done_at') or row.get('at') or 0) + 1:
+        row['rebooted'] = True
+        store.set_meta(node_key('host:osup:checkwant', me),
+                       json.dumps({'id': secrets.token_hex(6), 'by': 'upsmon (system update)',
+                                   'at': time.time()}))
+        if row.get('state') == 'rebooting':
+            row['state'] = 'done'
+            row['said'] = 'up again after the restart'
+            plan = osup_plan(store)
+            if plan.get('state') == 'running' and (plan.get('order') or [None])[-1] == me and \
+                    row.get('plan') == plan.get('id'):
+                plan.update(state='done', ended=time.time())
+                store.set_meta('host:osup:plan', json.dumps(plan))
+            if row.get('maint'):
+                try:
+                    maintenance_set(store, False, '', 'upsmon (system update)')
+                except Exception:                       # noqa: BLE001
+                    pass
+                row['maint'] = False
+        osup_put(store, row)
+    # A look for updates, asked.
+    chk = _meta_json(store, 'host:osup:check:' + me) or {}
+    # It said a restart was waiting and the node has restarted since: looked
+    # at again, not left saying so (1.0.159).
+    if chk.get('reboot_now') and chk.get('state') == 'done' and not chk.get('relook') and \
+            boot_time() > float(chk.get('checked') or 0) + 1:
+        chk['relook'] = True
+        store.set_meta('host:osup:check:' + me, json.dumps(chk))
+        store.set_meta(node_key('host:osup:checkwant', me),
+                       json.dumps({'id': secrets.token_hex(6), 'by': 'upsmon (system update)',
+                                   'at': time.time()}))
+    for r in node_key_rows(store, 'host:osup:checkwant', me):
+        try:
+            a = json.loads(r['v'] or '{}')
+        except ValueError:
+            continue
+        if a.get('id') and a['id'] not in (chk.get('asked') or []) and \
+                time.time() - float(a.get('at') or 0) < 900:
+            _osup_go(daemon, 'check', a)
+            return
+    if chk.get('state') == 'running':
+        _osup_follow_check(store, chk)
+        return
+    plan = osup_plan(store)
+    if plan.get('state') != 'running' or me not in (plan.get('order') or []):
+        return
+    row = osup_row(store, me)
+    if row.get('plan') != plan.get('id'):
+        row = {'plan': plan.get('id'), 'state': 'waiting'}
+    st = row.get('state') or 'waiting'
+    if st == 'waiting':
+        # My turn once every node before me is done.
+        before = plan['order'][:plan['order'].index(me)]
+        rows = {n: osup_row(store, n) for n in before}
+        bad = [n for n in before if rows[n].get('plan') == plan['id'] and
+               rows[n].get('state') == 'failed']
+        if bad:
+            return
+        if all(rows[n].get('plan') == plan['id'] and rows[n].get('state') in ('done', 'skipped')
+               for n in before):
+            _osup_go(daemon, 'upgrade', {'plan': plan, 'row': row})
+        return
+    if st == 'draining':
+        if time.time() - float(row.get('drain_at') or 0) >= 15:
+            _osup_go(daemon, 'upgrade-now', {'plan': plan, 'row': row})
+        return
+    if st == 'updating':
+        _osup_follow(daemon, plan, row)
+
+
+def _osup_go(daemon, what, ctx):
+    HOST_WORK['osup'] = True
+
+    def go():
+        store = daemon.store
+        me = node_name()
+        by = 'upsmon (system update)'
+        try:
+            if what == 'check':
+                chk = _meta_json(store, 'host:osup:check:' + me) or {}
+                asked = (list(chk.get('asked') or []) + [ctx['id']])[-20:]
+                try:
+                    _osup_job('check')
+                    store.set_meta('host:osup:check:' + me, json.dumps(
+                        dict(chk, state='running', asked=asked, began=time.time(), at=time.time(),
+                             error='', lines=[])))
+                except ValueError as e:
+                    store.set_meta('host:osup:check:' + me, json.dumps(
+                        dict(chk, state='failed', asked=asked, at=time.time(), error=str(e)[:300])))
+                return
+            plan, row = ctx['plan'], ctx['row']
+            if what == 'upgrade':
+                # Out of service first where another node answers meanwhile:
+                # the VIP address moves to it, RADIUS is answered there.
+                many = any(n.get('alive') and not n.get('me') for n in ha_nodes(store))
+                if many:
+                    maintenance_set(store, True, 'the system is being updated', by)
+                    osup_put(store, row, state='draining', drain_at=time.time(), maint=True,
+                             said='out of service - the other node answers', pct=0, lines=[])
+                    return
+                row['maint'] = False
+            try:
+                _osup_job('upgrade', bool(plan.get('security')))
+                osup_put(store, row, state='updating', began=time.time(), pct=1, lines=[],
+                         said='the packages are being updated')
+            except ValueError as e:
+                _osup_end(store, plan, row, False, str(e))
+        except Exception as e:                          # noqa: BLE001
+            log('the update of the system: %s' % e, 'warn')
+        finally:
+            HOST_WORK['osup'] = False
+    threading.Thread(target=go, name='upsmon-osup', daemon=True).start()
+
+
+def _osup_follow_check(store, chk):
+    me = node_name()
+    got = _osup_read()
+    if not got or got.get('kind') != 'check' or float(got.get('began') or 0) < \
+            float(chk.get('began') or 0) - 5:
+        if time.time() - float(chk.get('began') or 0) > 1800:
+            store.set_meta('host:osup:check:' + me, json.dumps(
+                dict(chk, state='failed', error='the helper did not say anything', at=time.time())))
+        return
+    if got.get('state') == 'running':
+        if time.time() - float(chk.get('at') or 0) > 3:
+            store.set_meta('host:osup:check:' + me, json.dumps(
+                dict(chk, at=time.time(), lines=(got.get('lines') or [])[-40:])))
+        return
+    store.set_meta('host:osup:check:' + me, json.dumps(dict(
+        chk, state=got.get('state'), at=time.time(), checked=time.time(), relook=False,
+        packages=(got.get('packages') or [])[:1000], count=int(got.get('count') or 0),
+        security=got.get('security'), pm=got.get('pm'), error=got.get('said') or '',
+        reboot_after=bool(got.get('reboot_after')), reboot_why=(got.get('reboot_why') or [])[:20],
+        reboot_now=bool(got.get('reboot_now')),
+        lines=(got.get('lines') or [])[-40:])))
+
+
+def _osup_follow(daemon, plan, row):
+    store = daemon.store
+    got = _osup_read()
+    if not got or got.get('kind') != 'upgrade' or \
+            float(got.get('began') or 0) < float(row.get('began') or 0) - 5:
+        if time.time() - float(row.get('began') or 0) > 600:
+            _osup_end(store, plan, row, False, 'the helper did not start the update')
+        return
+    if got.get('state') == 'running':
+        if time.time() - HOST_WORK['osup_read'] > 2:
+            HOST_WORK['osup_read'] = time.time()
+            osup_put(store, row, pct=int(got.get('pct') or 0), phase=got.get('phase') or '',
+                     lines=(got.get('lines') or [])[-300:])
+        return
+    row['lines'] = (got.get('lines') or [])[-300:]
+    row['pct'] = 100
+    _osup_end(store, plan, row, got.get('state') == 'done', got.get('said') or '',
+              reboot=bool(got.get('reboot')))
+
+
+def _osup_end(store, plan, row, ok, said='', reboot=False):
+    me = node_name()
+    by = 'upsmon (system update)'
+    row.update(done_at=time.time(), reboot=reboot, rebooted=False)
+    if not ok:
+        osup_put(store, row, state='failed', said=said or 'it failed')
+        if row.get('maint'):
+            maintenance_set(store, False, '', by)
+            row['maint'] = False
+            osup_put(store, row)
+        plan.update(state='failed', ended=time.time(), failed_on=me)
+        store.set_meta('host:osup:plan', json.dumps(plan))
+        store.add_event('settings', 'the update of the system failed on %s: %s' % (me, said),
+                        'bad', who=by)
+        return
+    if reboot and plan.get('reboot') == 'auto':
+        osup_put(store, row, state='rebooting', said='updated - restarting, as it needs')
+        try:
+            power_ask(store, 'reboot', [me], 'one', by, keep_service=True)
+        except ValueError as e:
+            osup_put(store, row, state='done', said='updated; the restart was not started: %s' % e)
+        return
+    osup_put(store, row, state='done', said='updated' + (' - it needs a restart' if reboot else ''))
+    # What is waiting looked at again, not left at what was there before.
+    store.set_meta(node_key('host:osup:checkwant', me),
+                   json.dumps({'id': secrets.token_hex(6), 'by': by, 'at': time.time()}))
+    if row.get('maint'):
+        maintenance_set(store, False, '', by)
+        row['maint'] = False
+        osup_put(store, row)
+    store.add_event('settings', 'the system of %s is updated%s' % (
+        me, ' - it needs a restart' if reboot else ''), 'warn' if reboot else 'info', who=by)
+    order = plan.get('order') or []
+    if order and order[-1] == me:
+        plan.update(state='done', ended=time.time())
+        store.set_meta('host:osup:plan', json.dumps(plan))
+
+
+# -- the SSH server and the notices at sign-in (1.0.163) --------------------------------------
+# One wish for the whole cluster ('host:sshd:conf', with its hash); each node
+# puts it in through its root helper and says what it has in a row of its own
+# ('host:sshd:now:NODE'). A change is on trial on each node - its helper's
+# own timer puts the one before back - until Keep it ('host:sshd:keep').
+SSHD_DEFAULT = {'manage': False, 'permit_root': 'prohibit-password', 'password': True,
+                'port': 22, 'allow_users': [], 'tries': 4, 'notice': '', 'notice_ssh': False,
+                'notice_console': False, 'notice_motd': False, 'trial_min': 5,
+                # A code from upsmon at SSH sign-in (1.0.178): pam_radius asking
+                # this node's own RADIUS.
+                'radius': False, 'radius_users': [], 'radius_root': False,
+                'radius_fallback': True, 'radius_with_key': False}
+
+
+# ======== carried over from OTP 1.0.187 (lines 29444-29522): on a schedule ========
+def _due(every, day, at, now=None):
+    """(due now, the id of this window) for a schedule of HH:MM on a day."""
+    n = datetime.fromtimestamp(now or time.time())
+    try:
+        hh, mm = (int(x) for x in str(at or '04:45').split(':', 1))
+    except ValueError:
+        hh, mm = 4, 45
+    if every == 'weekly' and n.isoweekday() != int(day or 7):
+        return False, ''
+    if every == 'monthly' and n.day != 1:
+        return False, ''
+    return (n.hour, n.minute) >= (hh, mm), n.strftime('%Y-%m-%d')
+
+
+def osup_settling(store):
+    """An update going on, or a node still looking (again) for updates - what
+    says which node needs a restart is not known yet (1.0.168)."""
+    if osup_plan(store).get('state') == 'running':
+        return True
+    for n in host_nodes(store):
+        chk = _meta_json(store, 'host:osup:check:' + n) or {}
+        if chk.get('state') == 'running':
+            return True
+        for r in node_key_rows(store, 'host:osup:checkwant', n):
+            try:
+                a = json.loads(r['v'] or '{}')
+            except ValueError:
+                continue
+            if a.get('id') and a['id'] not in (chk.get('asked') or []) and \
+                    time.time() - float(a.get('at') or 0) < 900:
+                return True
+    return False
+
+
+def osup_sched_tick(daemon):
+    store = daemon.store
+    if not alerts_lead(store):
+        return
+    by = 'upsmon (on a schedule)'
+    if CONFIG.get('osup_check'):
+        due, day = _due('daily', '', CONFIG.get('osup_check_at'))
+        if due and store.get_meta('osup:check:day') != day and \
+                claim_once(store, 'osup:check:day', day):
+            alive = [n for n, a in host_alive(store).items() if a]
+            try:
+                osup_check_ask(store, alive, by)
+            except ValueError as e:
+                log('the daily look for updates: %s' % e, 'warn')
+    if CONFIG.get('osup_auto'):
+        due, day = _due(CONFIG.get('osup_auto_every') or 'weekly', CONFIG.get('osup_auto_day'),
+                        CONFIG.get('osup_auto_at'))
+        if due and store.get_meta('osup:auto:day') != day and \
+                claim_once(store, 'osup:auto:day', day):
+            try:
+                osup_start(store, None, CONFIG.get('osup_auto_reboot') or 'auto', by,
+                           security=(CONFIG.get('osup_auto_what') or 'security') == 'security')
+            except ValueError as e:
+                store.add_event('settings', 'the update of the system on a schedule did not '
+                                'start: %s' % e, 'bad')
+    if CONFIG.get('power_auto'):
+        due, day = _due(CONFIG.get('power_auto_every') or 'weekly', CONFIG.get('power_auto_day'),
+                        CONFIG.get('power_auto_at'))
+        # Not while an update or a look for updates is still going on: the
+        # nodes that need a restart are known only after it (1.0.168).
+        if due and store.get_meta('power:auto:day') != day and not osup_settling(store) and \
+                claim_once(store, 'power:auto:day', day):
+            nodes = host_nodes(store)
+            if CONFIG.get('power_auto_needed', 1):
+                nodes = [n['name'] for n in osup_view(store)['nodes'] if n.get('reboot')]
+            if not nodes:
+                store.add_event('settings', 'the restart on a schedule: no node needs one', 'info')
+                return
+            try:
+                power_ask(store, 'reboot', nodes, 'rolling', by, keep_service=True)
+                store.add_event('settings', 'the restart on a schedule: %s, one after the other'
+                                % ', '.join(nodes), 'warn')
+            except ValueError as e:
+                store.add_event('settings', 'the restart on a schedule did not start: %s' % e,
+                                'bad')
+
+
+# ======== carried over from OTP 1.0.187 (lines 18277-20090): backups to another machine ========
+# ---------------------------------------------------------------------------
+# Backups to another machine (1.0.109)
+# ---------------------------------------------------------------------------
+# One file that brings any loss back - one server or a cluster, onto a
+# machine installed from nothing: the whole database (an engine-independent
+# copy: tokens, settings, accounts, certificates, the VIP address, the
+# firewall, the texts, the logs), the key that opens the tokens, the machine's
+# config.json and the files it names, a manifest with the checksum of each,
+# and RESTORE.md - the exact steps. Locked with a password kept in the
+# settings (openssl enc, AES-256-CBC, PBKDF2-SHA256: opened with upsmon, or with
+# openssl alone on any machine). RESTORE.md and a .sha256 also go beside it,
+# not locked, so the steps can be read before anything is opened.
+#
+# Where they go: a folder (an NFS or other mount), FTP, FTPS (explicit or
+# implicit), SFTP, SCP or SMB, each with its name and password, SSH keys made
+# here or brought, the server's host key or certificate checked, a client
+# certificate for FTPS. Each node makes and sends its own (its config.json is
+# its own); old ones are taken away as kept-count and age say.
+RB_KINDS = ('folder', 'ftp', 'ftps', 'sftp', 'scp', 'smb')
+RB_KIND_WORDS = {'folder': 'a folder', 'ftp': 'FTP', 'ftps': 'FTPS', 'sftp': 'SFTP',
+                 'scp': 'SCP (ssh)', 'smb': 'SMB (Windows share, Samba)'}
+RB_PORTS = {'ftp': 21, 'ftps': 21, 'sftp': 22, 'scp': 22, 'smb': 445}
+RB_SEALED = ('password', 'key', 'client_key', 'key_pass')
+RB_BIND = 'rbackup'
+RB_LOCK = threading.Lock()
+RB_JOB = {'running': False, 'what': '', 'says': '', 'done': 0, 'whole': 0, 'error': '',
+          'began': 0, 'ended': 0, 'result': None, 'by': ''}
+RB_ITER = 600000
+RB_NAME_RE = re.compile(r'^upsmon-backup-(?P<site>[A-Za-z0-9_.-]+?)-(?P<node>[A-Za-z0-9_.-]+)-'
+                        r'(?P<stamp>\d{8}-\d{6})\.tar\.gz(?P<enc>\.enc)?\Z')
+RB_TIMEOUT = 60
+
+
+class RbError(Exception):
+    pass
+
+
+def rb_clean(text, what, most=200, pattern=None, empty=True):
+    t = str(text if text is not None else '').strip()
+    if not t and empty:
+        return ''
+    if len(t) > most or re.search(r'[\x00-\x1f\x7f]', t):
+        raise ValueError('%s: at most %d characters, one line' % (what, most))
+    if pattern and t and not re.match(pattern, t):
+        raise ValueError('%s: %r is not one' % (what, t[:60]))
+    return t
+
+
+def rb_slug(text):
+    return re.sub(r'[^A-Za-z0-9_.]+', '_', str(text or 'upsmon')).strip('_.')[:40] or 'upsmon'
+
+
+# ---- the destinations ---------------------------------------------------------------
+def rb_targets(store):
+    try:
+        got = json.loads(store.get_meta('rbackup:targets') or '[]')
+    except ValueError:
+        got = []
+    return [t for t in got if isinstance(t, dict) and t.get('id')]
+
+
+def rb_put_targets(store, targets):
+    store.set_meta('rbackup:targets', json.dumps(targets))
+
+
+def rb_target(store, tid):
+    return next((t for t in rb_targets(store) if t['id'] == str(tid)), None)
+
+
+def rb_secret(t, k):
+    v = t.get(k) or ''
+    return (unseal_secret(v, bind=RB_BIND) or '') if v else ''
+
+
+def ssh_fingerprints(lines):
+    """The SHA256 fingerprints of known_hosts lines, as ssh-keygen says them."""
+    if not lines.strip() or not shutil.which('ssh-keygen'):
+        return []
+    got = subprocess.run(['ssh-keygen', '-lf', '-'], input=lines, capture_output=True,
+                         text=True, timeout=20)
+    return [x.strip() for x in got.stdout.splitlines() if x.strip()]
+
+
+def rb_view(t):
+    """A destination as the pages see it: nothing secret, what it has said."""
+    out = {k: v for k, v in t.items() if k not in RB_SEALED}
+    for k in RB_SEALED:
+        out['has_' + k] = bool(t.get(k))
+    out['kind_words'] = RB_KIND_WORDS.get(t.get('kind'), t.get('kind'))
+    if t.get('password'):
+        out['password'] = secret_shown(rb_secret(t, 'password'), last=True)
+    if t.get('hostkey'):
+        out['hostkey_fp'] = ssh_fingerprints(t['hostkey'])
+    if t.get('client_cert'):
+        try:
+            out['client_cert_info'] = cert_info(t['client_cert'])
+        except Exception:                               # noqa: BLE001
+            out['client_cert_info'] = None
+    if t.get('ca'):
+        try:
+            out['ca_info'] = cert_info(t['ca'])
+        except Exception:                               # noqa: BLE001
+            out['ca_info'] = None
+    return out
+
+
+def rb_checked(data, old=None):
+    """A destination as typed on the pages, checked; secrets left out or as
+    dots keep what was there."""
+    old = dict(old or {})
+    if not isinstance(data, dict):
+        raise ValueError('a destination is an object')
+    kind = str(data.get('kind') or old.get('kind') or '')
+    if kind not in RB_KINDS:
+        raise ValueError('the kind is one of %s' % ', '.join(RB_KINDS))
+    t = {'id': old.get('id') or secrets.token_hex(6), 'kind': kind}
+    t['name'] = rb_clean(data.get('name'), 'the name', 60) or \
+        ('%s %s' % (RB_KIND_WORDS[kind], data.get('host') or data.get('path') or '')).strip()
+    t['enabled'] = 1 if data.get('enabled', old.get('enabled', 1)) else 0
+    t['path'] = rb_clean(data.get('path'), 'the folder', 400)
+    if kind == 'folder':
+        if not t['path'].startswith('/'):
+            raise ValueError('the folder is a whole path on this machine (/mnt/backup/upsmon)')
+        if re.search(r'(^|/)\.\.(/|$)', t['path']):
+            raise ValueError('the folder has no .. in it')
+    else:
+        t['host'] = rb_clean(data.get('host'), 'the server', 253,
+                             r'^[A-Za-z0-9][A-Za-z0-9.:_-]*\Z', empty=False)
+        try:
+            port = int(data.get('port') or RB_PORTS.get(kind) or 0)
+        except (TypeError, ValueError):
+            raise ValueError('the port is a number')
+        if kind == 'ftps' and data.get('implicit') and not data.get('port'):
+            port = 990
+        if not 1 <= port <= 65535:
+            raise ValueError('the port is 1 to 65535')
+        t['port'] = port
+        t['user'] = rb_clean(data.get('user'), 'the account', 128, r'^[^\s:@/\\]+\Z') or ''
+        # Nothing a tool on the way reads as more (1.0.136): smbclient takes
+        # ; as the next command whatever the quotes, ssh a leading - as an
+        # option of its own.
+        if t['user'].startswith('-'):
+            raise ValueError('the account does not begin with -')
+        if re.search(r'[;"]', t['path']) or t['path'].lstrip().startswith('-'):
+            raise ValueError('the folder has no ; or " in it, and does not begin with -')
+        if kind != 'smb' and re.search(r'(^|/)\.\.(/|$)', t['path']):
+            raise ValueError('the folder has no .. in it')
+        if kind == 'scp' and re.search(r'[^A-Za-z0-9._/~+@%=,-]', t['path']):
+            # scp before OpenSSH 9 hands the far path to the shell there
+            # (1.0.139): $( ), `, |, & and spaces ran or broke.
+            raise ValueError('the folder (SCP) is letters, digits and . _ / ~ + @ % = , - '
+                             'only - use SFTP for any other')
+    pw = data.get('password')
+    # The saved password goes only to the server it was saved for (1.0.149):
+    # with another server typed in, Try it sent it there - to whoever the
+    # administrator chose. Typed again for a new one.
+    moved = bool(old) and (old.get('kind') != kind or
+                           str(old.get('host') or '').lower() != str(t.get('host') or '').lower() or
+                           int(old.get('port') or 0) != int(t.get('port') or 0))
+    if (pw is None or is_masked(pw)) and moved and old.get('password'):
+        raise ValueError('the server changed: type the password again')
+    if pw is None or is_masked(pw):
+        t['password'] = old.get('password') or ''
+    else:
+        pw = str(pw)
+        if len(pw) > 512 or '\n' in pw or '\x00' in pw:
+            raise ValueError('the password is one line, at most 512 characters')
+        t['password'] = seal_secret(pw, bind=RB_BIND) if pw else ''
+    if kind in ('sftp', 'scp'):
+        for k in ('key', 'pub', 'ssh_cert', 'hostkey', 'key_pass'):
+            if k in old:
+                t[k] = old[k]
+        if data.get('ssh_cert') is not None:
+            c = str(data.get('ssh_cert') or '').strip()
+            if c and not re.match(r'^[a-z0-9@.-]+-cert-v01@openssh\.com AAAA[A-Za-z0-9+/=]+( .*)?\Z',
+                                  c):
+                raise ValueError('the SSH certificate is the one line of a ...-cert.pub file')
+            t['ssh_cert'] = c
+    if kind in ('ftp', 'ftps'):
+        t['passive'] = 0 if data.get('passive', old.get('passive', 1)) in (0, '0', False) else 1
+    if kind == 'ftps':
+        t['implicit'] = 1 if data.get('implicit', old.get('implicit')) else 0
+        check = str(data.get('tls_check') or old.get('tls_check') or 'system')
+        if check not in ('system', 'ca', 'pin', 'none'):
+            raise ValueError('the server certificate is checked against system, ca, pin or none')
+        t['tls_check'] = check
+        for k in ('ca', 'pin', 'client_cert', 'client_key'):
+            if k in old:
+                t[k] = old[k]
+        if data.get('ca') is not None:
+            ca = str(data.get('ca') or '').strip()
+            if ca and not PEM_CERT.search(ca):
+                raise ValueError('the authority is a PEM certificate (-----BEGIN CERTIFICATE-----)')
+            t['ca'] = '\n'.join(m.group(0) for m in PEM_CERT.finditer(ca)) + '\n' if ca else ''
+        if data.get('pin') is not None:
+            pin = re.sub(r'[^0-9A-Fa-f]', '', str(data.get('pin') or '')).lower()
+            if pin and len(pin) != 64:
+                raise ValueError('the pinned fingerprint is SHA-256: 64 hex digits')
+            t['pin'] = pin
+        if check == 'ca' and not t.get('ca'):
+            raise ValueError('checked against an authority: give its certificate')
+        if check == 'pin' and not t.get('pin'):
+            raise ValueError('pinned: the fingerprint is needed - Try it shows the server\'s')
+    if kind == 'smb':
+        t['share'] = rb_clean(data.get('share'), 'the share', 80, r'^[^\\/:*?"<>|;-][^\\/:*?"<>|;]*\Z',
+                              empty=False)
+        t['domain'] = rb_clean(data.get('domain'), 'the domain', 64, r'^[A-Za-z0-9._-]+\Z')
+        t['smb_encrypt'] = 1 if data.get('smb_encrypt', old.get('smb_encrypt', 1)) else 0
+        if re.search(r'(^|[\\/])\.\.([\\/]|$)', t['path']):
+            raise ValueError('the folder has no .. in it')
+    for k in ('last', 'made'):
+        if k in old:
+            t[k] = old[k]
+    return t
+
+
+def rb_save(store, data, by):
+    with RB_LOCK:
+        targets = rb_targets(store)
+        old = next((x for x in targets if x['id'] == str(data.get('id') or '')), None)
+        if data.get('id') and not old:
+            raise ValueError('no such destination')
+        t = rb_checked(data, old)
+        hisec_backup_target(t)              # 1.0.168
+        if old:
+            targets = [t if x['id'] == t['id'] else x for x in targets]
+        else:
+            t['made'] = time.time()
+            if len(targets) >= 20:
+                raise ValueError('20 destinations at most')
+            targets.append(t)
+        rb_put_targets(store, targets)
+    store.add_event('settings', '%s %s the backup destination %s (%s)' % (
+        by, 'changed' if old else 'added', t['name'], RB_KIND_WORDS[t['kind']]), who=by)
+    return t
+
+
+def rb_set_fields(store, tid, by, said, **fields):
+    with RB_LOCK:
+        targets = rb_targets(store)
+        t = next((x for x in targets if x['id'] == str(tid)), None)
+        if not t:
+            raise ValueError('no such destination')
+        for k, v in fields.items():
+            if v is None:
+                t.pop(k, None)
+            else:
+                t[k] = v
+        rb_put_targets(store, targets)
+    if said:
+        store.add_event('settings', '%s: the backup destination %s - %s' % (by, t['name'], said),
+                        who=by)
+    return t
+
+
+def rb_delete(store, tid, by):
+    with RB_LOCK:
+        targets = rb_targets(store)
+        t = next((x for x in targets if x['id'] == str(tid)), None)
+        if not t:
+            raise ValueError('no such destination')
+        rb_put_targets(store, [x for x in targets if x['id'] != t['id']])
+    store.add_event('settings', '%s took away the backup destination %s' % (by, t['name']),
+                    'warn', who=by)
+
+
+# ---- keys and certificates ----------------------------------------------------------
+def ssh_keygen(comment):
+    if not shutil.which('ssh-keygen'):
+        raise ValueError('ssh-keygen is not on this machine (dnf install openssh-clients)')
+    with tempfile.TemporaryDirectory(prefix='upsmon-key-') as d:
+        path = os.path.join(d, 'k')
+        got = subprocess.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', comment,
+                              '-f', path], capture_output=True, text=True, timeout=30)
+        if got.returncode != 0:
+            raise ValueError('ssh-keygen: %s' % (got.stderr or got.stdout).strip()[:200])
+        with open(path) as f:
+            private = f.read()
+        with open(path + '.pub') as f:
+            public = f.read().strip()
+    return private, public
+
+
+def ssh_public_of(private, passphrase=''):
+    """The public half of a private key given - and that it is one."""
+    if not shutil.which('ssh-keygen'):
+        raise ValueError('ssh-keygen is not on this machine (dnf install openssh-clients)')
+    private = str(private or '').replace('\r\n', '\n').strip() + '\n'
+    if 'PRIVATE KEY-----' not in private:
+        raise ValueError('that is not a private key (-----BEGIN OPENSSH PRIVATE KEY----- or '
+                         'another PEM private key)')
+    with tempfile.TemporaryDirectory(prefix='upsmon-key-') as d:
+        path = os.path.join(d, 'k')
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write(private)
+        # The passphrase through SSH_ASKPASS, not on the command line where
+        # `ps` shows it (1.0.136).
+        env = dict(os.environ, DISPLAY=':0', SSH_ASKPASS_REQUIRE='force')
+        if passphrase:
+            ask = os.path.join(d, 'ask')
+            with open(ask, 'w') as f:
+                f.write('#!/bin/sh\nprintf "%s\\n" "$UPSMON_RB_SECRET"\n')
+            os.chmod(ask, 0o700)
+            env.update(SSH_ASKPASS=ask, UPSMON_RB_SECRET=passphrase)
+            argv = ['ssh-keygen', '-y', '-f', path]
+        else:
+            argv = ['ssh-keygen', '-y', '-P', '', '-f', path]
+        got = subprocess.run(argv, capture_output=True, text=True, timeout=20, env=env,
+                             stdin=subprocess.DEVNULL)
+    if got.returncode != 0:
+        said = (got.stderr or got.stdout).strip()
+        if 'passphrase' in said.lower() or 'incorrect' in said.lower():
+            raise ValueError('the key is locked with a passphrase: give it too')
+        raise ValueError('ssh-keygen does not read it: %s' % said[:200])
+    return private, got.stdout.strip()
+
+
+def rb_client_cert_make(cn, days=1825):
+    """A key and a self-signed client certificate for FTPS."""
+    key = new_key('ec')
+    with tempfile.TemporaryDirectory(prefix='upsmon-crt-') as d:
+        kf = os.path.join(d, 'k.pem')
+        with open(kf, 'w') as f:
+            f.write(key)
+        os.chmod(kf, 0o600)
+        cn = re.sub(r'[^A-Za-z0-9.@_-]', '', str(cn or 'upsmon-backup'))[:64] or 'upsmon-backup'
+        crt = _openssl(['req', '-new', '-x509', '-key', kf, '-days', str(int(days)), '-subj',
+                        '/CN=' + cn, '-addext', 'extendedKeyUsage=clientAuth',
+                        '-addext', 'keyUsage=critical,digitalSignature'],
+                       what='the certificate').decode()
+    return key, crt
+
+
+def rb_client_cert_given(text, password=''):
+    """A client certificate brought: PEM (certificate and key, in any order)
+    or PFX (base64 of it, with its password)."""
+    text = str(text or '').strip()
+    if 'BEGIN' in text:
+        certs = [m.group(0) for m in PEM_CERT.finditer(text)]
+        m = re.search(r'-----BEGIN (?:[A-Z ]*)PRIVATE KEY-----[\s\S]+?-----END (?:[A-Z ]*)'
+                      r'PRIVATE KEY-----', text)
+        if not certs or not m:
+            raise ValueError('a client certificate needs its certificate and its private key')
+        key = m.group(0) + '\n'
+        if 'ENCRYPTED' in key:
+            key = _openssl(['pkey', '-passin', 'env:UPSMON_PW'], key.encode(),
+                           env={'UPSMON_PW': password}, what='the key (its password)').decode()
+        if _pub_of_key(key).strip() != _pub_of_cert(certs[0]).strip():
+            raise ValueError('the key is not the one of this certificate')
+        return key, '\n'.join(certs) + '\n'
+    try:
+        pfx = base64.b64decode(text, validate=False)
+    except (binascii.Error, ValueError):
+        raise ValueError('neither PEM nor PFX')
+    with tempfile.TemporaryDirectory(prefix='upsmon-pfx-') as d:
+        pf = os.path.join(d, 'c.pfx')
+        with open(pf, 'wb') as f:
+            f.write(pfx)
+        both = ''
+        for extra in ([], ['-legacy']):
+            try:
+                both = _openssl(['pkcs12', '-in', pf, '-nodes', '-passin', 'env:UPSMON_PW'] + extra,
+                                env={'UPSMON_PW': password}, what='the PFX (its password?)').decode()
+                break
+            except ValueError:
+                if extra:
+                    raise
+    return rb_client_cert_given(both)
+
+
+# ---- the transports ------------------------------------------------------------------
+class RbFolder(object):
+    def __init__(self, t):
+        self.t = t
+        self.dir = t['path']
+
+    def open(self):
+        try:
+            os.makedirs(self.dir, exist_ok=True)
+        except OSError as e:
+            raise RbError('the folder %s cannot be made: %s' % (self.dir, e))
+        if not os.access(self.dir, os.W_OK):
+            raise RbError('the upsmon account may not write into %s' % self.dir)
+
+    def put(self, local, name):
+        part = os.path.join(self.dir, '.%s.part' % name)
+        shutil.copyfile(local, part)
+        os.chmod(part, 0o640)
+        os.replace(part, os.path.join(self.dir, name))
+
+    def get(self, name, local):
+        shutil.copyfile(os.path.join(self.dir, rb_safe_name(name)), local)
+
+    def list(self):
+        out = []
+        for e in os.scandir(self.dir):
+            if e.is_file() and not e.name.startswith('.'):
+                st = e.stat()
+                out.append({'name': e.name, 'size': st.st_size, 'mtime': st.st_mtime})
+        return out
+
+    def delete(self, name):
+        os.unlink(os.path.join(self.dir, rb_safe_name(name)))
+
+    def close(self):
+        pass
+
+
+def rb_safe_name(name):
+    name = str(name or '')
+    if not re.match(r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,200}\Z', name):
+        raise RbError('not a file name of a backup: %r' % name[:80])
+    return name
+
+
+class _ImplicitFTP_TLS(ftplib.FTP_TLS):
+    """FTPS on its own port (990): TLS from the first byte."""
+    def connect(self, host='', port=0, timeout=-999, source_address=None):
+        if host:
+            self.host = host
+        if port > 0:
+            self.port = port
+        if timeout != -999:
+            self.timeout = timeout
+        self.sock = socket.create_connection((self.host, self.port), self.timeout)
+        self.af = self.sock.family
+        self.sock = self.context.wrap_socket(self.sock, server_hostname=self.host)
+        self.file = self.sock.makefile('r', encoding=self.encoding)
+        self.welcome = self.getresp()
+        return self.welcome
+
+
+class _ReuseMixin(object):
+    """The data connection resumes the control connection's TLS session:
+    vsftpd, ProFTPD and FileZilla Server refuse one that does not (522)."""
+    def ntransfercmd(self, cmd, rest=None):
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(conn, server_hostname=self.host,
+                                            session=self.sock.session)
+        return conn, size
+
+
+class RbFtpTls(_ReuseMixin, ftplib.FTP_TLS):
+    pass
+
+
+class RbFtpTlsImplicit(_ReuseMixin, _ImplicitFTP_TLS):
+    pass
+
+
+class RbFtp(object):
+    def __init__(self, t):
+        self.t = t
+        self.ftp = None
+        self.tmp = None
+        self.seen = {}
+
+    def _context(self):
+        t = self.t
+        check = t.get('tls_check') or 'system'
+        if check == 'ca':
+            ctx = ssl.create_default_context(cadata=t.get('ca') or '')
+        elif check == 'system':
+            ctx = ssl.create_default_context()
+        else:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        if t.get('client_cert') and t.get('client_key'):
+            self.tmp = tempfile.mkdtemp(prefix='upsmon-ftps-')
+            cf, kf = os.path.join(self.tmp, 'c.pem'), os.path.join(self.tmp, 'k.pem')
+            with open(cf, 'w') as f:
+                f.write(t['client_cert'])
+            fd = os.open(kf, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                f.write(rb_secret(t, 'client_key'))
+            ctx.load_cert_chain(cf, kf)
+        return ctx
+
+    def open(self):
+        t = self.t
+        try:
+            if t['kind'] == 'ftps':
+                cls = RbFtpTlsImplicit if t.get('implicit') else RbFtpTls
+                self.ftp = cls(context=self._context(), timeout=RB_TIMEOUT)
+                self.ftp.connect(t['host'], int(t['port']))
+                if not t.get('implicit'):
+                    self.ftp.auth()
+                der = self.ftp.sock.getpeercert(True)
+                fp = hashlib.sha256(der).hexdigest() if der else ''
+                self.seen = {'fingerprint': fp}
+                try:
+                    pem = ssl.DER_cert_to_PEM_cert(der)
+                    self.seen['cert'] = cert_info(pem)
+                except Exception:                       # noqa: BLE001
+                    pass
+                if (t.get('tls_check') == 'pin') and fp != (t.get('pin') or ''):
+                    raise RbError('the server answers with another certificate than the one '
+                                  'pinned (SHA-256 %s)' % fp)
+            else:
+                self.ftp = ftplib.FTP(timeout=RB_TIMEOUT)
+                self.ftp.connect(t['host'], int(t['port']))
+            self.ftp.login(t.get('user') or 'anonymous', rb_secret(t, 'password'))
+            if t['kind'] == 'ftps':
+                self.ftp.prot_p()
+            self.ftp.set_pasv(bool(t.get('passive', 1)))
+            self._cd(t.get('path') or '')
+        except ssl.SSLCertVerificationError as e:
+            raise RbError('the server\'s certificate is not trusted: %s - check it against '
+                          'its authority, or pin it' % e.verify_message)
+        except ftplib.error_perm as e:
+            raise RbError('the FTP server said: %s' % str(e)[:200])
+        except (OSError, EOFError, ftplib.Error) as e:
+            raise RbError(str(e)[:200] or e.__class__.__name__)
+
+    def _cd(self, path):
+        if not path:
+            return
+        if path.startswith('/'):
+            self.ftp.cwd('/')
+        for part in [p for p in path.split('/') if p]:
+            try:
+                self.ftp.cwd(part)
+            except ftplib.error_perm:
+                self.ftp.mkd(part)
+                self.ftp.cwd(part)
+
+    def put(self, local, name):
+        with open(local, 'rb') as f:
+            self.ftp.storbinary('STOR .%s.part' % name, f, blocksize=262144)
+        try:
+            self.ftp.delete(name)
+        except ftplib.error_perm:
+            pass
+        self.ftp.rename('.%s.part' % name, name)
+
+    def get(self, name, local):
+        with open(local, 'wb') as f:
+            self.ftp.retrbinary('RETR %s' % rb_safe_name(name), f.write, blocksize=262144)
+
+    def list(self):
+        out = []
+        try:
+            for name, facts in self.ftp.mlsd(facts=['type', 'size', 'modify']):
+                if facts.get('type') == 'file':
+                    m = facts.get('modify') or ''
+                    try:
+                        mt = datetime.strptime(m[:14], '%Y%m%d%H%M%S').replace(
+                            tzinfo=timezone.utc).timestamp()
+                    except ValueError:
+                        mt = 0
+                    out.append({'name': name, 'size': int(facts.get('size') or 0), 'mtime': mt})
+            return out
+        except ftplib.error_perm:
+            pass
+        for name in self.ftp.nlst():
+            name = name.rsplit('/', 1)[-1]
+            if name in ('.', '..'):
+                continue
+            try:
+                size = self.ftp.size(name) or 0
+            except ftplib.error_perm:
+                continue            # a folder
+            out.append({'name': name, 'size': size, 'mtime': 0})
+        return out
+
+    def delete(self, name):
+        self.ftp.delete(rb_safe_name(name))
+
+    def close(self):
+        try:
+            if self.ftp:
+                self.ftp.quit()
+        except Exception:                               # noqa: BLE001
+            try:
+                self.ftp.close()
+            except Exception:                           # noqa: BLE001
+                pass
+        if self.tmp:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+
+
+def ssh_keyscan(host, port):
+    """The server's host keys, as known_hosts lines - and their fingerprints."""
+    if not shutil.which('ssh-keyscan'):
+        raise ValueError('ssh-keyscan is not on this machine (dnf install openssh-clients)')
+    got = subprocess.run(['ssh-keyscan', '-T', '10', '-p', str(int(port)), host],
+                         capture_output=True, text=True, timeout=30)
+    lines = [x for x in got.stdout.splitlines() if x.strip() and not x.startswith('#')]
+    if not lines:
+        raise ValueError('%s:%s did not show a host key: %s' % (
+            host, port, (got.stderr or '').strip().splitlines()[-1:] or 'no answer'))
+    return '\n'.join(lines) + '\n', ssh_fingerprints('\n'.join(lines) + '\n')
+
+
+class RbSsh(object):
+    """SFTP (the sftp program) or SCP (scp, and ssh for the list and the
+    deleting) - OpenSSH itself, the server's host key checked against the one
+    trusted on the pages, a key of its own or a password."""
+    def __init__(self, t):
+        self.t = t
+        self.d = None
+
+    def open(self):
+        t = self.t
+        tools = ['ssh'] + (['sftp'] if t['kind'] == 'sftp' else ['scp'])
+        for tool in tools:
+            if not shutil.which(tool):
+                raise RbError('%s is not on this machine (dnf install openssh-clients)' % tool)
+        if not t.get('hostkey'):
+            raise RbError('the server\'s host key is not trusted yet: Try it, then trust the '
+                          'fingerprint it shows')
+        self.d = tempfile.mkdtemp(prefix='upsmon-ssh-')
+        kh = os.path.join(self.d, 'known_hosts')
+        with open(kh, 'w') as f:
+            f.write(t['hostkey'])
+        self.opts = ['-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + kh,
+                     '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'ConnectTimeout=20',
+                     '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4',
+                     '-o', 'LogLevel=ERROR', '-o', 'IdentitiesOnly=yes', '-F', '/dev/null']
+        key = rb_secret(t, 'key')
+        if key:
+            kf = os.path.join(self.d, 'id')
+            fd = os.open(kf, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                f.write(key if key.endswith('\n') else key + '\n')
+            self.opts += ['-i', kf]
+            if t.get('ssh_cert'):
+                cf = os.path.join(self.d, 'id-cert.pub')
+                with open(cf, 'w') as f:
+                    f.write(t['ssh_cert'] + '\n')
+                self.opts += ['-o', 'CertificateFile=' + cf]
+        else:
+            self.opts += ['-o', 'IdentityFile=/dev/null']
+        # A password (or the key's passphrase) through SSH_ASKPASS: never on
+        # a command line, never in a file of the upsmon account's.
+        self.env = dict(os.environ, DISPLAY=':0', SSH_ASKPASS_REQUIRE='force')
+        # Each prompt its own answer (1.0.139): with a password and a key that
+        # has a passphrase, the password went to the key, and the key failed.
+        pw = rb_secret(t, 'password') or rb_secret(t, 'key_pass')
+        kp = rb_secret(t, 'key_pass') or rb_secret(t, 'password')
+        ask = os.path.join(self.d, 'ask')
+        with open(ask, 'w') as f:
+            f.write('#!/bin/sh\ncase "$1" in\n  *assphrase*) printf "%s\\n" "$UPSMON_RB_KEYPASS";;\n'
+                    '  *) printf "%s\\n" "$UPSMON_RB_SECRET";;\nesac\n')
+        os.chmod(ask, 0o700)
+        self.env.update(SSH_ASKPASS=ask, UPSMON_RB_SECRET=pw, UPSMON_RB_KEYPASS=kp)
+        auths = ['publickey'] if key else []
+        if rb_secret(t, 'password'):
+            auths += ['password', 'keyboard-interactive']
+        if not auths:
+            raise RbError('neither a key nor a password is set')
+        self.opts += ['-o', 'PreferredAuthentications=' + ','.join(auths),
+                      '-o', 'NumberOfPasswordPrompts=1']
+        if rb_secret(t, 'password') or rb_secret(t, 'key_pass'):
+            # sftp -b asks ssh for batch mode, which takes no password; the
+            # first value given wins, and this comes first.
+            self.opts += ['-o', 'BatchMode=no']
+        host = str(t['host']).strip('[]')
+        self.dest = '%s@%s' % (t.get('user') or 'root', host)
+        # scp and sftp read user@host:path - an IPv6 address in brackets
+        # there (1.0.146), ssh takes it bare.
+        self.rdest = '%s@[%s]' % (t.get('user') or 'root', host) if ':' in host else self.dest
+        self.dir = (t.get('path') or '').rstrip('/') or '.'
+        # Signed in and the folder made, at once - the errors said here.
+        if t['kind'] == 'sftp':
+            parts = [p for p in self.dir.split('/') if p and p != '.']
+            cmds = []
+            acc = '/' if self.dir.startswith('/') else ''
+            for p in parts:
+                acc = (acc + '/' + p) if acc not in ('', '/') else (acc + p)
+                cmds.append('-mkdir "%s"' % acc)
+            cmds.append('cd "%s"' % self.dir)
+            self._sftp(cmds)
+        else:
+            self._ssh('mkdir -p -- %s && test -w %s' % (shlex_quote(self.dir),
+                                                        shlex_quote(self.dir)))
+
+    def _run(self, args, what, stdin=None, timeout=3600):
+        got = subprocess.run(args, input=stdin, capture_output=True, text=True,
+                             timeout=timeout, env=self.env, start_new_session=True)
+        if got.returncode != 0:
+            said = (got.stderr or got.stdout or '').strip().splitlines()
+            said = [x for x in said if x.strip() and not x.startswith('Warning: Permanently')]
+            tail = ' / '.join(said[-3:])[:300] or 'it said nothing (exit %d)' % got.returncode
+            if 'Host key verification failed' in tail or 'REMOTE HOST IDENTIFICATION' in tail:
+                tail = ('the server shows another host key than the one trusted - if it was '
+                        'reinstalled on purpose, Try it and trust the new one')
+            elif 'Permission denied' in tail:
+                tail = 'the server did not let the account in (%s)' % tail
+            raise RbError('%s: %s' % (what, tail))
+        return got.stdout
+
+    def _ssh(self, command):
+        return self._run(['ssh'] + self.opts + ['-p', str(int(self.t['port'])), self.dest,
+                                                command], 'ssh')
+
+    def _sftp(self, cmds, timeout=3600):
+        batch = os.path.join(self.d, 'batch')
+        with open(batch, 'w') as f:
+            f.write('\n'.join(cmds) + '\n')
+        return self._run(['sftp'] + self.opts + ['-P', str(int(self.t['port'])), '-b', batch,
+                                                 self.rdest], 'sftp', timeout=timeout)
+
+    def put(self, local, name):
+        name = rb_safe_name(name)
+        if self.t['kind'] == 'sftp':
+            self._sftp(['cd "%s"' % self.dir, 'put "%s" ".%s.part"' % (local, name),
+                        '-rm "%s"' % name, 'rename ".%s.part" "%s"' % (name, name)])
+        else:
+            self._run(['scp'] + self.opts + ['-P', str(int(self.t['port'])), '-q', local,
+                                             '%s:%s/.%s.part' % (self.rdest, self.dir, name)],
+                      'scp')
+            self._ssh('mv -f -- %s %s' % (shlex_quote('%s/.%s.part' % (self.dir, name)),
+                                          shlex_quote('%s/%s' % (self.dir, name))))
+
+    def get(self, name, local):
+        name = rb_safe_name(name)
+        if self.t['kind'] == 'sftp':
+            self._sftp(['cd "%s"' % self.dir, 'get "%s" "%s"' % (name, local)])
+        else:
+            self._run(['scp'] + self.opts + ['-P', str(int(self.t['port'])), '-q',
+                                             '%s:%s/%s' % (self.rdest, self.dir, name), local],
+                      'scp')
+
+    def list(self):
+        if self.t['kind'] == 'sftp':
+            text = self._sftp(['cd "%s"' % self.dir, 'ls -ln'])
+        else:
+            text = self._ssh('LC_ALL=C ls -ln -- %s' % shlex_quote(self.dir))
+        out = []
+        for line in text.splitlines():
+            f = line.split(None, 8)
+            if len(f) == 9 and f[0].startswith('-'):
+                name = f[8].rsplit('/', 1)[-1]
+                try:
+                    out.append({'name': name, 'size': int(f[4]), 'mtime': 0})
+                except ValueError:
+                    pass
+        return out
+
+    def delete(self, name):
+        name = rb_safe_name(name)
+        if self.t['kind'] == 'sftp':
+            self._sftp(['cd "%s"' % self.dir, 'rm "%s"' % name])
+        else:
+            self._ssh('rm -f -- %s' % shlex_quote('%s/%s' % (self.dir, name)))
+
+    def close(self):
+        if self.d:
+            shutil.rmtree(self.d, ignore_errors=True)
+
+
+class RbSmb(object):
+    """SMB through smbclient: an authentication file of its own (never the
+    password on a command line), SMB2 at least, SMB3 encryption when asked."""
+    def __init__(self, t):
+        self.t = t
+        self.d = None
+
+    def open(self):
+        t = self.t
+        if not shutil.which('smbclient'):
+            raise RbError('smbclient is not on this machine (dnf install samba-client)')
+        self.d = tempfile.mkdtemp(prefix='upsmon-smb-')
+        auth = os.path.join(self.d, 'auth')
+        fd = os.open(auth, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            f.write('username = %s\npassword = %s\n' % (t.get('user') or 'guest',
+                                                       rb_secret(t, 'password')))
+            if t.get('domain'):
+                f.write('domain = %s\n' % t['domain'])
+        self.args = ['smbclient', '//%s/%s' % (t['host'], t['share']), '-A', auth,
+                     '-p', str(int(t['port'])), '--option=client min protocol=SMB2',
+                     '-t', str(RB_TIMEOUT)]
+        if t.get('smb_encrypt'):
+            self.args += ['--client-protection=encrypt']
+        self.dir = (t.get('path') or '').replace('/', '\\').strip('\\')
+        cmds = []
+        acc = ''
+        for p in [x for x in self.dir.split('\\') if x]:
+            acc = (acc + '\\' + p) if acc else p
+            cmds.append('mkdir "%s"' % acc)
+        self._run(cmds + ['cd "\\%s"' % self.dir, 'ls'], ignore=('NT_STATUS_OBJECT_NAME_COLLISION',))
+
+    def _run(self, cmds, ignore=(), timeout=3600):
+        got = subprocess.run(self.args + ['-c', '; '.join(cmds)], capture_output=True, text=True,
+                             timeout=timeout, cwd=self.d, start_new_session=True)
+        text = (got.stdout or '') + (got.stderr or '')
+        bad = [x for x in text.splitlines() if 'NT_STATUS_' in x and
+               not any(i in x for i in ignore)]
+        if got.returncode != 0 or bad:
+            said = ' / '.join((bad or text.strip().splitlines() or ['no answer'])[-2:])[:300]
+            if 'NT_STATUS_LOGON_FAILURE' in said:
+                said = 'the server did not take the account and password (%s)' % said
+            elif 'NT_STATUS_BAD_NETWORK_NAME' in said:
+                said = 'there is no share %s on %s' % (self.t['share'], self.t['host'])
+            elif 'protection' in said.lower() and 'unknown' in said.lower():
+                said = ('this smbclient does not know --client-protection: switch "SMB3 '
+                        'encryption required" off or install a newer samba-client')
+            raise RbError('smbclient: %s' % said)
+        return got.stdout or ''
+
+    def _cd(self):
+        return 'cd "\\%s"' % self.dir
+
+    def put(self, local, name):
+        name = rb_safe_name(name)
+        self._run([self._cd(), 'put "%s" ".%s.part"' % (local, name), 'del "%s"' % name,
+                   'rename ".%s.part" "%s"' % (name, name)], ignore=('NT_STATUS_NO_SUCH_FILE',
+                                                                   'NT_STATUS_OBJECT_NAME_NOT_FOUND'))
+
+    def get(self, name, local):
+        self._run([self._cd(), 'get "%s" "%s"' % (rb_safe_name(name), local)])
+
+    def list(self):
+        out = []
+        for line in self._run([self._cd(), 'ls']).splitlines():
+            m = re.match(r'^\s\s(.+?)\s+([ADHNRS]*)\s+(\d+)\s+(\w{3} \w{3}\s+\d+ [\d:]+ \d{4})\s*$',
+                         line)
+            if m and 'D' not in m.group(2) and m.group(1) not in ('.', '..'):
+                try:
+                    mt = datetime.strptime(re.sub(r'\s+', ' ', m.group(4)),
+                                           '%a %b %d %H:%M:%S %Y').timestamp()
+                except ValueError:
+                    mt = 0
+                out.append({'name': m.group(1), 'size': int(m.group(3)), 'mtime': mt})
+        return out
+
+    def delete(self, name):
+        self._run([self._cd(), 'del "%s"' % rb_safe_name(name)])
+
+    def close(self):
+        if self.d:
+            shutil.rmtree(self.d, ignore_errors=True)
+
+
+def rb_said(e):
+    """An error in words, whatever library raised it."""
+    if isinstance(e, EOFError):
+        return 'the server closed the connection'
+    if isinstance(e, socket.timeout):
+        return 'the server did not answer in time'
+    if isinstance(e, ssl.SSLCertVerificationError):
+        return ('the server\'s certificate is not trusted: %s - check it against its authority, '
+                'or pin it' % e.verify_message)
+    if isinstance(e, ftplib.Error):
+        return 'the FTP server said: %s' % str(e)[:300]
+    return scrub_secret(str(e) or e.__class__.__name__)[:400]
+
+
+def rb_transport(t):
+    return {'folder': RbFolder, 'ftp': RbFtp, 'ftps': RbFtp, 'sftp': RbSsh, 'scp': RbSsh,
+            'smb': RbSmb}[t['kind']](t)
+
+
+def rb_try(t):
+    """Signed in, a small file written, seen in the list, taken away again."""
+    out = {'ok': False, 'steps': []}
+    began = time.time()
+    tr = rb_transport(t)
+    try:
+        tr.open()
+        out['steps'].append('signed in, the folder is there')
+        if getattr(tr, 'seen', None):
+            out['server_cert'] = tr.seen
+        name = 'upsmon-try-%s-%s.txt' % (rb_slug(node_name()), secrets.token_hex(4))
+        with tempfile.NamedTemporaryFile('w', prefix='upsmon-try-', delete=False) as f:
+            f.write('upsmon %s on %s tried this destination at %s - this file is taken away again\n'
+                    % (__version__, node_name(), datetime.now().isoformat(timespec='seconds')))
+            local = f.name
+        try:
+            tr.put(local, name)
+        finally:
+            os.unlink(local)
+        out['steps'].append('a file written')
+        names = [x['name'] for x in tr.list()]
+        if name not in names:
+            raise RbError('the file written is not in the list the server gives')
+        out['steps'].append('it is in the list (%d file(s) there)' % len(names))
+        tr.delete(name)
+        out['steps'].append('taken away again')
+        out['ok'] = True
+    except Exception as e:                              # noqa: BLE001
+        out['error'] = rb_said(e)
+        if getattr(tr, 'seen', None):
+            out['server_cert'] = tr.seen
+    finally:
+        tr.close()
+    out['secs'] = round(time.time() - began, 1)
+    return out
+
+
+# ---- the backup itself -----------------------------------------------------------------
+def rb_password():
+    # Sealed in config.json like the other passwords: until 1.0.139 the sealed
+    # text itself locked the backups - not the password typed, so a new
+    # machine could not open them.
+    pw = str(CONFIG.get('rbackup_password') or '')
+    return (unseal_secret(pw) or '') if pw else ''
+
+
+def rb_password_old():
+    """What locked the backups made here before 1.0.139: the sealed text."""
+    pw = str(CONFIG.get('rbackup_password') or '')
+    return pw if pw.startswith((SEALED, SEALED2)) else ''
+
+
+def rb_files_named():
+    """Files config.json names that live outside the database: the
+    authority of a database on another machine."""
+    out = []
+    for k in ('db_tls_ca',):
+        p = str(CONFIG.get(k) or '')
+        if p and os.path.isfile(p):
+            out.append(p)
+    return out
+
+
+def rb_restore_md(m):
+    """RESTORE.md: the exact steps, filled in with what this backup is."""
+    enc = m.get('encrypted')
+    name = m['file']
+    tar = name[:-4] if enc else name
+    site, node, ver = m.get('site') or 'upsmon', m.get('node') or '?', m.get('upsmon') or '?'
+    lines = [
+        '# Restoring upsmon from %s' % name, '',
+        '| | |', '|---|---|',
+        '| Made | %s |' % m.get('made_words'),
+        '| Installation | %s |' % site,
+        '| Server | %s (%s) |' % (node, m.get('host') or ''),
+        '| upsmon | %s |' % ver,
+        '| Locked | %s |' % ('yes - AES-256-CBC, PBKDF2-SHA256, %d rounds (openssl enc)'
+                             % RB_ITER if enc else '**no** - anybody with the file has the accounts '
+                             'and the secrets: keep it as you would the server'),
+        '', 'Everything is in it: both databases - `history.db` (the UPS, the plug and the sensors:',
+        'samples, events, power failures, tests) and `upsmon.db` (the accounts of Settings, the',
+        'settings of the pages, the certificates and their keys, the events) - the key that opens',
+        'the sealed secrets (`secrets.key`) and `/etc/upsmon/config.json`.', '',
+        'Keep the password of the backups apart from the backups (a password vault): without it',
+        'the file cannot be opened - by anybody.', '',
+        '## 0. Check the file', '', '```bash',
+        'sha256sum -c %s.sha256          # "%s: OK"' % (name, name), '```', '',
+    ]
+    if enc:
+        lines += ['## 1. Open it', '',
+                  'upsmon opens it by itself (step 3). With openssl alone, on any machine:', '',
+                  '```bash',
+                  'openssl enc -d -aes-256-cbc -pbkdf2 -iter %d -md sha256 -in %s -out %s'
+                  % (RB_ITER, name, tar),
+                  '# it asks for the password of the backups',
+                  'tar tzf %s                    # what is inside' % tar, '```', '']
+    else:
+        lines += ['## 1. It is not locked', '', '```bash', 'tar tzf %s' % tar, '```', '']
+    lines += [
+        'Inside: `upsmon-copy.tar.gz` (both databases, `config.json` and what made it),',
+        '`secrets.key`, `config.json`, `manifest.json` (a checksum of each file) and this file.', '',
+        '## 2. A machine to put it on', '',
+        'AlmaLinux / Rocky / RHEL 9 (or the machine it came from). Install upsmon **%s or newer**' % ver,
+        'from its package - the same way as the first time:', '', '```bash',
+        'tar xzf upsmon-%s.tar.gz && cd upsmon-%s' % (ver, ver),
+        './install.sh --nut-host <the NAS>',
+        '```', '',
+        '## 3. Put it back', '',
+        'On the pages: *Settings → Backups → Put a backup back*, the file and the password. Or by',
+        'hand, as root:', '', '```bash',
+        'mkdir /root/r && cd /root/r',
+        'openssl enc -d -aes-256-cbc -pbkdf2 -iter %d -md sha256 -in %s -out b.tar.gz' % (RB_ITER, name)
+        if enc else 'cp %s b.tar.gz' % name,
+        'tar xzf b.tar.gz && cd */ && tar xzf upsmon-copy.tar.gz',
+        'systemctl stop upsmon',
+        'install -o upsmon -g upsmon -m 640 upsmon.db history.db /var/lib/upsmon/',
+        'install -o upsmon -g upsmon -m 600 secrets.key /var/lib/upsmon/',
+        'rm -f /var/lib/upsmon/*.db-wal /var/lib/upsmon/*.db-shm',
+        'install -o root -g upsmon -m 640 config.json /etc/upsmon/   # if this machine has none',
+        'systemctl start upsmon', '```', '',
+        'The certificate of the pages comes back with `upsmon.db`: the service gives it to nginx',
+        'within seconds of its start.', '']
+    return '\n'.join(lines)
+
+
+def rb_manifest(store, base, tokens='?'):
+    """What a backup made now is: the head of its manifest and of RESTORE.md."""
+    pw = rb_password()
+    m = {'upsmon': __version__, 'made': time.time(),
+         'made_words': datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z').strip(),
+         'site': CONFIG.get('site_name') or 'upsmon', 'node': node_name(),
+         'host': socket.getfqdn(), 'engine': store.db.engine,
+         'engine_words': ENGINE_WORDS.get(store.db.engine, store.db.engine),
+         'ha_mode': CONFIG.get('ha_mode') or '', 'ha_slot': CONFIG.get('ha_slot'),
+         'ha_peer': CONFIG.get('ha_peer') or '', 'tokens': tokens,
+         'encrypted': bool(pw), 'iter': RB_ITER if pw else 0,
+         'file': base + ('.tar.gz.enc' if pw else '.tar.gz'), 'files': {}}
+    return m
+
+
+def rb_restore_guide(store):
+    """RESTORE.md as a backup made now would carry it (1.0.110) - for reading
+    on the pages before anything is lost. No secret is in it."""
+    site = rb_slug(CONFIG.get('site_name') or 'upsmon')
+    node = rb_slug(node_name())
+    try:
+        tokens = int(store.db.value('SELECT COUNT(*) FROM tokens') or 0)
+    except Exception:                                   # noqa: BLE001
+        tokens = '?'
+    base = 'upsmon-backup-%s-%s-%s' % (site, node, datetime.now().strftime('%Y%m%d-%H%M%S'))
+    m = rb_manifest(store, base, tokens)
+    return {'md': rb_restore_md(m), 'name': 'RESTORE-%s-%s.md' % (site, node),
+            'file': m['file']}
+
+
+def rb_build(store, work, progress=None):
+    """The backup, built in `work`: (path of the file to send, its name,
+    manifest, RESTORE.md text)."""
+    def say(n, t):
+        if progress:
+            progress(n, 6, t)
+    stamp_ = datetime.now().strftime('%Y%m%d-%H%M%S')
+    site = rb_slug(CONFIG.get('site_name') or 'upsmon')
+    node = rb_slug(node_name())
+    base = 'upsmon-backup-%s-%s-%s' % (site, node, stamp_)
+    inner = os.path.join(work, 'in')
+    os.makedirs(inner, mode=0o700)
+    say(1, 'both databases are copied')
+    os.replace(str(make_copy(store, 'backup', folder=work)), os.path.join(inner, 'upsmon-copy.tar.gz'))
+    key = sealing_key()
+    if not key:
+        raise RbError('this machine has no key that opens the tokens - nothing worth sending')
+    with open(os.path.join(inner, 'secrets.key'), 'w') as f:
+        f.write(key.hex() + '\n')
+    try:
+        shutil.copyfile(str(CONFIG_FILE), os.path.join(inner, 'config.json'))
+    except OSError as e:
+        raise RbError('%s cannot be read: %s' % (CONFIG_FILE, e))
+    extra = rb_files_named()
+    if extra:
+        os.makedirs(os.path.join(inner, 'files'))
+        for p in extra:
+            shutil.copyfile(p, os.path.join(inner, 'files', os.path.basename(p)))
+    say(2, 'what is in it is counted')
+    try:
+        tokens = int(store.db.value('SELECT COUNT(*) FROM tokens') or 0)
+    except Exception:                                   # noqa: BLE001
+        tokens = '?'
+    pw = rb_password()
+    m = rb_manifest(store, base, tokens)
+    for root, _dirs, files in os.walk(inner):
+        for n in sorted(files):
+            p = os.path.join(root, n)
+            h = hashlib.sha256()
+            with open(p, 'rb') as f:
+                for chunk in iter(lambda: f.read(1 << 20), b''):
+                    h.update(chunk)
+            m['files'][os.path.relpath(p, inner)] = {'sha256': h.hexdigest(),
+                                                    'bytes': os.path.getsize(p)}
+    md = rb_restore_md(m)
+    with open(os.path.join(inner, 'RESTORE.md'), 'w') as f:
+        f.write(md)
+    with open(os.path.join(inner, 'manifest.json'), 'w') as f:
+        json.dump(m, f, indent=2, default=str)
+    say(3, 'packed')
+    tar = os.path.join(work, base + '.tar.gz')
+    with tarfile.open(tar, 'w:gz', compresslevel=6) as tf:
+        for n in sorted(os.listdir(inner)):
+            tf.add(os.path.join(inner, n), arcname='%s/%s' % (base, n))
+    shutil.rmtree(inner, ignore_errors=True)
+    out = tar
+    if pw:
+        say(4, 'locked with the password of the backups')
+        out = tar + '.enc'
+        _openssl(['enc', '-aes-256-cbc', '-pbkdf2', '-iter', str(RB_ITER), '-md', 'sha256',
+                  '-salt', '-in', tar, '-out', out, '-pass', 'env:UPSMON_RB_PASS'],
+                 env={'UPSMON_RB_PASS': pw}, what='locking it')
+        os.unlink(tar)
+    h = hashlib.sha256()
+    with open(out, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    m['sha256'] = h.hexdigest()
+    m['bytes'] = os.path.getsize(out)
+    with open(os.path.join(work, m['file'] + '.sha256'), 'w') as f:
+        f.write('%s  %s\n' % (m['sha256'], m['file']))
+    with open(os.path.join(work, base + '-RESTORE.md'), 'w') as f:
+        f.write(md)
+    return out, m, md
+
+
+def rb_companions(name):
+    m = RB_NAME_RE.match(name)
+    if not m:
+        return []
+    base = name.split('.tar.gz')[0]
+    return [name + '.sha256', base + '-RESTORE.md']
+
+
+def rb_retain(tr, keep, days, now=None):
+    """This node's backups at a destination beyond what is kept, taken away -
+    never the newest."""
+    now = now or time.time()
+    mine = rb_slug(node_name())
+    files = tr.list()
+    names = set(x['name'] for x in files)
+    ours = []
+    for x in files:
+        m = RB_NAME_RE.match(x['name'])
+        if m and m.group('node') == mine and m.group('site') == rb_slug(
+                CONFIG.get('site_name') or 'upsmon'):
+            try:
+                when = datetime.strptime(m.group('stamp'), '%Y%m%d-%H%M%S').timestamp()
+            except ValueError:
+                continue
+            ours.append((when, x['name']))
+    ours.sort(reverse=True)
+    gone = []
+    for i, (when, name) in enumerate(ours):
+        if i == 0:
+            continue
+        if (keep and i >= keep) or (days and now - when > days * 86400):
+            for n in [name] + [c for c in rb_companions(name) if c in names]:
+                try:
+                    tr.delete(n)
+                except Exception:                       # noqa: BLE001
+                    pass
+            gone.append(name)
+    return gone
+
+
+def rb_run(store, by, only=None, progress=None):
+    """Made once, sent to every destination switched on (or the ones asked):
+    the result of each, kept in the history."""
+    targets = [t for t in rb_targets(store)
+               if (only and t['id'] in only) or (not only and t.get('enabled'))]
+    if not targets:
+        raise RbError('no destination is switched on')
+    # Never sent unlocked (1.0.136): it holds the key every token is sealed
+    # with, the whole database and config.json - whoever reads the share
+    # could unseal every token.
+    if not rb_password():
+        raise RbError('the backups have no password: set one (Settings - Backups - '
+                      'Backups to other machines) - unlocked, a copy would hand the key of '
+                      'every token to whoever can read the destination')
+    work = tempfile.mkdtemp(prefix='upsmon-rbackup-', dir=str(STATE_DIR))
+    os.chmod(work, 0o700)
+    began = time.time()
+    run = {'at': began, 'by': by, 'node': node_name(), 'targets': [], 'ok': False}
+    try:
+        path, m, _md = rb_build(store, work, progress)
+        run.update(file=m['file'], bytes=m['bytes'], encrypted=m['encrypted'],
+                   tokens=m['tokens'])
+        sha = os.path.join(work, m['file'] + '.sha256')
+        md = os.path.join(work, m['file'].split('.tar.gz')[0] + '-RESTORE.md')
+        for i, t in enumerate(targets):
+            if progress:
+                progress(5, 6, 'sent to %s (%d of %d)' % (t['name'], i + 1, len(targets)))
+            one = {'id': t['id'], 'name': t['name'], 'kind': t['kind'], 'ok': False}
+            t0 = time.time()
+            tr = rb_transport(t)
+            try:
+                tr.open()
+                tr.put(path, m['file'])
+                tr.put(sha, os.path.basename(sha))
+                tr.put(md, os.path.basename(md))
+                got = {x['name']: x['size'] for x in tr.list()}
+                if got.get(m['file']) not in (None, m['bytes']):
+                    raise RbError('the server holds %s bytes of it, not %s' % (
+                        got.get(m['file']), m['bytes']))
+                one['ok'] = True
+                try:
+                    one['taken_away'] = rb_retain(tr, int(CONFIG.get('rbackup_keep') or 0),
+                                                  int(CONFIG.get('rbackup_keep_days') or 0))
+                except Exception as e:                  # noqa: BLE001
+                    one['retain_error'] = str(e)[:200]
+            except Exception as e:                      # noqa: BLE001
+                one['error'] = rb_said(e)
+            finally:
+                tr.close()
+            one['secs'] = round(time.time() - t0, 1)
+            run['targets'].append(one)
+            rb_set_fields(store, t['id'], '', '', last={
+                'at': time.time(), 'ok': one['ok'], 'error': one.get('error') or '',
+                'file': m['file'], 'bytes': m['bytes']})
+        run['ok'] = all(x['ok'] for x in run['targets'])
+    except (RbError, OSError, ValueError, subprocess.SubprocessError) as e:
+        run['error'] = scrub_secret(str(e))[:400]
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    run['secs'] = round(time.time() - began, 1)
+    rb_history_add(store, run)
+    good = [x['name'] for x in run['targets'] if x['ok']]
+    bad = ['%s (%s)' % (x['name'], x.get('error')) for x in run['targets'] if not x['ok']]
+    store.add_event('backups', 'a backup of %s (%s) %s%s%s' % (
+        node_name(), human_bytes(run.get('bytes') or 0), ('went to ' + ', '.join(good))
+        if good else 'went nowhere', ('; not to ' + '; '.join(bad)) if bad else '',
+        ('; ' + run['error']) if run.get('error') else ''),
+        'info' if run['ok'] else 'bad', who=by)
+    log('remote backup: %s' % ('sent to ' + ', '.join(good) if good else 'not sent')
+        + (' - failed: ' + '; '.join(bad) if bad else '')
+        + (' - ' + run['error'] if run.get('error') else ''), 'info' if run['ok'] else 'warn')
+    return run
+
+
+def human_bytes(n):
+    n = float(n or 0)
+    for unit in ('B', 'kB', 'MB', 'GB'):
+        if n < 1024 or unit == 'GB':
+            return ('%d %s' % (n, unit)) if unit == 'B' else ('%.1f %s' % (n, unit))
+        n /= 1024.0
+    return '%d B' % n
+
+
+def rb_history(store):
+    try:
+        got = json.loads(store.get_meta('rbackup:runs') or '[]')
+    except ValueError:
+        got = []
+    return [x for x in got if isinstance(x, dict)]
+
+
+def rb_history_forget(store, at=None, file=None):
+    """One line off the list (at and file), or all of it (1.0.110). The
+    backups themselves stay where they went."""
+    with RB_LOCK:
+        runs = rb_history(store)
+        if at is None:
+            left = []
+        else:
+            left = [r for r in runs if not (abs(float(r.get('at') or 0) - float(at)) < 0.001 and
+                                           str(r.get('file') or '') == str(file or ''))]
+        store.set_meta('rbackup:runs', json.dumps(left, default=str))
+        return len(runs) - len(left)
+
+
+def rb_history_add(store, run):
+    with RB_LOCK:
+        runs = [run] + rb_history(store)
+        store.set_meta('rbackup:runs', json.dumps(runs[:60], default=str))
+
+
+def rb_job_start(store, by, only=None):
+    """In a thread of its own; the page follows RB_JOB."""
+    with RB_LOCK:
+        if RB_JOB['running']:
+            raise ValueError('a backup is being made already')
+        RB_JOB.update(running=True, what='backup', says='starting', done=0, whole=6, error='',
+                      began=time.time(), ended=0, result=None, by=by)
+
+    def progress(done, whole, says):
+        RB_JOB.update(done=done, whole=whole, says=says)
+
+    def work():
+        try:
+            RB_JOB['result'] = rb_run(store, by, only, progress)
+            if RB_JOB['result'].get('error'):
+                RB_JOB['error'] = RB_JOB['result']['error']
+            elif RB_JOB['result'].get('ok') and CONFIG.get('rbackup_verify') == 'after':
+                # Tried at once, at the first destination it went to (1.0.169).
+                RB_JOB.update(what='verify', says='the backup just sent is tried', done=0, whole=4)
+                sent = RB_JOB['result']
+                v = rb_verify(store, by, sent['targets'][0]['id'], sent.get('file'), progress)
+                sent['verified'] = v
+                if not v['ok']:
+                    RB_JOB['error'] = 'sent, but it is not good: ' + '; '.join(
+                        c['what'] for c in v['checks'] if not c['ok'])
+        except Exception as e:                          # noqa: BLE001
+            RB_JOB['error'] = scrub_secret(str(e))[:400]
+            log('remote backup failed: %s' % e, 'error')
+        finally:
+            RB_JOB.update(running=False, ended=time.time())
+    threading.Thread(target=work, name='rbackup', daemon=True).start()
+    return dict(RB_JOB)
+
+
+def rb_due(store, last_day):
+    """Whether the scheduled backup is due now; the day it is for."""
+    if not CONFIG.get('rbackup'):
+        return None
+    try:
+        hh, mm = (int(x) for x in str(CONFIG.get('rbackup_at') or '04:00').split(':', 1))
+    except ValueError:
+        hh, mm = 4, 0
+    now = datetime.now()
+    if (now.hour, now.minute) < (hh, mm):
+        return None
+    if str(CONFIG.get('rbackup_every') or 'daily') == 'weekly' and \
+            now.isoweekday() != int(CONFIG.get('rbackup_day') or 7):
+        return None
+    today = now.strftime('%Y-%m-%d')
+    return today if today != last_day else None
+
+
+RB_NOW_LIVE_S = 900
+
+
+def rb_now_ask_others(store, by):
+    """Back up now on the other nodes too (1.0.149), as the schedule does: each
+    node makes its own. Asked in a row of the asking node's own per node
+    asked - 'rbackup:now:NODE@@ASKER' - so only one node ever writes it."""
+    if not CONFIG.get('ha_mode'):
+        return []
+    asked = []
+    ident = secrets.token_hex(6)
+    for n in ha_nodes(store):
+        if n.get('me') or not n.get('alive'):
+            continue
+        store.set_meta(node_key('rbackup:now', n['name']),
+                       json.dumps({'id': ident, 'at': time.time(), 'by': by,
+                                   'from': node_name()}))
+        asked.append(n['name'])
+    return asked
+
+
+def rb_now_asked(daemon):
+    """A Back up now asked of this node by another; started once each."""
+    store = daemon.store
+    done_k = 'rbackup:nowdone:' + node_name()
+    try:
+        done = set(json.loads(store.get_meta(done_k) or '[]'))
+    except ValueError:
+        done = set()
+    for r in node_key_rows(store, 'rbackup:now', node_name()):
+        try:
+            ask = json.loads(r['v'] or '{}')
+        except ValueError:
+            continue
+        ident = str(ask.get('id') or '')
+        if not ident or ident in done or time.time() - float(ask.get('at') or 0) > RB_NOW_LIVE_S:
+            continue
+        if RB_JOB['running']:
+            return                      # asked again at the next tick
+        store.set_meta(done_k, json.dumps(sorted(done | {ident})[-20:]))
+        rb_job_start(store, '%s (Back up now on %s)' % (ask.get('by') or 'upsmon',
+                                                        ask.get('from') or '?'))
+        return
+
+
+def rb_tick(daemon):
+    """Once a minute from the daemon's loop: the scheduled backup, this node's."""
+    store = daemon.store
+    if CONFIG.get('ha_mode'):
+        try:
+            rb_now_asked(daemon)
+        except Exception as e:                          # noqa: BLE001
+            log_sparing('rb-now:' + str(e)[:60], 'Back up now asked by the other node: %s'
+                        % e, 'warn', 600)
+    if not RB_JOB['running'] and rb_verify_due(store) and \
+            time.time() - float(getattr(daemon, '_rb_verify_at', 0)) > 3600:
+        daemon._rb_verify_at = time.time()          # once an hour at most, if it fails to start
+        try:
+            rb_verify_start(store, 'upsmon (weekly)')
+        except ValueError:
+            pass
+    day = rb_due(store, getattr(daemon, '_rb_day', ''))
+    if not day or RB_JOB['running']:
+        return
+    # Marked done only once the database said whether it is this run's
+    # (1.0.146): the database away just then left the day without a backup.
+    claimed = claim_once(store, 'rbackup_day:' + node_name(), day)
+    daemon._rb_day = day
+    if not claimed:
+        return
+    if not any(t.get('enabled') for t in rb_targets(store)):
+        return
+    rb_job_start(store, 'upsmon (scheduled)')
+
+
+# ---- putting one back -----------------------------------------------------------------
+def rb_open(path, password, work):
+    """A backup file opened into `work`: its folder and its manifest - every
+    file checked against the checksum the manifest has."""
+    src = path
+    with open(path, 'rb') as f:
+        head = f.read(8)
+    if head.startswith(b'Salted__'):
+        if not password:
+            raise RbError('the backup is locked: its password is needed')
+        src = os.path.join(work, 'b.tar.gz')
+        tries = [password]
+        if password == rb_password() and rb_password_old():
+            tries.append(rb_password_old())             # made here before 1.0.139
+        for n, pw in enumerate(tries):
+            try:
+                _openssl(['enc', '-d', '-aes-256-cbc', '-pbkdf2', '-iter', str(RB_ITER), '-md',
+                          'sha256', '-in', path, '-out', src, '-pass', 'env:UPSMON_RB_PASS'],
+                         env={'UPSMON_RB_PASS': pw}, what='opening it')
+                break
+            except ValueError:
+                if n == len(tries) - 1:
+                    raise RbError('the password does not open it (or the file is damaged)')
+    elif not head.startswith(b'\x1f\x8b'):
+        raise RbError('that is not a backup of upsmon (neither locked nor a .tar.gz)')
+    elif password:
+        # Backups are always locked: an unlocked one where a password is in
+        # play was put there by somebody else - its database, its accounts,
+        # its key (1.0.139).
+        raise RbError('the backup is not locked, and backups of upsmon always are - it was not '
+                      'made by upsmon; not put in')
+    out = os.path.join(work, 'x')
+    os.makedirs(out, mode=0o700)
+    with tarfile.open(src, 'r:gz') as tf:
+        members = tf.getmembers()
+        tops = set()
+        for mb in members:
+            parts = mb.name.split('/')
+            if mb.name.startswith('/') or '..' in parts or not (mb.isfile() or mb.isdir()):
+                raise RbError('the archive has a file it may not have: %r' % mb.name[:100])
+            tops.add(parts[0])
+        if len(tops) != 1:
+            raise RbError('the archive is not one backup')
+        # Unpacked only when it fits (1.0.136): a small file that unpacks to
+        # more than the disk has would fill /var/lib/upsmon, the database's too.
+        total = sum(mb.size for mb in members if mb.isfile())
+        try:
+            free = shutil.disk_usage(work).free
+        except OSError:
+            free = None
+        if free is not None and total > free - 512 * 1024 * 1024:
+            raise RbError('unpacked it is %s, more than there is room for here (%s free)'
+                          % (human_bytes(total), human_bytes(max(0, free))))
+        for mb in members:
+            if mb.isfile():
+                dst = os.path.join(out, *mb.name.split('/'))
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with tf.extractfile(mb) as s, open(dst, 'wb') as d:
+                    shutil.copyfileobj(s, d)
+    top = os.path.join(out, tops.pop())
+    try:
+        with open(os.path.join(top, 'manifest.json')) as f:
+            m = json.load(f)
+    except (OSError, ValueError):
+        raise RbError('there is no manifest in it')
+    for rel, want in (m.get('files') or {}).items():
+        p = os.path.join(top, *rel.split('/'))
+        h = hashlib.sha256()
+        try:
+            with open(p, 'rb') as f:
+                for chunk in iter(lambda: f.read(1 << 20), b''):
+                    h.update(chunk)
+        except OSError:
+            raise RbError('%s is missing from it' % rel)
+        if h.hexdigest() != want.get('sha256'):
+            raise RbError('%s is damaged (its checksum is not the one in the manifest)' % rel)
+    return top, m
+
+
+def rb_restore(store, path, password, by, keep_node_name=False, need_admin=True):
+    """Everything in a backup put back on this machine: the database, the key
+    of the tokens, the node's name. The connection to the database in
+    config.json stays this machine's."""
+    work = tempfile.mkdtemp(prefix='upsmon-putback-', dir=str(STATE_DIR))
+    os.chmod(work, 0o700)
+    try:
+        top, m = rb_open(path, password, work)
+        got = db_file_restore(store, os.path.join(top, 'upsmon-copy.tar.gz'), by,
+                              key_file=os.path.join(top, 'secrets.key'),
+                              from_name=os.path.basename(str(path)), need_admin=need_admin)
+        said = [got.get('key') or '']
+        old_name = node_name()
+        if False:
+            write_file_settings({'node_name': m['node']})
+            CONFIG['node_name'] = m['node']
+            try:
+                node_carry(store, old_name, m['node'], by=by)
+            except Exception:                           # noqa: BLE001
+                pass
+            said.append('this machine is node %s again (it was %s)' % (m['node'], old_name))
+        store.add_event('backups', '%s put back the backup %s (made %s on %s, upsmon %s)' % (
+            by, os.path.basename(str(path)), m.get('made_words'), m.get('node'), m.get('upsmon')),
+            'warn', who=by)
+        return {'manifest': m, 'safety': got.get('safety'), 'said': [x for x in said if x]}
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def rb_fetch(store, tid, name, dst):
+    t = rb_target(store, tid)
+    if not t:
+        raise ValueError('no such destination')
+    if not RB_NAME_RE.match(str(name or '')):
+        raise ValueError('not a backup of upsmon: %r' % str(name)[:80])
+    tr = rb_transport(t)
+    try:
+        tr.open()
+        tr.get(name, dst)
+    finally:
+        tr.close()
+
+
+def rb_remote_list(store, tid):
+    t = rb_target(store, tid)
+    if not t:
+        raise ValueError('no such destination')
+    tr = rb_transport(t)
+    try:
+        tr.open()
+        files = tr.list()
+    finally:
+        tr.close()
+    names = set(x['name'] for x in files)
+    out = []
+    for x in files:
+        m = RB_NAME_RE.match(x['name'])
+        if not m:
+            continue
+        try:
+            when = datetime.strptime(m.group('stamp'), '%Y%m%d-%H%M%S').timestamp()
+        except ValueError:
+            when = x.get('mtime') or 0
+        out.append({'name': x['name'], 'bytes': x['size'], 'when': when,
+                    'node': m.group('node'), 'site': m.group('site'),
+                    'encrypted': bool(m.group('enc')),
+                    'mine': m.group('node') == rb_slug(node_name()),
+                    'sha256': (x['name'] + '.sha256') in names})
+    out.sort(key=lambda x: -x['when'])
+    return out
+
+
+
+# ---- a backup tried, without putting it back (1.0.169) ---------------------------------
+# Settings → Backups → Try a backup: the newest backup of this node at a
+# destination fetched into a folder of its own, opened with the password of
+# the backups, every file checked against its manifest, the copy of the
+# database read to its last line and counted, the key in it checked against
+# the tokens in it (each token's key must open with it), config.json read -
+# what a restore needs, done without touching the database in use. The
+# newest nightly copy on this machine is read through as well. By hand, after
+# every backup, or weekly (rbackup_verify); in a thread of its own, the
+# result kept per node ('rbackup:verified:NODE') and alerted when it failed.
+RB_VERIFY_KEEP = 30
+
+
+def _seal_tag_ok(key, value, bind):
+    """Whether `key` is the one `value` was sealed with - its tag checked, the
+    secret itself never opened."""
+    if not isinstance(value, str) or not value:
+        return None
+    if value.startswith(SEALED2):
+        v2, prefix = True, SEALED2
+    elif value.startswith(SEALED):
+        v2, prefix = False, SEALED
+    else:
+        return None
+    try:
+        raw = base64.urlsafe_b64decode(value[len(prefix):].encode('ascii'))
+    except (ValueError, TypeError):
+        return False
+    if len(raw) < 32:
+        return False
+    nonce, body, tag = raw[:16], raw[16:-16], raw[-16:]
+    sign = hmac.new(key, b'sign', hashlib.sha256).digest()
+    signed = (b'2|' + str(bind).encode('utf-8') + b'|' if v2 else b'') + nonce + body
+    return hmac.compare_digest(tag, hmac.new(sign, signed, hashlib.sha256).digest()[:16])
+
+
+def copy_read_through(path, key=None, sample=50, child=False):
+    """A copy of the database read to its last line: what it holds, and - with
+    a key - how many tokens of a sample open with it. In the daemon by `upsmon
+    --read-copy`, a process of its own (1.0.186): a big copy read line by line
+    is minutes of Python, which held its one lock against RADIUS."""
+    if not child and DAEMON_DB[0] is not None:
+        r = subprocess.run([sys.executable, '-I', os.path.abspath(__file__), '--read-copy',
+                            str(path)], input=(key.hex() if key else '') + '\n',
+                           capture_output=True, text=True, timeout=6 * 3600)
+        try:
+            got = json.loads(r.stdout.strip().split('\n')[-1])
+        except (ValueError, IndexError):
+            raise RbError('the copy could not be read: %s' % (r.stderr or r.stdout).strip()[-300:])
+        if got.get('error'):
+            raise RbError(got['error'])
+        return got
+    import gzip
+    counts, table, admins = {}, None, 0
+    tried = opened = 0
+    with gzip.open(str(path), 'rt', encoding='utf-8') as f:
+        head = json.loads(f.readline() or '{}')
+        if 'upsmon' not in head and 'opt' not in head:
+            raise RbError('the copy of the database is not one made by upsmon')
+        for line in f:
+            got = json.loads(line)
+            if set(got.keys()) == {'table'}:
+                table = got['table']
+                counts.setdefault(table, 0)
+                continue
+            if not table:
+                continue
+            counts[table] += 1
+            if table == 'accounts' and got.get('role') == 'fulladmin' and not got.get('disabled'):
+                admins += 1
+            if table == 'tokens' and key and tried < sample and got.get('secret'):
+                ok = _seal_tag_ok(key, got['secret'], token_bind(got.get('name')))
+                if ok is not None:
+                    tried += 1
+                    opened += 1 if ok else 0
+    return {'head': head, 'counts': counts, 'admins': admins, 'tried': tried, 'opened': opened}
+
+
+def rb_verify_file(path, password, work, made_here=True):
+    """The checks on one backup file: [(what, ok, said)] and its manifest."""
+    checks = []
+
+    def check(what, ok, said=''):
+        checks.append({'what': what, 'ok': bool(ok), 'said': said})
+        return ok
+    try:
+        top, m = rb_open(path, password, work)
+    except RbError as e:
+        check('opened with the password of the backups, every file as its manifest says',
+              False, str(e))
+        return checks, {}
+    check('opened with the password of the backups, every file as its manifest says', True,
+          '%d file(s)' % len(m.get('files') or {}))
+    key = None
+    try:
+        key = bytes.fromhex(open(os.path.join(top, 'secrets.key')).read().strip())
+        check('the key of the tokens is in it', len(key) >= 32)
+    except (OSError, ValueError) as e:
+        check('the key of the tokens is in it', False, str(e)[:200])
+    try:
+        got = copy_read_through(os.path.join(top, 'upsmon-copy.tar.gz'), key)
+        c = got['counts']
+        check('the copy of both databases reads to its last line', True, '%d tables, %d samples, '
+              '%d accounts' % (len(c), c.get('samples', 0), c.get('accounts', 0)))
+        want = m.get('tokens')
+        if isinstance(want, int):
+            pass
+        check('a full administrator can sign in after it', got['admins'] > 0,
+              '%d' % got['admins'])
+        if got['tried']:
+            check('the tokens open with the key in it', got['opened'] == got['tried'],
+                  '%d of %d tried' % (got['opened'], got['tried']))
+    except (OSError, ValueError, EOFError, RbError) as e:
+        check('the copy of the database reads to its last line', False, str(e)[:200])
+    try:
+        with open(os.path.join(top, 'config.json')) as f:
+            json.load(f)
+        check('config.json is in it and reads', True)
+    except (OSError, ValueError) as e:
+        check('config.json is in it and reads', False, str(e)[:200])
+    return checks, m
+
+
+def rb_verify(store, by, tid=None, name=None, progress=None):
+    """The newest backup of this node at a destination (or the one named),
+    tried. The result is kept and returned."""
+    def say(n, t):
+        if progress:
+            progress(n, 4, t)
+    targets = [t for t in rb_targets(store) if t.get('enabled') and (not tid or t['id'] == tid)]
+    if tid and not targets:
+        raise RbError('no such destination')
+    if not targets:
+        raise RbError('no destination is switched on')
+    t = targets[0]
+    began = time.time()
+    res = {'at': began, 'by': by, 'node': node_name(), 'target': t['id'], 'target_name': t['name'],
+           'checks': [], 'ok': False}
+    work = tempfile.mkdtemp(prefix='upsmon-verify-', dir=str(STATE_DIR))
+    os.chmod(work, 0o700)
+    try:
+        say(1, 'the backups at %s listed' % t['name'])
+        files = rb_remote_list(store, t['id'])
+        pick = [f for f in files if f['name'] == name] if name else \
+            ([f for f in files if f['mine']] or files)
+        if not pick:
+            raise RbError('there is no backup %s at %s' % (('called ' + name) if name else
+                                                           'of this node', t['name']))
+        f = pick[0]
+        res.update(file=f['name'], made=f['when'], bytes=f['bytes'])
+        say(2, 'fetched from %s' % t['name'])
+        dst = os.path.join(work, 'b')
+        rb_fetch(store, t['id'], f['name'], dst)
+        say(3, 'opened and read through')
+        res['checks'], m = rb_verify_file(dst, rb_password(), work)
+        res['upsmon'] = m.get('upsmon')
+    except (RbError, OSError, ValueError, subprocess.SubprocessError) as e:
+        res['checks'].append({'what': 'fetched from the destination', 'ok': False,
+                              'said': rb_said(e) if not isinstance(e, RbError) else str(e)})
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    # The newest nightly copy here, read through too.
+    say(4, 'the newest nightly copy read through')
+    try:
+        kept = kept_copies()
+        if kept:
+            got = copy_read_through(BACKUP_DIR / kept[0]['name'], sealing_key())
+            res['checks'].append({'what': 'the newest nightly copy here reads to its last line',
+                                  'ok': got['tried'] == got['opened'],
+                                  'said': '%s, %d tokens' % (kept[0]['name'],
+                                                             got['counts'].get('tokens', 0))})
+    except Exception as e:                              # noqa: BLE001
+        res['checks'].append({'what': 'the newest nightly copy here reads to its last line',
+                              'ok': False, 'said': str(e)[:200]})
+    res['ok'] = bool(res['checks']) and all(c['ok'] for c in res['checks'])
+    res['secs'] = round(time.time() - began, 1)
+    k = 'rbackup:verified:' + node_name()
+    rows = _meta_json(store, k) or []
+    if not isinstance(rows, list):
+        rows = []
+    store.set_meta(k, json.dumps(([res] + rows)[:RB_VERIFY_KEEP]))
+    bad = [c['what'] + (': ' + c['said'] if c['said'] else '') for c in res['checks'] if not c['ok']]
+    store.add_event('backups', 'the backup %s at %s was tried: %s' % (
+        res.get('file') or '?', t['name'], 'it can be put back' if res['ok'] else
+        'NOT GOOD - ' + '; '.join(bad)), 'info' if res['ok'] else 'bad', who=by)
+    return res
+
+
+def rb_verified(store):
+    """Every node's tries, newest first."""
+    out = []
+    for r in store.db.rows("SELECT k, v FROM meta WHERE k LIKE 'rbackup:verified:%'"):
+        try:
+            rows = json.loads(r['v'] or '[]')
+        except ValueError:
+            continue
+        out += [x for x in rows if isinstance(x, dict)]
+    out.sort(key=lambda x: -float(x.get('at') or 0))
+    return out
+
+
+def rb_verified_forget(store, at=None):
+    """Taken off the list - one try (by its time) or all; the backups stay."""
+    n = 0
+    for r in store.db.rows("SELECT k, v FROM meta WHERE k LIKE 'rbackup:verified:%'"):
+        try:
+            rows = json.loads(r['v'] or '[]')
+        except ValueError:
+            rows = []
+        keep = [] if at is None else [x for x in rows if abs(float(x.get('at') or 0) - at) > 0.001]
+        if len(keep) != len(rows):
+            n += len(rows) - len(keep)
+            store.set_meta(r['k'], json.dumps(keep))
+    return n
+
+
+def rb_verify_start(store, by, tid=None, name=None):
+    """In a thread of its own, followed as a backup is (RB_JOB)."""
+    with RB_LOCK:
+        if RB_JOB['running']:
+            raise ValueError('a backup is being made or tried already')
+        RB_JOB.update(running=True, what='verify', says='starting', done=0, whole=4, error='',
+                      began=time.time(), ended=0, result=None, by=by)
+
+    def progress(done, whole, says):
+        RB_JOB.update(done=done, whole=whole, says=says)
+
+    def work():
+        try:
+            RB_JOB['result'] = rb_verify(store, by, tid, name, progress)
+            if not RB_JOB['result'].get('ok'):
+                RB_JOB['error'] = 'the backup is not good: ' + '; '.join(
+                    c['what'] for c in RB_JOB['result']['checks'] if not c['ok'])
+        except Exception as e:                          # noqa: BLE001
+            RB_JOB['error'] = scrub_secret(str(e))[:400]
+        finally:
+            RB_JOB.update(running=False, ended=time.time())
+    threading.Thread(target=work, name='rbackup-verify', daemon=True).start()
+    return dict(RB_JOB)
+
+
+def rb_verify_due(store):
+    """Weekly: a week since this node last tried one."""
+    if (CONFIG.get('rbackup_verify') or 'off') != 'weekly':
+        return False
+    rows = _meta_json(store, 'rbackup:verified:' + node_name()) or []
+    last = float(rows[0].get('at') or 0) if isinstance(rows, list) and rows else 0
+    return time.time() - last > 7 * 86400
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 14569-14570): the engines, in words ========
+ENGINE_WORDS = {'sqlite': 'the file on this machine (SQLite)', 'mariadb': 'MariaDB',
+                'postgres': 'PostgreSQL'}
+
+
+# ======== carried over from OTP 1.0.187 (lines 14756-14798): one long job at a time ========
+# ---- one long job at a time, which the page asks after ---------------------
+DB_JOB = {'id': 0, 'what': '', 'running': False, 'done': 0, 'whole': 0, 'says': '',
+          'error': '', 'result': None, 'began': 0, 'ended': 0}
+DB_JOB_LOCK = threading.Lock()
+
+
+def db_job(what, work):
+    with DB_JOB_LOCK:
+        if DB_JOB['running']:
+            raise ValueError('%s is going on already' % DB_JOB['what'])
+        DB_JOB.update({'id': DB_JOB['id'] + 1, 'what': what, 'running': True, 'done': 0,
+                       'whole': 0, 'says': '', 'error': '', 'result': None,
+                       'began': time.time(), 'ended': 0})
+
+    def progress(done, whole, says):
+        DB_JOB.update({'done': done, 'whole': whole, 'says': says})
+        if time.time() - DB_JOB.get('_pub', 0) > 1:
+            DB_JOB['_pub'] = time.time()
+            job_publish({k: v for k, v in DB_JOB.items() if not k.startswith('_')})
+
+    def run():
+        try:
+            DB_JOB['result'] = work(progress)
+        except Exception as e:
+            DB_JOB['error'] = scrub_secret(str(e).split('\n')[0][:400])
+            log('%s failed: %s' % (what, scrub_secret(e)), 'error')
+        finally:
+            DB_JOB.update({'running': False, 'ended': time.time()})
+            job_publish({k: v for k, v in DB_JOB.items() if not k.startswith('_')})
+
+    def beat():
+        # Said again every half minute, so the other node - or this one,
+        # after a restart - can tell a job going on from one that died.
+        while DB_JOB.get('running'):
+            time.sleep(30)
+            if DB_JOB.get('running'):
+                job_publish({k: v for k, v in DB_JOB.items() if not k.startswith('_')})
+
+    threading.Thread(target=run, name='db-job', daemon=True).start()
+    threading.Thread(target=beat, name='db-job-beat', daemon=True).start()
+    return dict(DB_JOB)
+
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 20325-20344): one node claims it ========
+def claim_once(store, key, value):
+    """True for exactly one node: the one whose conditional UPDATE changed the
+    row. A key not there yet is made first; two nodes making it at the same
+    moment cannot both insert it (it is the primary key).
+
+    Two replicated databases are two tables, though: each node's INSERT went
+    in, and replication then stopped on the other's for good; each UPDATE
+    took the day too. A key of both nodes (not one of this node's own,
+    'NAME:NODE') is claimed by one node alone since 1.0.147 - see ha_lead -
+    so only that one ever writes its row."""
+    if CONFIG.get('ha_mode') == 'replicated' and not key.endswith(':' + node_name()) and \
+            not ha_lead(store):
+        return False
+    if store.get_meta(key) is None:
+        try:
+            store.db.run('INSERT INTO meta (k, v) VALUES (?, ?)', (key, ''))
+        except Exception:                               # noqa: BLE001
+            pass
+    return bool(store.db.run('UPDATE meta SET v = ? WHERE k = ? AND (v IS NULL OR v <> ?)',
+                             (str(value), key, str(value))))
+
+
+# ======== carried over from OTP 1.0.187 (lines 20370-20412): the progress of a job ========
+# ---- a job's progress, where both nodes can read it ------------------------------
+def job_publish(job):
+    store = HA_STORE.get('store')
+    if store is None and ENGINE[0] is not None:
+        store = ENGINE[0].store
+    if not store or HA_REBUILDING.is_set():
+        return
+    try:
+        store.set_meta('db_job:' + node_name(), json.dumps(dict(job, node=node_name(),
+                                                                at=time.time()),
+                                                           default=str))
+    except Exception:                                   # noqa: BLE001
+        pass
+
+
+def job_read():
+    """The job as the database has it - this node's, or the other's."""
+    if DB_JOB.get('running') or DB_JOB.get('ended'):
+        here = dict(DB_JOB, node=node_name())
+    else:
+        here = None
+    store = HA_STORE.get('store')
+    there = None
+    if store:
+        try:
+            for r in store.db.rows("SELECT v FROM meta WHERE k LIKE 'db!_job:%' ESCAPE '!'"):
+                one = json.loads(r['v'] or 'null')
+                # Going on, by the word of a node that has not said so for
+                # five minutes - or of this node, which is not running it:
+                # it ended with the process that ran it (1.0.37).
+                if one and one.get('running') and (
+                        time.time() - float(one.get('at') or one.get('began') or 0) > 300 or
+                        (one.get('node') == node_name() and not DB_JOB.get('running'))):
+                    one = dict(one, running=False, ended=float(one.get('at') or 0),
+                               error=one.get('error') or 'it stopped with the service that '
+                               'ran it (restarted, or the database was changed)')
+                if one and (not there or float(one.get('began') or 0) >
+                            float(there.get('began') or 0)):
+                    there = one
+        except Exception:                               # noqa: BLE001
+            there = None
+    if here and (not there or float(here.get('began') or 0) >= float(there.get('began') or 0)):
+        return here
+    return there or dict(DB_JOB)
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 10145-10166): rows of one node ========
+# by both at once (its first INSERT on each node) came over to the other as a
+# second row with the same key, and replication stopped for good.
+NODE_KEY_SEP = '@@'
+
+
+def node_key(prefix, name):
+    return '%s:%s%s%s' % (prefix, norm_name(name), NODE_KEY_SEP, node_name())
+
+
+def node_key_rows(store, prefix, name):
+    """Every node's row for `name` (and one written before 1.0.146)."""
+    n = norm_name(name)
+    return store.db.rows("SELECT k, v FROM meta WHERE k = ? OR k LIKE ? ESCAPE '!'",
+                         ('%s:%s' % (prefix, n),
+                          '%s:%s%s%%' % (prefix, n.replace('!', '!!').replace('%', '!%')
+                                         .replace('_', '!_'), NODE_KEY_SEP)))
+
+
+def node_key_name(prefix, k):
+    """The name a key is counted for, its node taken off."""
+    return str(k)[len(prefix) + 1:].split(NODE_KEY_SEP, 1)[0]
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 20607-20609): shell quoting ========
+def shlex_quote(s):
+    import shlex
+    return shlex.quote(s)
+
+
+# ======== carried over from OTP 1.0.187 (lines 27215-27218): a job of the network ========
+def net_job_active(job):
+    return bool(job) and job.get('state') in ('asked', 'running', 'rebooting') and \
+        time.time() - float(job.get('moved') or job.get('at') or 0) < NET_JOB_LIVE_S
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 27652-27669): a thread of the network ========
+def _net_thread(fn, *args):
+    def go():
+        try:
+            fn(*args)
+        except Exception as e:                          # noqa: BLE001
+            log('network: %s' % e, 'warn')
+        finally:
+            with NET_WORK_LOCK:
+                NET_WORK['busy'] = False
+    with NET_WORK_LOCK:
+        if NET_WORK['busy']:
+            return False
+        NET_WORK['busy'] = True
+    threading.Thread(target=go, name='upsmon-net', daemon=True).start()
+    return True
+
+
+NET_REBOOT_GIVE_UP_S = 3600
+
+
 # ======== carried over from OTP 1.0.187 (lines 32207-32700): the API ========
 # ---------------------------------------------------------------------------
 # The API the web pages ask
@@ -5423,8 +8458,6 @@ def _cols_key(token):
 # alone, and behind a load balancer the next request found it switched off.
 def _session_row(token):
     store = HA_STORE.get('store')
-    if store is None and ENGINE[0] is not None:
-        store = ENGINE[0].store
     if not store or not token:
         return None, None
     row = store.db.row('SELECT id, data FROM sessions WHERE token_hash = ?',
@@ -6141,6 +9174,25 @@ def _web_do(h):
                         'what it has)' % (who, words), 'warn', who=who)
         return {'message': 'upsmon no longer looks after the TLS of %s; nginx keeps the files it '
                            'has' % words}
+    if act == 'tls_export':
+        if not prof.get('cert'):
+            raise ApiError(404, 'no certificate is kept for %s' % words)
+        fmt = str(b.get('format') or 'pem')
+        pw = str(b.get('password') or '')
+        got = cert_export(prof, fmt, pw, bool(b.get('with_chain', True)))
+        if got.get('with_key'):
+            store.add_event('settings', '%s exported the certificate of %s WITH its private key (%s%s)'
+                            % (who, words, got['words'], ', locked' if pw else ', NOT locked'),
+                            'warn', who=who)
+        else:
+            store.add_event('settings', '%s exported the certificate of %s (%s)' % (who, words, got['words']),
+                            who=who)
+        cn = str((prof.get('info') or {}).get('cn') or '')
+        base = cn.replace('*', '_') if re.fullmatch(r'[A-Za-z0-9*.-]{1,100}', cn) else (
+            'web-address' if target == 'vip' else target)
+        return {'name': '%s%s' % (base, got['suffix']),
+                'data': base64.b64encode(got['data']).decode('ascii'), 'mime': got['mime'],
+                'with_key': got.get('with_key', False)}
     if act == 'tls_pem':
         if not prof.get('cert'):
             raise ApiError(404, 'no certificate is kept for %s' % words)
@@ -6179,6 +9231,475 @@ def _console_login_do(h):
 
 
 # ---- root's SSH keys and the updates of the system on the pages (1.0.158) ------------
+
+
+# ======== carried over from OTP 1.0.187 (lines 39008-39059): restart and power off, the time, on the pages ========
+@route('GET', '/api/power')
+def _power(h):
+    h.me('fulladmin')
+    return power_view(h.store)
+
+
+@route('POST', '/api/power')
+def _power_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    if b.get('action') == 'hide':
+        plan = power_plan(h.store)
+        if plan.get('id'):
+            h.store.set_meta('power:seen', str(plan['id']))
+        return power_view(h.store)
+    try:
+        plan = power_ask(h.store, str(b.get('how') or ''), b.get('targets') or [],
+                         str(b.get('order') or ''), s['name'])
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    return {'message': 'asked', 'plan': plan}
+
+
+@route('GET', '/api/ntp')
+def _ntp(h):
+    h.me('fulladmin')
+    return ntp_view(h.store)
+
+
+@route('POST', '/api/ntp')
+def _ntp_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    act = b.get('action')
+    node = str(b.get('node') or node_name())
+    try:
+        if act == 'save':
+            ntp_save(h.store, b.get('conf') or {}, s['name'])
+            return {'message': 'saved; each node sets its time servers within seconds'}
+        if act in ('read', 'sync'):
+            known = [node_name()] + [n['name'] for n in ha_nodes(h.store)]
+            if node not in known:
+                raise ApiError(400, 'there is no node %s' % node)
+            h.store.set_meta('ntp:%s:%s' % (act, node), repr(time.time()))
+            if act == 'sync':
+                h.store.add_event('settings', '%s asked %s to step its clock to the time '
+                                  'servers now' % (s['name'], node), 'warn', who=s['name'])
+            return {'message': 'asked: %s does it within seconds' % node}
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    raise ApiError(400, 'no such thing to do')
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 39142-39184): the updates of the system on the pages ========
+@route('GET', '/api/osup')
+def _osup(h):
+    h.me('fulladmin')
+    return osup_view(h.store)
+
+
+@route('POST', '/api/osup')
+def _osup_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    act = str(b.get('action') or '')
+    try:
+        if act == 'check':
+            nodes = osup_check_ask(h.store, b.get('nodes') or host_nodes(h.store), s['name'])
+            return {'message': 'looking for updates on %s' % ', '.join(nodes)}
+        if act == 'start':
+            plan = osup_start(h.store, b.get('nodes') or None, str(b.get('reboot') or 'ask'),
+                              s['name'], security=bool(b.get('security')))
+            return {'message': 'the update starts: %s, one at a time' % ', '.join(plan['order']),
+                    'plan': plan}
+        if act == 'cancel':
+            osup_cancel(h.store, s['name'])
+            return {'message': 'stopped - a node being updated finishes'}
+        if act == 'clear':
+            osup_clear(h.store, s['name'])
+            return osup_view(h.store)
+        if act == 'hide':
+            plan = osup_plan(h.store)
+            if plan.get('state') == 'running':
+                raise ValueError('it is still going on')
+            if plan.get('id'):
+                h.store.set_meta('host:osup:seen', str(plan['id']))
+            return osup_view(h.store)
+        if act == 'reboot':
+            nodes = [n for n in host_nodes(h.store) if n in (b.get('nodes') or [])]
+            plan = power_ask(h.store, 'reboot', nodes, 'rolling' if len(nodes) > 1 else 'one',
+                             s['name'])
+            return {'message': 'restarting %s, one at a time' % ', '.join(nodes), 'plan': plan}
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    raise ApiError(400, 'no such thing to do')
+
+
+
+
+# ======== carried over from OTP 1.0.187 (lines 38599-38963): backups on the pages ========
+RB_UPLOADS = STATE_DIR / 'rbackup-uploads'
+
+
+def rb_tools():
+    return {k: bool(shutil.which(k)) for k in ('ssh', 'sftp', 'scp', 'ssh-keygen', 'ssh-keyscan',
+                                                'smbclient', 'openssl')}
+
+
+def rb_page(store):
+    nodes = {}
+    for r in rb_history(store):
+        nodes.setdefault(r.get('node') or '?', r)
+    return {'targets': [rb_view(t) for t in rb_targets(store)], 'runs': rb_history(store)[:40],
+            'verified': rb_verified(store)[:20],
+            'last_by_node': nodes, 'job': {k: v for k, v in RB_JOB.items()},
+            'kinds': [{'kind': k, 'words': RB_KIND_WORDS[k], 'port': RB_PORTS.get(k)}
+                      for k in RB_KINDS],
+            'tools': rb_tools(), 'node': node_name(), 'locked': bool(rb_password()),
+            'iter': RB_ITER, 'site': CONFIG.get('site_name') or 'upsmon',
+            'next': rb_next_words()}
+
+
+def rb_next_words():
+    if not CONFIG.get('rbackup'):
+        return ''
+    try:
+        hh, mm = (int(x) for x in str(CONFIG.get('rbackup_at') or '04:15').split(':', 1))
+    except ValueError:
+        hh, mm = 4, 15
+    now = datetime.now()
+    nxt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if nxt <= now:
+        nxt += timedelta(days=1)
+    if str(CONFIG.get('rbackup_every')) == 'weekly':
+        want = int(CONFIG.get('rbackup_day') or 7)
+        while nxt.isoweekday() != want:
+            nxt += timedelta(days=1)
+    return nxt.isoformat(timespec='minutes')
+
+
+@route('GET', '/api/rbackup')
+def _rbackup(h):
+    h.me('fulladmin')
+    return rb_page(h.store)
+
+
+def _rb_target_for(h, b):
+    """The destination asked about: the one saved, with what is typed over
+    it (Try it before Save)."""
+    tid = str(b.get('id') or '')
+    old = rb_target(h.store, tid) if tid else None
+    if tid and not old:
+        raise ApiError(404, 'no such destination')
+    if isinstance(b.get('target'), dict):
+        try:
+            t = rb_checked(dict(b['target'], id=tid or None), old)
+        except ValueError as e:
+            raise ApiError(400, str(e))
+        if old:
+            for k in ('key', 'pub', 'hostkey', 'client_cert', 'client_key', 'key_pass', 'ca',
+                      'pin', 'ssh_cert'):
+                if k in old and k not in t:
+                    t[k] = old[k]
+        return t
+    if not old:
+        raise ApiError(400, 'which destination?')
+    return old
+
+
+@route('POST', '/api/rbackup')
+def _rbackup_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    act = str(b.get('action') or '')
+    by = s['name']
+    try:
+        if act == 'save':
+            t = rb_save(h.store, dict(b.get('target') or {}, id=b.get('id') or
+                                      (b.get('target') or {}).get('id')), by)
+            return {'message': 'saved', 'target': rb_view(t)}
+        if act == 'delete':
+            rb_delete(h.store, b.get('id'), by)
+            return {'message': 'taken away'}
+        if act == 'try':
+            t = _rb_target_for(h, b)
+            out = {}
+            if t['kind'] in ('sftp', 'scp') and not t.get('hostkey'):
+                lines, fps = ssh_keyscan(t['host'], t['port'])
+                return {'hostkey_needed': True, 'hostkey': lines, 'fingerprints': fps,
+                        'message': 'the server\'s host key is not trusted yet'}
+            out = rb_try(t)
+            h.store.add_event('settings', '%s tried the backup destination %s: %s' % (
+                by, t['name'], 'it works' if out['ok'] else out.get('error')), who=by)
+            if t.get('id') and rb_target(h.store, t['id']):
+                rb_set_fields(h.store, t['id'], '', '', tried={'at': time.time(), 'ok': out['ok'],
+                                                               'error': out.get('error') or ''})
+            return out
+        if act == 'hostkey_scan':
+            t = _rb_target_for(h, b)
+            lines, fps = ssh_keyscan(t['host'], t['port'])
+            return {'hostkey': lines, 'fingerprints': fps}
+        if act == 'hostkey_trust':
+            t = _rb_target_for(h, b)
+            lines = str(b.get('hostkey') or '')
+            fresh, fps = ssh_keyscan(t['host'], t['port'])
+            # Only what the server shows now, as the page showed it: nothing
+            # typed in its place.
+            if sorted(x.strip() for x in lines.splitlines() if x.strip()) != \
+                    sorted(x.strip() for x in fresh.splitlines() if x.strip()):
+                raise ValueError('the server shows other host keys now than the ones shown: '
+                                 'Try it again')
+            rb_set_fields(h.store, t['id'], by, 'its host key trusted (%s)' % '; '.join(fps),
+                          hostkey=fresh)
+            return {'message': 'trusted', 'fingerprints': fps}
+        if act == 'hostkey_forget':
+            t = _rb_target_for(h, b)
+            rb_set_fields(h.store, t['id'], by, 'its host key forgotten', hostkey=None)
+            return {'message': 'forgotten'}
+        if act == 'keygen':
+            t = _rb_target_for(h, b)
+            private, public = ssh_keygen('upsmon-backup@%s' % node_name())
+            rb_set_fields(h.store, t['id'], by, 'a new ssh key made here',
+                          key=seal_secret(private, bind=RB_BIND), pub=public, key_pass=None)
+            return {'message': 'made', 'pub': public}
+        if act == 'key_paste':
+            t = _rb_target_for(h, b)
+            pp = str(b.get('passphrase') or '')
+            private, public = ssh_public_of(b.get('key'), pp)
+            rb_set_fields(h.store, t['id'], by, 'an ssh key of their own given',
+                          key=seal_secret(private, bind=RB_BIND), pub=public,
+                          key_pass=seal_secret(pp, bind=RB_BIND) if pp else None)
+            return {'message': 'taken', 'pub': public}
+        if act == 'key_download':
+            t = _rb_target_for(h, b)
+            private = rb_secret(t, 'key')
+            if not private:
+                raise ApiError(404, 'there is no key')
+            h.store.add_event('settings', '%s downloaded the private ssh key of the backup '
+                              'destination %s' % (by, t['name']), 'warn', who=by)
+            return {'pem': private if private.endswith('\n') else private + '\n',
+                    'file': 'upsmon-backup-%s-key' % rb_slug(t['name'])}
+        if act == 'key_forget':
+            t = _rb_target_for(h, b)
+            rb_set_fields(h.store, t['id'], by, 'its ssh key forgotten', key=None, pub=None,
+                          key_pass=None, ssh_cert=None)
+            return {'message': 'forgotten'}
+        if act == 'cert_make':
+            t = _rb_target_for(h, b)
+            key, crt = rb_client_cert_make(b.get('cn') or 'upsmon-backup-%s' % rb_slug(node_name()))
+            rb_set_fields(h.store, t['id'], by, 'a client certificate made here',
+                          client_cert=crt, client_key=seal_secret(key, bind=RB_BIND))
+            return {'message': 'made', 'cert': crt, 'info': cert_info(crt)}
+        if act == 'cert_given':
+            t = _rb_target_for(h, b)
+            key, crt = rb_client_cert_given(b.get('text'), str(b.get('password') or ''))
+            rb_set_fields(h.store, t['id'], by, 'a client certificate of their own given',
+                          client_cert=crt, client_key=seal_secret(key, bind=RB_BIND))
+            return {'message': 'taken', 'cert': crt, 'info': cert_info(crt)}
+        if act == 'cert_forget':
+            t = _rb_target_for(h, b)
+            rb_set_fields(h.store, t['id'], by, 'its client certificate forgotten',
+                          client_cert=None, client_key=None)
+            return {'message': 'forgotten'}
+        if act == 'pin':
+            t = _rb_target_for(h, b)
+            pin = re.sub(r'[^0-9a-f]', '', str(b.get('pin') or '').lower())
+            if len(pin) != 64:
+                raise ValueError('the fingerprint is SHA-256: 64 hex digits')
+            rb_set_fields(h.store, t['id'], by, 'the server\'s certificate pinned (%s)' % pin,
+                          pin=pin, tls_check='pin')
+            return {'message': 'pinned'}
+        if act == 'run':
+            only = [str(x) for x in (b.get('ids') or [])] or None
+            job = rb_job_start(h.store, by, only)
+            # Every node's, as the schedule makes them (1.0.149): in a cluster
+            # Back up now made only the backup of the node the page was on.
+            others = rb_now_ask_others(h.store, by) if not only else []
+            return {'message': 'the backup is being made' + (
+                ' here; %s make%s theirs within a minute' % (
+                    ', '.join(others), 's' if len(others) == 1 else '') if others else ''),
+                'job': job, 'others': others}
+        if act == 'job':
+            return {'job': dict(RB_JOB)}
+        if act == 'verify':
+            # Tried without being put back (1.0.169), followed as a backup is.
+            job = rb_verify_start(h.store, by, str(b.get('id') or '') or None,
+                                  str(b.get('name') or '') or None)
+            return {'message': 'the backup is being tried', 'job': job}
+        if act == 'verified':
+            return {'verified': rb_verified(h.store)[:40]}
+        if act == 'verified_forget':
+            at = None
+            if not b.get('all'):
+                try:
+                    at = float(b.get('at'))
+                except (TypeError, ValueError):
+                    raise ValueError('which try?')
+            n = rb_verified_forget(h.store, at)
+            if not n:
+                raise ValueError('that try is not on the list any more')
+            h.store.add_event('backups', '%s took %d tr%s of backups off the list; the backups '
+                              'stay where they are' % (by, n, 'y' if n == 1 else 'ies'), who=by)
+            return {'message': 'taken off the list', 'verified': rb_verified(h.store)[:20]}
+        if act == 'list':
+            return {'files': rb_remote_list(h.store, b.get('id'))}
+        if act == 'delete_file':
+            t = rb_target(h.store, b.get('id'))
+            name = str(b.get('name') or '')
+            if not t or not RB_NAME_RE.match(name):
+                raise ValueError('which backup?')
+            tr = rb_transport(t)
+            try:
+                tr.open()
+                names = set(x['name'] for x in tr.list())
+                for n in [name] + [c for c in rb_companions(name) if c in names]:
+                    tr.delete(n)
+            finally:
+                tr.close()
+            h.store.add_event('backups', '%s deleted the backup %s at %s' % (by, name, t['name']),
+                              'warn', who=by)
+            return {'message': 'deleted'}
+        if act == 'restore_md':
+            return rb_restore_guide(h.store)
+        if act == 'runs_forget':
+            if b.get('all'):
+                n = rb_history_forget(h.store)
+                h.store.add_event('backups', '%s cleared the list of backups sent (%d line(s)); '
+                                  'the backups stay where they went' % (by, n), who=by)
+                return {'message': 'the list is empty; the backups stay where they went',
+                        'runs': rb_history(h.store)[:40]}
+            try:
+                at = float(b.get('at'))
+            except (TypeError, ValueError):
+                raise ValueError('which line?')
+            n = rb_history_forget(h.store, at, b.get('file'))
+            if not n:
+                raise ValueError('that line is not on the list any more')
+            h.store.add_event('backups', '%s took %s off the list of backups sent; the backup '
+                              'stays where it went' % (by, b.get('file') or 'a failed backup'),
+                              who=by)
+            return {'message': 'taken off the list', 'runs': rb_history(h.store)[:40]}
+        if act == 'restore':
+            return _rb_restore_job(h, b, by)
+    except (RbError, ValueError) as e:
+        raise ApiError(400, str(e))
+    except subprocess.SubprocessError as e:
+        raise ApiError(504, 'it took too long: %s' % str(e)[:200])
+    raise ApiError(400, 'no such thing to do')
+
+
+def _rb_restore_job(h, b, by):
+    """A backup put back - one at a destination, or one sent from the page -
+    as a job the page follows (Settings → The database shows it too)."""
+    password = str(b.get('password') or '') or rb_password()
+    src = None
+    if b.get('upload'):
+        up = str(b.get('upload'))
+        if not re.match(r'^[0-9a-f]{16}\Z', up):
+            raise ValueError('which file?')
+        src = RB_UPLOADS / up
+        if not src.is_file():
+            raise ValueError('the file sent is not here any more: send it again')
+    else:
+        t = rb_target(h.store, b.get('id'))
+        name = str(b.get('name') or '')
+        if not t or not RB_NAME_RE.match(name):
+            raise ValueError('which backup?')
+    store, daemon = h.store, h.d
+
+    def work(progress):
+        tmp = None
+        try:
+            path = src
+            if path is None:
+                progress(1, 4, 'fetched from %s' % t['name'])
+                tmp = Path(tempfile.mkdtemp(prefix='upsmon-fetch-', dir=str(STATE_DIR)))
+                os.chmod(str(tmp), 0o700)
+                path = tmp / name
+                rb_fetch(store, t['id'], name, str(path))
+            progress(2, 4, 'opened and checked')
+            got = rb_restore(store, str(path), password, by)
+            progress(4, 4, 'put back')
+            try:
+                daemon.reload_all('a backup was put back')
+            except Exception:                           # noqa: BLE001
+                pass
+            return got
+        finally:
+            if tmp:
+                shutil.rmtree(str(tmp), ignore_errors=True)
+            if src is not None:
+                try:
+                    src.unlink()
+                except OSError:
+                    pass
+    db_job('putting a backup back', work)
+    return {'message': 'the backup is being put back', 'job': job_read()}
+
+
+@route('POST', '/api/rbackup/upload')
+def _rbackup_upload(h):
+    """A backup file sent from the page, kept for an hour to be put back."""
+    h.me('fulladmin')
+    RB_UPLOADS.mkdir(mode=0o700, exist_ok=True)
+    now = time.time()
+    for p in RB_UPLOADS.iterdir():
+        try:
+            if now - p.stat().st_mtime > 3600:
+                p.unlink()
+        except OSError:
+            pass
+    up = secrets.token_hex(8)
+    dst = RB_UPLOADS / up
+    h.body_to_file(dst, 4 * 1024 ** 3)            # as nginx takes (1.0.139)
+    try:
+        with open(str(dst), 'rb') as f:
+            head = f.read(8)
+        if not (head.startswith(b'Salted__') or head.startswith(b'\x1f\x8b')):
+            raise ApiError(400, 'that is not a backup of upsmon')
+        work = tempfile.mkdtemp(prefix='upsmon-peek-', dir=str(STATE_DIR))
+        try:
+            if head.startswith(b'Salted__') and not rb_password():
+                return {'upload': up, 'locked': True}
+            try:
+                _top, m = rb_open(str(dst), rb_password(), work)
+            except RbError as e:
+                return {'upload': up, 'locked': head.startswith(b'Salted__'), 'said': str(e)}
+            return {'upload': up, 'locked': head.startswith(b'Salted__'), 'manifest': m}
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+    except ApiError:
+        dst.unlink()
+        raise
+
+
+@route('GET', '/api/rbackup/download')
+def _rbackup_download(h):
+    """A backup made now for the machine somebody is sitting at - or one
+    fetched from a destination."""
+    s = h.me('fulladmin')
+    tid, name = h.arg('id'), h.arg('name')
+    work = Path(tempfile.mkdtemp(prefix='upsmon-dl-', dir=str(STATE_DIR)))
+    os.chmod(str(work), 0o700)
+    try:
+        if tid and name:
+            rb_fetch(h.store, tid, name, str(work / name))
+            h.store.add_event('backups', '%s downloaded the backup %s' % (s['name'], name),
+                              'warn', who=s['name'])
+            h.send_file(work / name, name)
+            return None
+        if not rb_password():
+            # Locked always (1.0.136): unlocked it holds every token's key.
+            raise ApiError(403, 'without a password of the backups the file would hold every '
+                                'token\'s key unlocked: set the password first')
+        path, m, _md = rb_build(h.store, str(work))
+        h.store.add_event('backups', '%s downloaded a backup made for it (%s, %s)' % (
+            s['name'], m['file'], 'locked' if m['encrypted'] else 'NOT locked'),
+            'info' if m['encrypted'] else 'warn', who=s['name'])
+        h.send_file(Path(path), m['file'])
+        return None
+    except (RbError, ValueError) as e:
+        raise ApiError(400, str(e))
+    finally:
+        shutil.rmtree(str(work), ignore_errors=True)
+# ---- Settings → Network, Settings → Restart and power off (1.0.119) -------------------
 
 
 # ======== carried over from OTP 1.0.187 (lines 39373-39472): ACME on the pages ========
@@ -6637,6 +10158,109 @@ def ask_secret_value(key):
         return ask_password(key, twice=True, env=None)
     return sys.stdin.readline().rstrip('\r\n')
 
+
+
+# ======== carried over from OTP 1.0.187 (lines 44049-44148): the help, in two columns and in colour ========
+class HelpfulParser(argparse.ArgumentParser):
+    """An ArgumentParser whose help is isemon's: two columns, in colour.
+    Anything going wrong in the drawing falls back to argparse's own."""
+    palette = None
+
+    def format_help(self):
+        try:
+            return help_text(self, self.palette or Palette(False))
+        except Exception:
+            return super(HelpfulParser, self).format_help()
+
+    def error(self, message):
+        pal = self.palette or Palette(False)
+        sys.stderr.write('%s\n' % pal.bad_line(message))
+        sys.stderr.write(pal.dim('try:  upsmon --help') + '\n')
+        raise SystemExit(2)
+
+
+def help_option_words(action):
+    names = ', '.join(action.option_strings)
+    if action.nargs == 0:
+        return names, ''
+    if action.metavar:
+        meta = ' '.join(action.metavar) if isinstance(action.metavar, tuple) else action.metavar
+    elif action.choices:
+        meta = '{%s}' % ','.join(str(c) for c in action.choices)
+    else:
+        meta = action.dest.upper()
+    if action.nargs in ('+', '*'):
+        meta += ' ...'
+    return names, meta
+
+
+def help_text(parser, pal):
+    """The whole of --help, in the width of this terminal."""
+    import textwrap
+    width = pal.width
+    out = ['%s %s' % (pal.head('upsmon'), pal.bold(__version__)),
+           pal.dim('monitoring, history and control of a UPS over NUT, a Shelly plug and sensors - '
+                   'and Settings on the engine of OTP'),
+           '',
+           '%s upsmon %s' % (pal.paint('usage:', pal.c_key), pal.dim('[--json] [--no-color] '
+                                                                     '[what to do]')),
+           pal.dim('       upsmon shelly ... is the Shelly toolkit (upsmon shelly --help); '
+                   'with nothing at all it runs the daemon')]
+    every = [a for g in parser._action_groups for a in g._group_actions]
+    left = min(34, max([len(' '.join(x for x in help_option_words(a) if x))
+                        for a in every] or [20]) + 2)
+    for group in parser._action_groups:
+        actions = [a for a in group._group_actions if a.help != argparse.SUPPRESS]
+        if not actions:
+            continue
+        out.append('')
+        out.append(pal.head((group.title or '').upper()))
+        if group.description:
+            for line in textwrap.wrap(group.description, width - 2):
+                out.append('  ' + pal.dim(line))
+        for action in actions:
+            names, meta = help_option_words(action)
+            painted = pal.good(names) + (' ' + pal.warn(meta) if meta else '')
+            says = action.help or ''
+            if (action.default not in (None, False, '', argparse.SUPPRESS)
+                    and action.nargs != 0 and action.default != []
+                    and '[%s]' % action.default not in says):
+                says += ' [%s]' % action.default
+            lines = textwrap.wrap(says, max(24, width - left - 4)) or ['']
+            if plain_len(painted) > left:
+                out.append('  ' + painted)
+                lines_at = 0
+            else:
+                out.append('  %s  %s' % (plain_pad(painted, left), lines[0]))
+                lines_at = 1
+            for more in lines[lines_at:]:
+                out.append('  %s  %s' % (' ' * left, more))
+    out.append('')
+    out.append(pal.head('THINGS PEOPLE ACTUALLY TYPE'))
+    wide = min(36, max(len(c.split('\n')[0]) for c, _ in HELP_EXAMPLES) + 2)
+    for command, says in HELP_EXAMPLES:
+        first, *rest = command.split('\n')
+        if len(first) + 2 > wide:
+            out.append('  ' + pal.info(first) + ('' if rest or not says else ''))
+            for r in rest:
+                out.append('  ' + pal.info(r))
+            if says:
+                out.append('  %s  %s' % (' ' * wide, pal.dim(says)))
+        else:
+            out.append('  %s%s' % (plain_pad(pal.info(first), wide), pal.dim(says)))
+            for r in rest:
+                out.append('  ' + pal.info(r))
+    out.append('')
+    for note in ('the pages are at https://<this machine>/ (the dashboard) and /settings/ · '
+                 'the configuration is %s' % CONFIG_FILE,
+                 'with nothing at all it is the daemon, as systemd runs it; only one runs at a time',
+                 'colour is off when this is piped, and with --no-color or NO_COLOR=1'
+                 + ('' if HAVE_COLORAMA else ' (colorama is not installed; colour is '
+                                             'written by hand)')):
+        for line in textwrap.wrap(note, width - 4):
+            out.append('  ' + pal.dim(line))
+    out.append('')
+    return '\n'.join(out)
 
 
 # ======== carried over from OTP 1.0.187 (lines 40666-43641): the console ========
@@ -7142,9 +10766,10 @@ class Console(object):
             ('3', 'Live log', self.m_live_log),
             ('4', 'Accounts of the settings pages', self.m_accounts),
             ('5', 'Settings', self.m_settings),
-            ('6', 'Certificates and TLS', self.m_ops),
+            ('6', 'The database and backups', self.m_backups),
             ('7', 'Upgrades', self.m_upgrades),
             ('8', 'The service', self.m_service),
+            ('9', 'Certificates, updates, restarts, the time', self.m_ops),
         ]
         os.environ.setdefault('ESCDELAY', '25')     # Esc at once, not after a second
         # Lines and blocks drawn as UTF-8 characters, as PuTTY in UTF-8 shows
@@ -8844,13 +12469,114 @@ class Console(object):
                                     'for %s; browsers warn about it until one from a CA is put '
                                     'in.' % got['cn'], 'Make it'):
                 self.act('--cert-selfsigned', got['cn'], '--days', got['days'])
-        return self.sub('Certificates and TLS', [
+        def updates_start():
+            how = self.choose('When the update needs a restart', [
+                ('ask', 'ask on the pages first'), ('auto', 'restarted by itself'),
+                ('never', 'not restarted')])
+            if how is None:
+                return
+            if self.confirm('Update now', 'The updates of the system are put in on this server '
+                            '(PHP among them).', 'Update', danger=True):
+                self.act('--updates', 'start', '--reboot', how, '--yes')
+
+        def power(how):
+            def go():
+                if self.confirm('Restart' if how == 'reboot' else 'Switch off',
+                                'This machine restarts now; the dashboard is away for a minute or two.'
+                                if how == 'reboot' else 'This machine is switched off now; it comes '
+                                'back only by its button.', 'Restart' if how == 'reboot' else 'Switch off',
+                                danger=True):
+                    self.act('--restart-server' if how == 'reboot' else '--poweroff-server', '--yes')
+            return go
+
+        def lockout_clear():
+            rows = [r for r in ((self.out('--lockouts') or {}).get('rows') or []) if isinstance(r, dict)]
+            if not rows:
+                self.note('Lockouts', 'Nobody and nothing is counted now.')
+                return
+            opts = [('all', 'every one')] + [('%s:%s' % (r['kind'], r['who']), '%s:%s' % (
+                r['kind'], r['who'])) for r in rows]
+            which = self.choose('Forget a lockout', opts)
+            if which is not None:
+                self.act('--lockouts-clear', which)
+
+        return self.sub('Certificates, updates, restarts, the time', [
             ('1', 'The certificate nginx has now', lambda: self.act('--cert')),
             ('2', 'Automatic certificates (ACME): how they stand', lambda: self.act('--acme')),
             ('3', 'Order a certificate by ACME now', acme_order),
             ('4', 'A self-signed certificate, made here', selfsigned),
             ('5', 'The certificate as PEM', lambda: self.act('--cert', '--pem')),
+            ('6', 'Updates of the system: how they stand', lambda: self.act('--updates', 'status')),
+            ('7', 'Look for updates now', lambda: self.act('--updates', 'check')),
+            ('8', 'Put the updates in', updates_start),
+            ('9', 'Stop the updates going on', lambda: self.act('--updates', 'cancel')),
+            ('10', 'Restarts: how they went', lambda: self.act('--restarts')),
+            ('11', 'Restart this machine', power('reboot')),
+            ('12', 'Switch this machine off', power('poweroff')),
+            ('13', 'The time: how the clock stands', lambda: self.act('--time')),
+            ('14', 'The time: step the clock now', lambda: self.act('--time', 'sync')),
+            ('15', 'Lockouts: who is locked out now', lambda: self.act('--lockouts')),
+            ('16', 'Forget a lockout', lockout_clear),
         ])
+
+    def m_backups(self):
+        def kept():
+            return self.pick('Copies kept here', lambda: kept_copies(), [
+                ('made', lambda f: self._when(f['at']), 16, None),
+                ('size', lambda f: human_bytes(f['bytes']), 10, None),
+                ('key', lambda f: 'yes' if f['key'] else 'no', 5, None),
+                ('file', lambda f: f['name'], 60, None)], self.backup_do,
+                'no copy is kept here yet')
+
+        def by_path(restore):
+            def go():
+                path = self.ask_one('Put a copy back' if restore else 'What is in a file',
+                                    'the file', str(BACKUP_DIR) + '/', help_=(
+                                        'A copy made here or brought from elsewhere '
+                                        '(upsmon-copy-….tar.gz, its .key beside it).'),
+                                    check=lambda v, _: None if os.path.isfile(v)
+                                    else 'there is no such file')
+                if path:
+                    self.backup_do({'path': path, 'name': os.path.basename(path)},
+                                   'restore' if restore else 'info')
+            return go
+
+        def bundle():
+            path = self.ask_one('Put a backup back', 'the file', '/root/', help_=(
+                'upsmon-backup-….tar.gz.enc, from a destination; the password of the backups '
+                'is asked (or the one set here is used).'),
+                check=lambda v, _: None if os.path.isfile(v) else 'there is no such file')
+            if path and self.confirm('Put a backup back', 'Both databases here are replaced by '
+                                     'what is in %s, and the service restarts on it.'
+                                     % os.path.basename(path), 'Put it back', danger=True):
+                self.act('--restore-bundle', path, '--yes')
+                self.act_argv(['systemctl', 'restart', 'upsmon'], '$ systemctl restart upsmon',
+                              quiet_ok='restarted')
+        return self.sub('The database and backups', [
+            ('1', 'A copy of both databases now', lambda: self.act('--backup')),
+            ('2', 'The copies kept here (Enter: look in one, put it back)', kept),
+            ('3', 'What is in a file', by_path(False)),
+            ('4', 'Put a copy back from a file', by_path(True)),
+            ('5', 'Both databases read through', lambda: self.act('--db-check')),
+            ('6', 'Backups to other machines: how they went', lambda: self.act('--rbackup-status')),
+            ('7', 'Backups to other machines: one now', lambda: self.act('--rbackup-now')),
+            ('8', 'Put a backup from another machine back', bundle),
+        ])
+
+    def backup_do(self, f, what=None):
+        path = f.get('path') or str(BACKUP_DIR / f['name'])
+        if what is None:
+            what = self.choose(f['name'], [('info', 'What is in it'),
+                                            ('restore', 'Put it back (replaces everything)')])
+        if what == 'info':
+            self.act('--restore', path)
+        elif what == 'restore':
+            if self.confirm('Put a copy back', 'Both databases are replaced by %s; the history, the '
+                            'accounts and the settings since are lost (a copy of them is made first).'
+                            % f['name'], 'Put it back', danger=True):
+                self.act('--restore', path, '--yes')
+                self.act_argv(['systemctl', 'restart', 'upsmon'], '$ systemctl restart upsmon',
+                              quiet_ok='restarted')
 
     def m_upgrades(self):
         def online():
@@ -9677,6 +13403,684 @@ class Storage(object):
 
 
 # ---------------------------------------------------------------------------
+# The databases of upsmon, as Settings → The database and Backups see them
+# ---------------------------------------------------------------------------
+# Two SQLite files: upsmon.db (accounts, settings of the pages, events,
+# certificates - this module's) and history.db (the UPS, the plug, the
+# sensors - upsmon.py's). A copy is both of them, taken with SQLite's own
+# backup (consistent while the daemon writes), with config.json to read and
+# a head saying what it is: one .tar.gz, the key that opens the sealed
+# secrets beside it as NAME.key. Putting one back is laid down in
+# /var/lib/upsmon/restore/ and done by the daemon when it starts again -
+# never under a database that is open.
+BACKUP_DIR = STATE_DIR / 'backups'
+HISTORY_FILE = STATE_DIR / 'history.db'
+RESTORE_DIR = STATE_DIR / 'restore'
+DB_UPLOADS = STATE_DIR / 'db-uploads'
+DAEMON_DB = [None]
+COPY_RE = re.compile(r'^upsmon-copy-(\d{8}-\d{6})(-[a-z0-9-]+)?\.tar\.gz\Z')
+COPY_FILES = ('upsmon.db', 'history.db', 'config.json', 'head.json')
+COPY_KEY_RE = re.compile(r'^upsmon-copy-.*-with-key\.tar\.gz\.enc\Z')
+TABLE_WORDS = {'samples': 'samples of the UPS (full)', 'samples_hourly': 'samples of the UPS (hourly)',
+               'snapshots': 'every variable, when it changed', 'outages': 'power failures',
+               'tests': 'self tests', 'plug_samples': 'samples of the plug (full)',
+               'plug_hourly': 'samples of the plug (hourly)', 'sensor_samples': 'readings of the sensors'}
+
+
+def history_path():
+    ups = ENGINE[0].ups if ENGINE[0] is not None else None
+    p = getattr(getattr(ups, 'store', None), 'path', None)
+    return Path(p) if p else HISTORY_FILE
+
+
+def _sqlite_copy(src, dst):
+    """A consistent copy of a live SQLite file, by its own backup."""
+    a = sqlite3.connect('file:%s?mode=ro' % src, uri=True, timeout=60)
+    try:
+        b = sqlite3.connect(str(dst))
+        try:
+            a.backup(b)
+        finally:
+            b.close()
+    finally:
+        a.close()
+
+
+def _stamp():
+    return datetime.now().strftime('%Y%m%d-%H%M%S')
+
+
+def make_copy(store, label='', folder=None, progress=None):
+    """A copy of both databases now: its path. The key beside it."""
+    folder = Path(folder or BACKUP_DIR)
+    folder.mkdir(mode=0o750, parents=True, exist_ok=True)
+    name = 'upsmon-copy-%s%s.tar.gz' % (_stamp(), ('-' + re.sub(r'[^a-z0-9-]', '', label)) if label else '')
+    work = Path(tempfile.mkdtemp(prefix='upsmon-copy-', dir=str(STATE_DIR)))
+    try:
+        if progress:
+            progress(1, 4, 'upsmon.db')
+        _sqlite_copy(store.db.path, work / 'upsmon.db')
+        hp = history_path()
+        if hp.exists():
+            if progress:
+                progress(2, 4, 'history.db')
+            _sqlite_copy(hp, work / 'history.db')
+        try:
+            shutil.copyfile(str(CONFIG_FILE), str(work / 'config.json'))
+        except OSError:
+            pass
+        head = {'upsmon': __version__, 'made': time.time(), 'node': node_name(),
+                'host': socket.getfqdn(), 'site': CONFIG.get('site_name') or '',
+                'files': sorted(p.name for p in work.iterdir())}
+        (work / 'head.json').write_text(json.dumps(head, indent=1))
+        if progress:
+            progress(3, 4, 'packed')
+        tmp = folder / ('.' + name + '.part')
+        with tarfile.open(str(tmp), 'w:gz', compresslevel=6) as tf:
+            for p in sorted(work.iterdir()):
+                tf.add(str(p), arcname=p.name)
+        os.chmod(str(tmp), 0o640)
+        os.replace(str(tmp), str(folder / name))
+        key = sealing_key(make=True)
+        if key:
+            kp = folder / (name + '.key')
+            fd = os.open(str(kp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                f.write(key.hex() + '\n')
+        if progress:
+            progress(4, 4, 'done')
+        return folder / name
+    finally:
+        shutil.rmtree(str(work), ignore_errors=True)
+
+
+def kept_copies():
+    out = []
+    try:
+        names = os.listdir(str(BACKUP_DIR))
+    except OSError:
+        return out
+    for n in names:
+        if not COPY_RE.match(n):
+            continue
+        p = BACKUP_DIR / n
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        out.append({'name': n, 'bytes': st.st_size, 'at': st.st_mtime,
+                    'key': (BACKUP_DIR / (n + '.key')).exists(), 'from': 'sqlite', 'kind': 'copy'})
+    return sorted(out, key=lambda x: x['at'], reverse=True)
+
+
+def copies_prune(keep=None):
+    keep = int(keep or CONFIG.get('backup_keep') or 14)
+    for c in kept_copies()[keep:]:
+        for p in (BACKUP_DIR / c['name'], BACKUP_DIR / (c['name'] + '.key')):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+
+def copy_unpack(path, work):
+    """A copy's files into `work`, nothing but the ones a copy has."""
+    work = Path(work)
+    try:
+        tf = tarfile.open(str(path), 'r:gz')
+    except (tarfile.TarError, OSError) as e:
+        raise ValueError('that is not a copy of upsmon (%s)' % e)
+    with tf:
+        seen = []
+        for m in tf.getmembers():
+            if not m.isfile() or m.name not in COPY_FILES:
+                raise ValueError('that is not a copy of upsmon: it has %r' % m.name[:80])
+            if m.size > 8 * 1024 ** 3:
+                raise ValueError('%s is far too big' % m.name)
+            with tf.extractfile(m) as s, open(str(work / m.name), 'wb') as d:
+                shutil.copyfileobj(s, d)
+            seen.append(m.name)
+    if 'upsmon.db' not in seen and 'history.db' not in seen:
+        raise ValueError('that is not a copy of upsmon: neither database is in it')
+    return seen
+
+
+def _sqlite_counts(p):
+    out = {}
+    c = sqlite3.connect('file:%s?mode=ro' % p, uri=True)
+    try:
+        for (t,) in c.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"):
+            out[t] = c.execute('SELECT COUNT(*) FROM "%s"' % t).fetchone()[0]
+        ok = c.execute('PRAGMA quick_check').fetchone()[0]
+    finally:
+        c.close()
+    return out, ok
+
+
+def copy_peek(path, key_file=None):
+    """What a copy holds, read without putting any of it back."""
+    work = Path(tempfile.mkdtemp(prefix='upsmon-peek-', dir=str(STATE_DIR)))
+    try:
+        seen = copy_unpack(path, work)
+        counts, tables, admins = {}, 0, 0
+        for f in ('upsmon.db', 'history.db'):
+            if f in seen:
+                got, ok = _sqlite_counts(work / f)
+                if ok != 'ok':
+                    raise ValueError('%s in it is damaged: %s' % (f, ok))
+                tables += len(got)
+                for k, v in got.items():
+                    counts[k if f == 'upsmon.db' or k not in counts else 'history.' + k] = v
+        if 'upsmon.db' in seen:
+            c = sqlite3.connect('file:%s?mode=ro' % (work / 'upsmon.db'), uri=True)
+            try:
+                admins = c.execute("SELECT COUNT(*) FROM accounts WHERE role = 'fulladmin' AND "
+                                   "COALESCE(disabled, 0) = 0").fetchone()[0]
+            except sqlite3.Error:
+                admins = 0
+            finally:
+                c.close()
+        head, conf = {}, None
+        try:
+            head = json.loads((work / 'head.json').read_text())
+        except (OSError, ValueError):
+            pass
+        try:
+            conf = json.loads((work / 'config.json').read_text())
+            for k in list(conf):
+                if 'password' in k or k in ('pin',):
+                    conf[k] = '•••' if conf[k] else ''
+        except (OSError, ValueError):
+            conf = None
+        return {'kind': 'copy', 'bytes': os.path.getsize(str(path)), 'tables': tables,
+                'counts': counts, 'admins': admins, 'version': head.get('upsmon') or '',
+                'files': seen, 'key_beside': bool(key_file and os.path.exists(str(key_file))),
+                'machine': {'node': head.get('node'), 'host': head.get('host'),
+                            'in_use': {'db_engine': 'sqlite'}, 'config': conf,
+                            'config_file': str(CONFIG_FILE)}}
+    finally:
+        shutil.rmtree(str(work), ignore_errors=True)
+
+
+RESTART_AFTER = {'at': 0.0}
+
+
+def restart_soon(why, secs=2.0):
+    """The daemon ends a moment after the answer has gone; systemd starts it
+    again (Restart=on-failure), and it opens the databases put back."""
+    RESTART_AFTER['at'] = time.time() + secs
+    if ENGINE[0] is None:
+        return                          # the command line: systemctl restart upsmon does it
+
+    def go():
+        time.sleep(secs)
+        log('restarting: %s' % why, 'warn')
+        os._exit(75)
+    threading.Thread(target=go, name='restart', daemon=True).start()
+
+
+def copy_restore(store, path, by, key_file=None, from_name='', key_hex=None):
+    """A copy put back: laid down for the start, a copy of what it replaces
+    made first, the daemon restarted."""
+    says = copy_peek(path, key_file)
+    if 'upsmon.db' in says['files'] and not says['admins']:
+        raise ValueError('there is no full administrator in it who could sign in afterwards - '
+                         'not put back')
+    safety = make_copy(store, 'before-restore')
+    shutil.rmtree(str(RESTORE_DIR), ignore_errors=True)
+    RESTORE_DIR.mkdir(mode=0o700)
+    seen = copy_unpack(path, RESTORE_DIR)
+    key_words = 'the key in use stays'
+    k = key_hex
+    if not k and key_file and os.path.exists(str(key_file)):
+        k = open(str(key_file)).read().strip()
+    if k:
+        try:
+            if len(bytes.fromhex(k)) == 32:
+                (RESTORE_DIR / 'secrets.key').write_text(k + '\n')
+                key_words = 'the key that came with it is in use'
+        except ValueError:
+            pass
+    (RESTORE_DIR / 'ready').write_text(json.dumps({'by': by, 'from': from_name or str(path),
+                                                    'files': seen, 'at': time.time()}))
+    store.add_event('settings', '%s put the copy %s back (both databases); what it replaced is '
+                    'in %s - the service restarts' % (by, from_name or os.path.basename(str(path)),
+                                                      safety.name), 'warn', who=by)
+    restart_soon('a copy of the databases is being put back')
+    return {'safety': safety.name, 'key': key_words, 'says': says}
+
+
+def apply_pending_restore(log_fn=None):
+    """At the start of the daemon, before a database is opened: a copy laid
+    down to be put back goes into place."""
+    say = log_fn or (lambda w, level='info': log(w, level))
+    ready = RESTORE_DIR / 'ready'
+    if not ready.exists():
+        return False
+    try:
+        info = json.loads(ready.read_text())
+    except (OSError, ValueError):
+        info = {}
+    for f, dst in (('upsmon.db', DB_FILE), ('history.db', HISTORY_FILE)):
+        src = RESTORE_DIR / f
+        if not src.exists():
+            continue
+        for suffix in ('-wal', '-shm'):
+            try:
+                os.unlink(str(dst) + suffix)
+            except OSError:
+                pass
+        os.replace(str(src), str(dst))
+    k = RESTORE_DIR / 'secrets.key'
+    if k.exists():
+        os.replace(str(k), str(STATE_DIR / 'secrets.key'))
+        os.chmod(str(STATE_DIR / 'secrets.key'), 0o600)
+    shutil.rmtree(str(RESTORE_DIR), ignore_errors=True)
+    say('the copy %s is put back (by %s)' % (info.get('from') or '?', info.get('by') or '?'), 'warning')
+    return True
+
+
+def keyed_bundle(copy_path, passphrase, out):
+    """A copy and the key that opens its secrets in one file, locked with a
+    passphrase (openssl enc, AES-256-CBC, PBKDF2)."""
+    work = Path(tempfile.mkdtemp(prefix='upsmon-keyed-', dir=str(STATE_DIR)))
+    try:
+        inner = work / 'b.tar'
+        with tarfile.open(str(inner), 'w') as tf:
+            tf.add(str(copy_path), arcname='copy.tar.gz')
+            kp = work / 'secrets.key'
+            kp.write_text((sealing_key(make=True) or b'').hex() + '\n')
+            tf.add(str(kp), arcname='secrets.key')
+        _openssl(['enc', '-aes-256-cbc', '-pbkdf2', '-iter', str(RB_ITER), '-md', 'sha256', '-salt',
+                  '-in', str(inner), '-out', str(out), '-pass', 'env:UPSMON_DBK'],
+                 env={'UPSMON_DBK': passphrase}, what='locking it')
+    finally:
+        shutil.rmtree(str(work), ignore_errors=True)
+
+
+def keyed_open(path, passphrase, work):
+    """(the copy in it, the key's hex) - or ValueError."""
+    work = Path(work)
+    inner = work / 'b.tar'
+    try:
+        _openssl(['enc', '-d', '-aes-256-cbc', '-pbkdf2', '-iter', str(RB_ITER), '-md', 'sha256',
+                  '-in', str(path), '-out', str(inner), '-pass', 'env:UPSMON_DBK'],
+                 env={'UPSMON_DBK': passphrase}, what='opening it')
+    except ValueError:
+        raise ValueError('the passphrase does not open it (or the file is damaged)')
+    with tarfile.open(str(inner), 'r') as tf:
+        for m in tf.getmembers():
+            if not m.isfile() or m.name not in ('copy.tar.gz', 'secrets.key'):
+                raise ValueError('that is not a copy of upsmon with its key')
+            with tf.extractfile(m) as s, open(str(work / m.name), 'wb') as d:
+                shutil.copyfileobj(s, d)
+    k = (work / 'secrets.key').read_text().strip() if (work / 'secrets.key').exists() else ''
+    return work / 'copy.tar.gz', k
+
+
+DB_TICKETS = {}
+
+
+def db_view(store):
+    files = [(store.db.path, 'upsmon.db', 'accounts, settings of the pages, events, certificates'),
+             (str(history_path()), 'history.db', 'the UPS, the plug and the sensors: samples, events, tests')]
+    tables, size, parts, free = [], 0, [], 0
+    for path, nick, what in files:
+        try:
+            got, _ = _sqlite_counts(path)
+        except (sqlite3.Error, OSError):
+            got = {}
+        for t, n in got.items():
+            tables.append({'table': ('history.' + t) if nick == 'history.db' and t in ('events', 'meta') else t,
+                           'rows': n, 'bytes': None})
+        for suffix in ('', '-wal', '-shm'):
+            try:
+                b = os.path.getsize(path + suffix)
+            except OSError:
+                continue
+            size += b
+            parts.append({'name': os.path.basename(path + suffix), 'what': what if not suffix else
+                          'its write-ahead log' if suffix == '-wal' else 'its shared memory', 'bytes': b})
+        try:
+            c = sqlite3.connect('file:%s?mode=ro' % path, uri=True)
+            try:
+                free += c.execute('PRAGMA freelist_count').fetchone()[0] * c.execute('PRAGMA page_size').fetchone()[0]
+            finally:
+                c.close()
+        except sqlite3.Error:
+            pass
+    copies = kept_copies()
+    cb = sum(c['bytes'] for c in copies)
+    if copies:
+        parts.append({'name': 'backups/', 'what': '%d copy(copies) kept' % len(copies), 'bytes': cb})
+    try:
+        du = shutil.disk_usage(str(STATE_DIR))
+        disk = {'total': du.total, 'free': du.free, 'share': round(100.0 * (du.total - du.free) / du.total),
+                'where': str(STATE_DIR), 'holds': 'both databases and the copies kept beside them'}
+    except OSError:
+        disk = {}
+    grew = db_growth(store, size)
+    if disk and grew.get('a_day'):
+        disk['days_left'] = int(disk['free'] / grew['a_day'])
+    counts = {t['table']: t['rows'] for t in tables}
+    return {'engine': 'sqlite', 'where': store.db.path, 'version': 'SQLite ' + sqlite3.sqlite_version,
+            'size': size, 'config_file': str(CONFIG_FILE), 'tables': tables, 'counts': counts,
+            'key': str(sealing_key_path()), 'key_there': bool(sealing_key()), 'free': free,
+            'copies': copies, 'dumps': [], 'keep': int(CONFIG.get('backup_keep') or 14),
+            'backup_dir': str(BACKUP_DIR), 'dump_dir': str(BACKUP_DIR),
+            'dump': {'ready': True, 'words': 'a copy of both files', 'suffix': '.tar.gz'},
+            'disk': disk, 'growth': grew, 'parts': parts, 'cache': None, 'drivers': {},
+            'erasable': db_erasable(store), 'tune': None, 'job': job_read()}
+
+
+def db_growth(store, size):
+    """How fast the files grow: the size noted once a day, the slope of a fortnight."""
+    try:
+        seen = json.loads(store.get_meta('db:sizes') or '[]')
+    except ValueError:
+        seen = []
+    day = datetime.now().strftime('%Y-%m-%d')
+    if not seen or seen[-1][0] != day:
+        seen.append([day, size, time.time()])
+        seen = seen[-15:]
+        store.set_meta('db:sizes', json.dumps(seen))
+    if len(seen) < 2:
+        return {}
+    a, b = seen[0], seen[-1]
+    days = max(1.0, (b[2] - a[2]) / 86400)
+    per = (b[1] - a[1]) / days
+    return {'a_day': int(per) if per > 0 else 0, 'over_days': int(round(days))}
+
+
+ERASE_GROUPS = (
+    ('history', 'The history of the UPS', 'Every sample the charts are drawn from, full and hourly, and every '
+     'variable as it changed. The charts start again from now.'),
+    ('events', 'The events of the UPS', 'Power failures as events, status changes, commands run.'),
+    ('outages', 'The power failures', 'How long each lasted and how far the battery fell.'),
+    ('tests', 'The self tests', 'Every test followed, with the voltage of the battery.'),
+    ('plug', 'The history of the plug', 'Power, energy, voltage and the rest, full and hourly.'),
+    ('sensor', 'The readings of the sensors', 'Temperature, humidity, battery and signal.'),
+    ('audit', 'The events of these pages', 'Every sign-in, every change of an account, a setting or a '
+     'certificate, every upgrade.'),
+)
+
+
+def db_erasable(store):
+    ups = ENGINE[0].ups if ENGINE[0] is not None else None
+    groups, total = [], 0
+    for key, name, says in ERASE_GROUPS:
+        rows = 0
+        try:
+            if key == 'audit':
+                rows = int(store.db.value('SELECT COUNT(*) FROM events', (), 0) or 0)
+            elif ups is not None:
+                rows = sum(ups.store.counts(ups.store.RESET_SCOPES[key]).values())
+        except Exception:                               # noqa: BLE001
+            rows = 0
+        groups.append({'key': key, 'name': name, 'says': says, 'rows': rows})
+    try:
+        total = sum(os.path.getsize(p) for p in (store.db.path, str(history_path())) if os.path.exists(p))
+    except OSError:
+        total = 0
+    return {'groups': groups, 'bytes': total}
+
+
+def db_check(store):
+    said, ok = [], True
+    for path in (store.db.path, str(history_path())):
+        try:
+            c = sqlite3.connect('file:%s?mode=ro' % path, uri=True)
+            try:
+                got = [r[0] for r in c.execute('PRAGMA integrity_check')]
+            finally:
+                c.close()
+        except sqlite3.Error as e:
+            got = [str(e)]
+        good = got == ['ok']
+        ok = ok and good
+        said.append('%s: %s' % (os.path.basename(path), 'ok' if good else '; '.join(got[:20])))
+    return {'ok': ok, 'said': said}
+
+
+def db_give_back(store, progress):
+    before = sum(os.path.getsize(p) for p in (store.db.path, str(history_path())) if os.path.exists(p))
+    progress(1, 2, 'upsmon.db')
+    with store.db.lock:
+        store.db.conn.execute('VACUUM')
+    progress(2, 2, 'history.db')
+    ups = ENGINE[0].ups if ENGINE[0] is not None else None
+    if ups is not None:
+        with ups.store.lock:
+            ups.store.connection().execute('VACUUM')
+    after = sum(os.path.getsize(p) for p in (store.db.path, str(history_path())) if os.path.exists(p))
+    return {'before': before, 'after': after}
+
+
+def db_erase(store, groups, tidy, by, progress):
+    copy = make_copy(store, 'before-erase')
+    ups = ENGINE[0].ups if ENGINE[0] is not None else None
+    n = 0
+    for g in groups:
+        n += 1
+        progress(n, len(groups) + (1 if tidy else 0), g)
+        if g == 'audit':
+            store.db.run('DELETE FROM events')
+        elif ups is not None and g in ups.store.RESET_SCOPES:
+            ups.reset_data(g)
+    if tidy:
+        progress(n + 1, n + 1, 'the disk given back')
+        with store.db.lock:
+            store.db.conn.execute('VACUUM')
+    store.add_event('settings', '%s erased %s; a copy was made first: %s'
+                    % (by, ', '.join(groups), copy.name), 'warn', who=by)
+    return {'erased': groups, 'copy': copy.name}
+
+
+def db_prune(store, days, everything, by):
+    """UPS samples, plug samples, sensor readings and events older than `days`."""
+    ups = ENGINE[0].ups if ENGINE[0] is not None else None
+    cutoff = 0 if everything else int(time.time() - days * 86400)
+    n = 0
+    if ups is not None:
+        with ups.store.lock:
+            conn = ups.store.connection()
+            for t in ('samples', 'samples_hourly', 'snapshots', 'events', 'plug_samples', 'plug_hourly',
+                      'sensor_samples'):
+                try:
+                    n += conn.execute('DELETE FROM %s WHERE ts < ?' % t if cutoff else 'DELETE FROM %s' % t,
+                                      (cutoff,) if cutoff else ()).rowcount
+                except sqlite3.Error:
+                    pass
+            conn.commit()
+    n += store.db.run('DELETE FROM events WHERE ts < ?', (cutoff,)) if cutoff else \
+        store.db.run('DELETE FROM events')
+    store.add_event('settings', '%s forgot %d record(s) %s' % (
+        by, n, 'of every age' if everything else 'older than %d day(s)' % days), 'warn', who=by)
+    return n
+
+
+def copy_read_through(path, key=None, sample=50, child=False):
+    """A copy read through (Backups → Try it): what Backups' checks want to know."""
+    says = copy_peek(path)
+    return {'head': {'upsmon': says.get('version')}, 'counts': says['counts'],
+            'admins': says['admins'], 'tried': 0, 'opened': 0}
+
+
+def dump_tables(db, f):
+    raise ValueError('not used in upsmon')
+
+
+def db_file_restore(store, path, by, key_file=None, from_name='', need_admin=True):
+    return copy_restore(store, path, by, key_file=key_file, from_name=from_name)
+
+
+def daily_copy_tick(store):
+    """backup_daily: a copy of both databases a day, at backup_at, backup_keep kept."""
+    if not CONFIG.get('backup_daily'):
+        return
+    due, day = _due('daily', '', CONFIG.get('backup_at') or '03:30')
+    if not due or store.get_meta('db:copy:day') == day:
+        return
+    store.set_meta('db:copy:day', day)
+    try:
+        p = make_copy(store, 'daily')
+        copies_prune()
+        log('the daily copy of the databases: %s' % p.name)
+    except Exception as e:                              # noqa: BLE001
+        store.add_event('settings', 'the daily copy of the databases was not made: %s' % e, 'bad')
+
+
+@route('GET', '/api/db')
+def _db(h):
+    h.me()
+    return db_view(h.store)
+
+
+@route('POST', '/api/db')
+def _db_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    act = str(b.get('action') or '')
+    who = s['name']
+    store = h.store
+    try:
+        if act == 'job':
+            return {'job': job_read()}
+        if act == 'backup':
+            p = make_copy(store, 'by-hand')
+            copies_prune()
+            store.add_event('settings', '%s made a copy of the databases: %s' % (who, p.name), who=who)
+            return {'message': 'a copy was made: %s (%s)' % (p.name, human_bytes(p.stat().st_size))}
+        if act == 'check':
+            return db_check(store)
+        if act == 'tidy':
+            ups = ENGINE[0].ups if ENGINE[0] is not None else None
+            rolled = ups.store.aggregate() if ups is not None else 0
+            gone = store.db.run('DELETE FROM events WHERE ts < ?', (time.time() - 730 * 86400,))
+            return {'message': 'done: %d hour(s) of samples rolled up, %d old event(s) forgotten' % (rolled, gone)}
+        if act == 'prune':
+            n = db_prune(store, max(1, int(b.get('days') or 90)), bool(b.get('everything')), who)
+            return {'message': '%d record(s) forgotten' % n}
+        if act == 'give_back':
+            return {'job': db_job('giving the disk back', lambda p: db_give_back(store, p))}
+        if act == 'erase':
+            groups = [g for g in (b.get('groups') or []) if g in dict((x[0], 1) for x in ERASE_GROUPS)]
+            if not groups:
+                raise ValueError('nothing ticked')
+            return {'job': db_job('erasing', lambda p: db_erase(store, groups, bool(b.get('tidy')), who, p))}
+        if act == 'delete':
+            name = str(b.get('name') or '')
+            if not COPY_RE.match(name):
+                raise ValueError('no such copy')
+            for p in (BACKUP_DIR / name, BACKUP_DIR / (name + '.key')):
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+            store.add_event('settings', '%s deleted the copy %s' % (who, name), 'warn', who=who)
+            return {'message': '%s is deleted' % name}
+        if act == 'restore_kept':
+            name = str(b.get('name') or '')
+            if not COPY_RE.match(name) or not (BACKUP_DIR / name).exists():
+                raise ValueError('no such copy')
+            if b.get('check'):
+                return {'says': copy_peek(BACKUP_DIR / name, BACKUP_DIR / (name + '.key'))}
+            return copy_restore(store, BACKUP_DIR / name, who, key_file=BACKUP_DIR / (name + '.key'),
+                                from_name=name)
+        if act == 'download_ticket':
+            pp = str(b.get('passphrase') or '')
+            if len(pp) < 10:
+                raise ValueError('a passphrase of 10 characters at least')
+            name = str(b.get('name') or '')
+            if name:
+                if not COPY_RE.match(name) or not (BACKUP_DIR / name).exists():
+                    raise ValueError('no such copy')
+                src = BACKUP_DIR / name
+            else:
+                src = make_copy(store, 'download')
+                copies_prune()
+            DB_UPLOADS.mkdir(mode=0o700, exist_ok=True)
+            out_name = src.name[:-len('.tar.gz')] + '-with-key.tar.gz.enc'
+            ticket = secrets.token_hex(16)
+            out = DB_UPLOADS / ('dl-' + ticket)
+            keyed_bundle(src, pp, out)
+            DB_TICKETS[ticket] = {'path': str(out), 'name': out_name, 'who': who, 'at': time.time()}
+            store.add_event('settings', '%s downloaded %s with its key, locked' % (who, out_name), 'warn', who=who)
+            return {'ticket': ticket, 'name': out_name}
+        if act == 'upload_restore':
+            up = re.sub(r'[^a-f0-9]', '', str(b.get('upload') or ''))[:32]
+            p = DB_UPLOADS / ('up-' + up)
+            if not up or not p.exists():
+                raise ValueError('that upload is not here any more - send the file again')
+            work = Path(tempfile.mkdtemp(prefix='upsmon-up-', dir=str(STATE_DIR)))
+            try:
+                copy, k = keyed_open(p, str(b.get('passphrase') or ''), work)
+                if b.get('check'):
+                    return {'says': copy_peek(copy)}
+                got = copy_restore(store, copy, who, key_hex=k, from_name='an uploaded copy with its key')
+                p.unlink()
+                return got
+            finally:
+                shutil.rmtree(str(work), ignore_errors=True)
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    raise ApiError(400, 'that is not something done here on upsmon (one SQLite server)')
+
+
+@route('GET', '/api/db/download')
+def _db_download(h):
+    s = h.me('fulladmin')
+    t = re.sub(r'[^a-f0-9]', '', h.arg('ticket'))
+    if t:
+        got = DB_TICKETS.pop(t, None)
+        if not got or got['who'] != s['name'] or time.time() - got['at'] > 600:
+            raise ApiError(404, 'that download is not here any more')
+        try:
+            h.send_file(got['path'], got['name'])
+        finally:
+            try:
+                os.unlink(got['path'])
+            except OSError:
+                pass
+        return None
+    name = h.arg('name')
+    if name:
+        if not COPY_RE.match(name) or not (BACKUP_DIR / name).exists():
+            raise ApiError(404, 'there is no such copy')
+        h.send_file(BACKUP_DIR / name, name)
+        return None
+    p = make_copy(h.store, 'download')
+    copies_prune()
+    h.send_file(p, p.name)
+    return None
+
+
+@route('POST', '/api/db/restore')
+def _db_restore(h):
+    s = h.me('fulladmin')
+    DB_UPLOADS.mkdir(mode=0o700, exist_ok=True)
+    up = secrets.token_hex(16)
+    p = DB_UPLOADS / ('up-' + up)
+    h.body_to_file(p, 8 * 1024 ** 3)
+    with open(str(p), 'rb') as f:
+        head = f.read(8)
+    if head.startswith(b'Salted__'):
+        return {'upload': up}
+    try:
+        if h.arg('check'):
+            got = {'says': copy_peek(p)}
+            return got
+        return copy_restore(h.store, p, s['name'], from_name='an uploaded copy')
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    finally:
+        if not h.arg('check') or not head.startswith(b'Salted__'):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+
+# ---------------------------------------------------------------------------
 # The settings in effect: the defaults, then /etc/upsmon/config.json (only the
 # keys of these pages - the UPS's own keys are upsmon.py's), then what was
 # saved on the pages.
@@ -9726,6 +14130,7 @@ class Engine(object):
         self.ups = ups                          # upsmon.py's daemon, for About
         ENGINE[0] = self
         self.store = Storage()
+        HA_STORE['store'] = self.store
         self.started = time.time()
         self.login_fails = collections.defaultdict(list)
         self.login_info = {}
@@ -9859,7 +14264,10 @@ class Engine(object):
         for name, fn in (('web', lambda: web_tick(self.store)), ('acme', lambda: acme_tick(self)),
                          ('online', lambda: online_tick(self)), ('upgrade', lambda: upgrade_tick(self)),
                          ('console', lambda: console_login_tick(self)),
-                         ('lockouts', lambda: lockouts_publish(self))):
+                         ('lockouts', lambda: lockouts_publish(self)),
+                         ('time', lambda: ntp_tick(self)), ('power', lambda: power_tick(self)),
+                         ('updates', lambda: osup_tick(self)), ('schedule', lambda: osup_sched_tick(self)),
+                         ('backups', lambda: rb_tick(self)), ('copies', lambda: daily_copy_tick(self.store))):
             try:
                 fn()
             except Exception as e:                      # noqa: BLE001
@@ -9928,8 +14336,8 @@ def cli_store():
 
 
 def add_cli_arguments(parser):
-    """The flags of the settings, added to upsmon.py's parser."""
-    g = parser.add_argument_group('the settings pages (accounts, certificates, upgrades)')
+    """The flags of Settings, added to upsmon.py's parser - in OTP's groups."""
+    g = parser.add_argument_group('THE ACCOUNTS OF SETTINGS')
     a = g.add_argument
     a('--users', action='store_true', help='the accounts of the settings pages')
     a('--add-user', metavar='NAME', help='make an account (the password is asked, or UPSMON_PASSWORD)')
@@ -9940,17 +14348,52 @@ def add_cli_arguments(parser):
     a('--del-user', metavar='NAME', help='delete an account')
     a('--disable-user', metavar='NAME', help='switch an account off')
     a('--enable-user', metavar='NAME', help='switch an account on again')
+    a('--lockouts', action='store_true', help='who is locked out of the pages now')
+    a('--lockouts-clear', metavar='all|KIND:WHO', help='forget a lockout (as --lockouts shows it), or every one')
+    g = parser.add_argument_group('THE SETTINGS')
+    a = g.add_argument
     a('--settings', action='store_true', help='every setting of the pages, and where it comes from')
     a('--setting', action='append', default=[], metavar='KEY=VALUE',
       help='change a setting of the pages (KEY=- asks for a secret)')
     a('--search', default='', help='with --settings / --audit: only those with these words')
     a('--audit', action='store_true', help='the events of the settings pages: sign-ins, accounts, certificates')
+    g = parser.add_argument_group('CERTIFICATES AND TLS')
+    a = g.add_argument
     a('--cert', action='store_true', help='the certificate nginx has, and what upsmon keeps')
     a('--pem', action='store_true', help='with --cert: the certificate and its chain as PEM')
     a('--cert-selfsigned', metavar='NAME', help='a self-signed certificate for NAME, put in nginx')
     a('--days', type=int, default=825, help='with --cert-selfsigned: how long it lasts')
+    a('--cert-export', choices=('pem', 'crt', 'der', 'pfx', 'pfx_legacy', 'pem_key', 'key'),
+      help='the certificate into a file: pem, crt, der, pfx, pfx_legacy (3DES), pem_key or key - '
+      'the ones with the key ask for a password (or UPSMON_PASSWORD)')
+    a('--out', metavar='FILE', help='with --cert-export: the file written')
     a('--acme', action='store_true', help='the automatic certificates (ACME) and how they stand')
     a('--acme-order', nargs='?', const='all', metavar='WHICH', help='order a certificate by ACME now')
+    g = parser.add_argument_group('THE DATABASE AND BACKUPS')
+    a = g.add_argument
+    a('--backup', action='store_true', help='a copy of both databases (history.db and upsmon.db), now')
+    a('--copies', action='store_true', help='the copies kept in /var/lib/upsmon/backups')
+    a('--restore', metavar='FILE', help='put a copy back (--yes); without --yes, what is in it')
+    a('--restore-bundle', metavar='FILE', help='put back a backup sent to a destination '
+      '(upsmon-backup-....tar.gz.enc); without --yes, what is in it')
+    a('--passphrase-file', metavar='FILE', help='with --restore-bundle: the password of the backups, '
+      'one line (else UPSMON_BACKUP_PASSWORD, else asked)')
+    a('--rbackup-now', action='store_true', help='a backup to every destination switched on, now')
+    a('--rbackup-status', action='store_true', help='the backup destinations and the last backups sent')
+    a('--db-check', action='store_true', help='both databases read through (integrity check)')
+    g = parser.add_argument_group('WHAT THE PAGES DO, HERE TOO')
+    a = g.add_argument
+    a('--time', nargs='?', const='status', choices=('status', 'sync'),
+      help='the clock: how it stands (chrony), or stepped to the time servers now')
+    a('--updates', choices=('status', 'check', 'start', 'cancel'), help='the updates of the operating '
+      'system: how they stand, look for them now, put them in, or stop them')
+    a('--reboot', choices=('ask', 'auto', 'never'), default='ask', help='with --updates start: '
+      'restart when an update needs it - ask on the pages, by itself, or never')
+    a('--restart-server', action='store_true', help='restart this machine now (--yes)')
+    a('--poweroff-server', action='store_true', help='switch this machine off now (--yes)')
+    a('--restarts', action='store_true', help='the restarts asked for, and how they went')
+    g = parser.add_argument_group('MAINTENANCE AND UPGRADES')
+    a = g.add_argument
     a('--upgrade-check', action='store_true', help='what is at upgrade_url, and whether it is newer')
     a('--upgrade-online', nargs='?', const='newest', metavar='VERSION',
       help='fetch the newest (or VERSION) from upgrade_url, check it and put it in')
@@ -9961,6 +14404,8 @@ def add_cli_arguments(parser):
     a('--downgrade', metavar='VERSION|FILE', help='go back to an older version (only a safe one)')
     a('--maintenance', choices=('on', 'off', 'status'), help='this server in maintenance or not')
     a('--why', default='', help='with --maintenance on: why')
+    g = parser.add_argument_group('THE CONSOLE')
+    a = g.add_argument
     a('--console', action='store_true', help='upsmon run by its menus, on the terminal')
     a('--console-at-login', choices=('on', 'off', 'status'),
       help='the console opens when root signs in (on), or not (off)')
@@ -9972,7 +14417,9 @@ CLI_FLAGS = ('users', 'add_user', 'passwd', 'set_role', 'del_user', 'disable_use
              'settings', 'setting', 'audit', 'cert', 'cert_selfsigned', 'acme', 'acme_order',
              'upgrade_check', 'upgrade_online', 'upgrade_status', 'upgrade_follow',
              'upgrade_cancel', 'downgrade_check', 'downgrade', 'maintenance', 'console',
-             'console_at_login', 'console_status')
+             'console_at_login', 'console_status', 'lockouts', 'lockouts_clear', 'backup',
+             'copies', 'restore', 'restore_bundle', 'rbackup_now', 'rbackup_status', 'db_check',
+             'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export')
 
 
 def cli_wanted(args):
@@ -10133,6 +14580,29 @@ def cli_main(args, ups_status=None):
         print(table([(stamp(r['ts']), r['kind'], r['who'] or '', r['words']) for r in reversed(rows)],
                     ['when', 'kind', 'who', 'what'], [19, 22, 14, 90]))
         return 0
+    if args.cert_export:
+        prof = tls_profile(store, node_name()) or {}
+        if not prof.get('cert'):
+            raise SystemExit('upsmon: no certificate is kept on the pages yet')
+        keyed = CERT_EXPORT[args.cert_export][3]
+        pw = ''
+        if keyed:
+            pw = ask_password('a password for the file%s' % (' (empty: the key in the clear)'
+                                                             if not args.cert_export.startswith('pfx') else ''),
+                              env='UPSMON_PASSWORD')
+        try:
+            got = cert_export(prof, args.cert_export, pw)
+        except ValueError as e:
+            raise SystemExit('upsmon: %s' % e)
+        out_ = args.out or (str((prof.get('info') or {}).get('cn') or node_name()).replace('*', '_') + got['suffix'])
+        fd = os.open(out_, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if keyed else 0o644)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(got['data'])
+        store.add_event('settings', 'the certificate was exported on the command line (%s)%s'
+                        % (got['words'], ' WITH its private key' if keyed else ''),
+                        'warn' if keyed else 'info', who=who)
+        print(pal.ok_line('%s - %s' % (out_, got['words'])))
+        return 0
     if args.cert or args.cert_selfsigned:
         me = node_name()
         if args.cert_selfsigned:
@@ -10233,6 +14703,214 @@ def cli_main(args, ups_status=None):
                 bad += 1
                 print(pal.bad_line(str(e)))
         return 1 if bad else 0
+    if args.lockouts or args.lockouts_clear:
+        rows = []
+        try:
+            got = json.loads(store.get_meta('lockouts:' + node_name()) or '{}')
+            rows = [r for r in got.get('rows') or [] if float(r.get('forgets') or 0) > time.time()]
+        except ValueError:
+            rows = []
+        if args.lockouts_clear:
+            ask = {'all': 1, 'by': who} if args.lockouts_clear == 'all' else \
+                {'key': args.lockouts_clear.split(':', 1), 'by': who}
+            store.set_meta('lockouts:ask:' + node_name(), json.dumps([ask]))
+            print(pal.ok_line('asked: the service forgets it within seconds'))
+            return 0
+        if as_json:
+            out({'rows': rows})
+            return 0
+        print(table([(r['kind'], r['who'], '%d of %d' % (r['fails'], r['limit']),
+                      'LOCKED until %s' % stamp(r['until']) if r.get('locked') else 'counted')
+                     for r in rows], ['kind', 'who', 'wrong', 'state']))
+        return 0
+    if args.backup:
+        p = make_copy(store, 'by-hand')
+        copies_prune()
+        store.add_event('settings', 'a copy of the databases was made on the command line: %s'
+                        % p.name, who=who)
+        print(pal.ok_line('%s (%s), the key beside it' % (p, human_bytes(p.stat().st_size))))
+        return 0
+    if args.copies:
+        rows = kept_copies()
+        if as_json:
+            out(rows)
+            return 0
+        print(table([(c['name'], human_bytes(c['bytes']), stamp(c['at']), 'yes' if c['key'] else 'no')
+                     for c in rows], ['copy', 'size', 'made', 'key beside it']))
+        return 0
+    if args.db_check:
+        got = db_check(store)
+        for line in got['said']:
+            print((pal.ok_line if line.endswith(': ok') else pal.bad_line)(line))
+        return 0 if got['ok'] else 1
+    if args.restore:
+        if not Path(args.restore).is_file():
+            raise SystemExit('upsmon: there is no file %s' % args.restore)
+        key = args.restore + '.key'
+        try:
+            says = copy_peek(args.restore, key)
+        except ValueError as e:
+            raise SystemExit('upsmon: %s' % e)
+        if not args.yes:
+            c = says['counts']
+            print('%s - upsmon %s, made on %s' % (os.path.basename(args.restore), says.get('version') or '?',
+                                                 (says.get('machine') or {}).get('node') or '?'))
+            print('  %-24s %s' % ('samples of the UPS', c.get('samples', 0)))
+            print('  %-24s %s' % ('accounts', c.get('accounts', 0)))
+            print('  %-24s %s' % ('full administrators', says['admins']))
+            print('  %-24s %s' % ('the key beside it', 'yes' if says['key_beside'] else 'no'))
+            print('it would replace both databases here; again with --yes')
+            return 0
+        try:
+            got = copy_restore(store, args.restore, who, key_file=key,
+                               from_name=os.path.basename(args.restore))
+        except ValueError as e:
+            raise SystemExit('upsmon: %s' % e)
+        print(pal.ok_line('laid down to be put back; what it replaces is kept as %s; %s'
+                          % (got['safety'], got['key'])))
+        print('now:  systemctl restart upsmon')
+        return 0
+    if args.rbackup_status:
+        v = rb_page(store)
+        if as_json:
+            out(v)
+            return 0
+        print('backups to the destinations: %s; %s' % (
+            'on a schedule, next %s' % v['next'] if CONFIG.get('rbackup') else 'by hand only',
+            'locked with the password' if v['locked'] else 'NOT LOCKED (no password set)'))
+        for t_ in v['targets']:
+            last = t_.get('last') or {}
+            print('  %-24s %-6s %-3s %s' % (t_['name'][:24], t_['kind'], 'on' if t_.get('enabled')
+                                             else 'off', ('last %s: %s' % (
+                stamp(last['at']), 'sent' if last.get('ok') else last.get('error'))) if last else 'never sent'))
+        for r in v['runs'][:10]:
+            print('  %s  %-9s %s' % (stamp(r['at']), human_bytes(r.get('bytes') or 0),
+                                     '; '.join('%s %s' % (x['name'], 'ok' if x['ok'] else 'FAILED: %s' % x.get('error'))
+                                               for x in r.get('targets') or []) or r.get('error') or ''))
+        return 0
+    if args.rbackup_now:
+        try:
+            run = rb_run(store, who)
+        except (RbError, ValueError) as e:
+            raise SystemExit('upsmon: %s' % e)
+        if run.get('error'):
+            raise SystemExit('upsmon: %s' % run['error'])
+        print(pal.ok_line('%s (%s, %s)' % (run.get('file'), human_bytes(run.get('bytes') or 0),
+                                           'locked' if run.get('encrypted') else 'NOT locked')))
+        for x in run['targets']:
+            print((pal.ok_line if x['ok'] else pal.bad_line)('%s: %s' % (
+                x['name'], 'sent' if x['ok'] else x.get('error'))))
+        return 0 if run['ok'] else 2
+    if args.restore_bundle:
+        path = args.restore_bundle
+        if not Path(path).is_file():
+            raise SystemExit('upsmon: there is no file %s' % path)
+        password = os.environ.get('UPSMON_BACKUP_PASSWORD', '')
+        if args.passphrase_file:
+            password = Path(args.passphrase_file).read_text().split('\n')[0]
+        with open(path, 'rb') as f:
+            locked = f.read(8).startswith(b'Salted__')
+        if locked and not password:
+            password = rb_password() or (getpass.getpass('the password of the backups: ')
+                                         if sys.stdin.isatty() else '')
+        if not args.yes:
+            work = tempfile.mkdtemp(prefix='upsmon-peek-', dir=str(STATE_DIR))
+            try:
+                _top, m = rb_open(path, password, work)
+            except RbError as e:
+                raise SystemExit('upsmon: %s' % e)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+            print('%s - every file checked against its checksum' % os.path.basename(path))
+            for k, words in (('made_words', 'made'), ('site', 'installation'), ('node', 'server'),
+                             ('host', 'machine'), ('upsmon', 'upsmon')):
+                print('  %-13s %s' % (words, m.get(k) if m.get(k) not in (None, '') else '-'))
+            print('it would replace both databases here and put its key in place; again with --yes')
+            return 0
+        try:
+            got = rb_restore(store, path, password, who, need_admin=False)
+        except (RbError, ValueError, OSError) as e:
+            raise SystemExit('upsmon: %s' % e)
+        print(pal.ok_line('laid down to be put back; what this machine had is kept as %s' % got.get('safety')))
+        print('now:  systemctl restart upsmon')
+        return 0
+    if args.time:
+        if args.time == 'sync':
+            store.set_meta('ntp:sync:' + node_name(), repr(time.time()))
+            print(pal.ok_line('asked: the service steps the clock to the time servers within seconds'))
+            return 0
+        v = ntp_view(store)
+        if as_json:
+            out(v)
+            return 0
+        for n in v.get('nodes') or []:
+            st_ = n.get('state') or n
+            print(pal.head('%s' % n.get('name', node_name())))
+            for k in ('offset', 'stratum', 'source', 'leap', 'timezone', 'at'):
+                if st_.get(k) not in (None, ''):
+                    print('  %-10s %s' % (k, stamp(st_[k]) if k == 'at' else st_[k]))
+        conf = v.get('conf') or {}
+        print('  %-10s %s' % ('servers', ', '.join(conf.get('servers') or []) if conf.get('manage')
+                              else 'as /etc/chrony.conf has them'))
+        return 0
+    if args.updates:
+        if args.updates == 'status':
+            v = osup_view(store)
+            if as_json:
+                out(v)
+                return 0
+            plan = v.get('plan') or {}
+            print(pal.head('updates of the operating system: %s' % (
+                '%s, by %s, %s' % (plan.get('state'), plan.get('by') or '-', stamp(plan.get('at')))
+                if plan else 'none going on')))
+            rows = []
+            for n in v['nodes']:
+                chk, row = n.get('check') or {}, n.get('row') or {}
+                rows.append((n['name'], '%s, %s' % (chk.get('state') or '-', ('%s waiting' % chk['count'])
+                                                    if chk.get('count') is not None else '') if chk else 'not looked',
+                             row.get('state') or '-', 'needed' if n.get('reboot') else '-'))
+            print(table(rows, ['server', 'last look', 'this update', 'restart'], [22, 26, 14, 8]))
+            return 0
+        try:
+            if args.updates == 'check':
+                osup_check_ask(store, host_nodes(store), who)
+                print(pal.ok_line('looking for updates - upsmon --updates status in a minute'))
+            elif args.updates == 'start':
+                if not args.yes:
+                    raise SystemExit('the updates of the system are put in now%s; again with --yes' % (
+                        {'auto': ', restarted by itself where an update needs it', 'never': ', never restarted'}
+                        .get(args.reboot, '')))
+                osup_start(store, None, args.reboot, who)
+                print(pal.ok_line('the update starts - upsmon --updates status'))
+            else:
+                osup_cancel(store, who)
+                print(pal.ok_line('stopped - an update going on finishes'))
+        except ValueError as e:
+            raise SystemExit('upsmon: %s' % e)
+        return 0
+    if args.restart_server or args.poweroff_server:
+        how = 'reboot' if args.restart_server else 'poweroff'
+        if not args.yes:
+            raise SystemExit('this machine is %s now; again with --yes' % (
+                'restarted' if how == 'reboot' else 'switched off'))
+        try:
+            plan = power_ask(store, how, [node_name()], 'one', who)
+        except ValueError as e:
+            raise SystemExit('upsmon: %s' % e)
+        print(pal.ok_line('asked (%s): the service does it within seconds' % plan.get('id')))
+        return 0
+    if args.restarts:
+        v = power_view(store)
+        if as_json:
+            out(v)
+            return 0
+        plan = v.get('plan') or {}
+        print(pal.head('restarts: %s' % ('%s, by %s, %s' % (plan.get('how'), plan.get('by') or '-',
+                                                             stamp(plan.get('at'))) if plan else 'none of late')))
+        print(table([(n['name'], stamp(n.get('started')) if n.get('started') else '-',
+                      (n.get('row') or {}).get('state') or '-', (n.get('row') or {}).get('said') or '')
+                     for n in v['nodes']], ['server', 'started', 'restart', 'said'], [22, 20, 12, 60]))
+        return 0
     if args.maintenance:
         if args.maintenance == 'status':
             m = maintenance_row(store)
@@ -10400,3 +15078,111 @@ def cli_main(args, ups_status=None):
                                         st.get('said') or ''))
         return 0
     raise SystemExit('upsmon: nothing to do')
+
+
+HELP_EXAMPLES = [
+    ('upsmon --status', 'the UPS now, every variable'),
+    ('upsmon --check', 'is the whole system healthy'),
+    ('upsmon --console', 'everything by its menus'),
+    ('upsmon --history 7d', 'recorded samples as a table'),
+    ('upsmon --exec test.battery.start.quick', 'a self test'),
+    ('upsmon --plug-off', 'the socket of the plug off'),
+    ('upsmon --users', 'the accounts of Settings'),
+    ('upsmon --add-user novak --role fulladmin', ''),
+    ('upsmon --setting acme=1 --setting acme_email=it@example.cz', ''),
+    ('upsmon --acme-order', 'a certificate from Let\'s Encrypt now'),
+    ('upsmon --upgrade-online', 'the newest version, checked and put in'),
+    ('upsmon shelly plug info', 'the plug, by role'),
+]
+
+
+def colour_cli(argv):
+    """The command line of upsmon in OTP's colours: (palette, parser hook)."""
+    said = list(argv)
+    pal = Palette(colour_wanted(any(x in ('--no-color', '--no-colour') for x in said))
+                  and '--json' not in said)
+    global TABLE_PAL
+    TABLE_PAL = pal
+    if (pal.on or sys.stdout.isatty()) and '--json' not in said and '--console' not in said \
+            and said and not isinstance(sys.stdout, ColourOut):
+        sys.stdout = ColourOut(sys.stdout, pal)
+    return pal
+
+
+# ---- a certificate exported from Certificates and TLS (4.1) ------------------------------
+CERT_EXPORT = {
+    'pem': ('the certificate and its chain, PEM', '.pem', 'application/x-pem-file', False),
+    'crt': ('the certificate alone, PEM', '.crt', 'application/x-x509-ca-cert', False),
+    'der': ('the certificate alone, DER', '.der', 'application/x-x509-ca-cert', False),
+    'pem_key': ('the certificate, its chain and its private key, PEM', '-with-key.pem',
+                'application/x-pem-file', True),
+    'key': ('the private key alone, PEM', '.key', 'application/x-pem-file', True),
+    'pfx': ('PFX / PKCS#12, AES-256', '.pfx', 'application/x-pkcs12', True),
+    'pfx_legacy': ('PFX / PKCS#12, 3DES (older Windows, Java 8)', '.pfx', 'application/x-pkcs12', True),
+}
+
+
+def cert_export(prof, fmt, password, with_chain=True):
+    """One certificate as the format asked for: {'data', 'suffix', 'mime', 'words', 'with_key'}."""
+    if fmt not in CERT_EXPORT:
+        raise ValueError('the format is one of %s' % ', '.join(CERT_EXPORT))
+    words, suffix, mime, keyed = CERT_EXPORT[fmt]
+    cert = prof['cert']
+    chain = prof.get('chain') or '' if with_chain else ''
+    key = ''
+    if keyed:
+        key = unseal_secret(prof.get('key') or '', 'web:tls') or ''
+        if not key:
+            raise ValueError('the private key of this certificate is not kept here - it can only '
+                             'be exported without it')
+    if password and (len(password) < 8 or len(password) > 200):
+        raise ValueError('a password of 8 to 200 characters')
+    if fmt.startswith('pfx') and not password:
+        raise ValueError('a PFX file is locked with a password: give one (8 characters at least)')
+    if fmt == 'pem':
+        data = (cert + chain).encode()
+    elif fmt == 'crt':
+        data = cert.encode()
+    elif fmt == 'der':
+        data = _openssl(['x509', '-outform', 'DER'], cert.encode(), what='the certificate')
+    else:
+        work = tempfile.mkdtemp(prefix='upsmon-export-', dir=str(STATE_DIR))
+        try:
+            os.chmod(work, 0o700)
+            kf = os.path.join(work, 'k.pem')
+            fd = os.open(kf, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, 'w') as f:
+                f.write(key)
+            if fmt.startswith('pfx'):
+                cf = os.path.join(work, 'c.pem')
+                with open(cf, 'w') as f:
+                    f.write(cert)
+                args = ['pkcs12', '-export', '-in', cf, '-inkey', kf, '-passout', 'env:UPSMON_PFX',
+                        '-name', str((prof.get('info') or {}).get('cn') or 'upsmon')]
+                if chain:
+                    chf = os.path.join(work, 'chain.pem')
+                    with open(chf, 'w') as f:
+                        f.write(chain)
+                    args += ['-certfile', chf]
+                if fmt == 'pfx_legacy':
+                    args += ['-keypbe', 'PBE-SHA1-3DES', '-certpbe', 'PBE-SHA1-3DES', '-macalg', 'sha1']
+                else:
+                    args += ['-keypbe', 'AES-256-CBC', '-certpbe', 'AES-256-CBC', '-macalg', 'sha256']
+                try:
+                    data = _openssl(args, env={'UPSMON_PFX': password}, what='the PFX file')
+                except ValueError:
+                    if fmt != 'pfx_legacy':
+                        raise
+                    data = _openssl(args + ['-legacy'], env={'UPSMON_PFX': password}, what='the PFX file')
+            else:
+                if password:
+                    k = _openssl(['pkey', '-in', kf, '-aes256', '-passout', 'env:UPSMON_PFX'],
+                                 env={'UPSMON_PFX': password}, what='the key').decode()
+                else:
+                    k = key if key.endswith('\n') else key + '\n'
+                data = (k if fmt == 'key' else cert + chain + k).encode()
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+    if keyed and password and fmt in ('pem_key', 'key'):
+        words += ', the key locked (AES-256)'
+    return {'data': data, 'suffix': suffix, 'mime': mime, 'words': words, 'with_key': keyed}
