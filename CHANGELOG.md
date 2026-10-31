@@ -4,6 +4,12 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.11 - 2026-10-31
+
+- Automatic certificates → In your DNS: the copy buttons line up one under the
+  other, right after the longest text of their column; the columns stay as
+  wide as what they hold, with room between them.
+
 ## 4.1.10 - 2026-10-31
 
 - Automatic certificates → In your DNS: each copy button right after its text;
