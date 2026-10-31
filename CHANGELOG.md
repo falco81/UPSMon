@@ -4,6 +4,11 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.4 - 2026-10-31
+
+- Settings → System updates: the tag "restart after the update" (or "restart needed") sits on a line of its own under the server's name.
+- Links on the pages (e.g. "back to the dashboard" on the sign-in page) are the application's blue, visited or not - no more hard-to-read purple.
+
 ## 4.1.3 - 2026-10-31
 
 - **The newest Python** (as OTP chooses it): every install and upgrade puts

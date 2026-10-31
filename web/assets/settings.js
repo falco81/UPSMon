@@ -5847,6 +5847,7 @@ function drawOsup(live) {
       var ck = n.check || {};
       if (ck.state === 'running') hd.appendChild(el('span', 'tag info', 'looking…'));
       else if (ck.checked && ck.state === 'done') hd.appendChild(el('span', 'tag ' + (ck.count ? 'warn' : 'good'), ck.count ? num(ck.count) + ' waiting' : 'up to date'));
+      if (n.reboot || (ck.reboot_after && ck.count)) hd.appendChild(el('span', 'pw-break'));
       if (n.reboot) hd.appendChild(el('span', 'tag warn', 'restart needed'));
       else if (ck.reboot_after && ck.count) hd.appendChild(el('span', 'tag info', 'restart after the update'));
       c.appendChild(hd);
