@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.1.1'
+readonly INSTALLER_VERSION='4.1.2'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -91,7 +91,7 @@ REWRITE_NGINX=''
 FIRST_PASSWORD=''
 NEW_VERSION=''
 PHP_UPDATE=yes
-PHP_STREAM=8.2
+PHP_STREAM=8.3
 USE_REMI=''
 PHP_RELOAD=''
 DO_UPGRADE=''
@@ -189,7 +189,7 @@ the dashboard
   --rewrite-nginx       write the nginx file afresh (otherwise one of 4.x is kept)
 
 PHP (php2shell, CVE-2026-109618 / CVE-2026-109619 - fixed 21 October 2026), as OTP:
-  --php-stream X.Y      the AppStream stream PHP is put on, install and upgrade (default 8.2)
+  --php-stream X.Y      the AppStream stream PHP is put on, install and upgrade (default 8.3)
   --remi                PHP 8.4 from Remi's repository instead
   --no-php-update       leave PHP exactly as it is (it is still checked and guarded)
 
@@ -502,6 +502,12 @@ remi_php() {
     run dnf install -y php-fpm php-cli php-common
 }
 
+php_floor() {           # the first build of a stream fixed against php2shell
+    case "$1" in
+        8.2) echo 8.2.35 ;; 8.3) echo 8.3.36 ;; 8.4) echo 8.4.27 ;; 8.5) echo 8.5.12 ;; *) echo "" ;;
+    esac
+}
+
 ensure_php() {
     step "PHP, and php2shell"
     if [[ -z "$PHP_UPDATE" ]]; then
@@ -510,8 +516,8 @@ ensure_php() {
         php_guard
         return 0
     fi
-    # upsmon puts PHP on one stream (4.1.1): php:8.2 on AlmaLinux / RHEL 9 -
-    # fixed against php2shell in 8.2.35 - on a fresh install and on every
+    # upsmon puts PHP on one stream (4.1.2): php:8.3 on AlmaLinux / RHEL 9 -
+    # fixed against php2shell in 8.3.36 - on a fresh install and on every
     # upgrade, whatever stream (or AlmaLinux's own 8.0) was there before.
     # --php-stream X.Y chooses another one; --no-php-update leaves PHP alone.
     local had_php="" cur="" want="$PHP_STREAM"
@@ -536,7 +542,7 @@ ensure_php() {
                 say "PHP is on the stream php:$want: brought up to its newest build"
                 run dnf upgrade -y --refresh 'php*' || true
             else
-                say "PHP ${cur:-(none)} → the stream php:$want (the newest build of it: 8.2.35 or later)"
+                say "PHP ${cur:-(none)} → the stream php:$want (the newest build of it: $(php_floor "$want") or later)"
                 run dnf module reset -y php
                 run dnf module enable -y "php:$want" || fail "the stream php:$want could not be enabled"
                 if [[ -n "$had_php" ]]; then
@@ -572,15 +578,17 @@ ensure_php() {
         fi
     fi
     php_says
-    # On the stream php:8.2 it is 8.2.35 or nothing older (upsmon 4.1.1).
-    local pvs
+    # On the stream chosen it is the fixed build or nothing older (upsmon 4.1.2):
+    # php:8.3 - 8.3.36.
+    local pvs floor
     pvs="$(php_fpm_version)"
-    if [[ "$PKG" == "dnf" && -z "$USE_REMI" && "$PHP_STREAM" == "8.2" && -n "$pvs" ]]; then
-        if ver_ge "$pvs" 8.2.35 && [[ "$(cut -d. -f1,2 <<< "$pvs")" == "8.2" ]]; then
-            good "PHP $pvs from the stream php:8.2 (8.2.35 or later)"
+    floor="$(php_floor "$PHP_STREAM")"
+    if [[ "$PKG" == "dnf" && -z "$USE_REMI" && -n "$floor" && -n "$pvs" ]]; then
+        if ver_ge "$pvs" "$floor" && [[ "$(cut -d. -f1,2 <<< "$pvs")" == "$PHP_STREAM" ]]; then
+            good "PHP $pvs from the stream php:$PHP_STREAM ($floor or later)"
         else
-            warn "PHP here is $pvs, not 8.2.35 or later from the stream php:8.2:"
-            warn "  dnf clean all && dnf module reset -y php && dnf module enable -y php:8.2 && dnf distro-sync -y 'php*'"
+            warn "PHP here is $pvs, not $floor or later from the stream php:$PHP_STREAM:"
+            warn "  dnf clean all && dnf module reset -y php && dnf module enable -y php:$PHP_STREAM && dnf distro-sync -y 'php*'"
         fi
     fi
     # PHP 8 at least (1.0.94): the pages' relay is written for it, and on a

@@ -3,7 +3,7 @@
 The short way, on AlmaLinux 9:
 
 ```bash
-tar xzf upsmon-4.1.1.tar.gz && cd upsmon-4.1.1
+tar xzf upsmon-4.1.2.tar.gz && cd upsmon-4.1.2
 sudo ./install.sh --nut-host 192.168.40.253 --server-name ups.example.cz
 ```
 
@@ -16,7 +16,7 @@ the end (and kept in `/var/lib/upsmon/first-login.txt` until it is changed).
 **Upgrading the standalone 3.x** (3.6.7 or any other) - the same package:
 
 ```bash
-tar xzf upsmon-4.1.1.tar.gz && cd upsmon-4.1.1
+tar xzf upsmon-4.1.2.tar.gz && cd upsmon-4.1.2
 sudo ./install.sh --upgrade
 ```
 
@@ -48,13 +48,13 @@ by the release key in `/usr/local/lib/upsmon/release-keys/`.
 New options of `install.sh`: `--allow CIDR[,CIDR]` (who may reach the pages),
 `--admin-user`, `--admin-password`, `--rewrite-nginx`; and for PHP and
 php2shell (CVE-2026-109618 / CVE-2026-109619): `--php-stream X.Y` (the
-AppStream stream PHP is put on, 8.2), `--remi` (PHP 8.4 from Remi's
+AppStream stream PHP is put on, 8.3), `--remi` (PHP 8.4 from Remi's
 repository), `--no-php-update` (PHP left as it is, still checked and guarded).
 
 PHP: every install and every upgrade puts PHP on the AppStream stream
-`php:8.2` - 8.2.35 or later - whatever was there before (AlmaLinux 9's own 8.0
-or another stream): the stream reset and enabled, every PHP package moved to
-it with `dnf distro-sync 'php*'`, php-fpm restarted. On php:8.2 already, it is
+`php:8.3` - 8.3.36 or later - whatever was there before (AlmaLinux 9's own 8.0,
+8.2 or another stream): the stream reset and enabled, every PHP package moved to
+it with `dnf distro-sync 'php*'`, php-fpm restarted. On php:8.3 already, it is
 brought up to the newest build. Fixed is told by the version (8.2.35,
 8.3.36, 8.4.27, 8.5.12 or newer) and, for a backport that keeps the old number,
 by the CVE in the changelog of php-fpm. Whatever happens the guard goes on:

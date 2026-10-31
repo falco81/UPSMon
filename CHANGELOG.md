@@ -4,6 +4,16 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.2 - 2026-10-31
+
+- **PHP on the stream php:8.3, at least 8.3.36** (php2shell): every install and
+  upgrade now puts PHP on the AppStream stream `php:8.3` - from 8.0, 8.2 or
+  any other stream: `dnf module reset php`, `dnf module enable php:8.3`,
+  `dnf distro-sync 'php*'`, php-fpm restarted; on php:8.3 already, its newest
+  build. It says whether 8.3.36 or later runs. `--php-stream X.Y` still
+  chooses another stream (its own fixed build is then the one checked:
+  8.2.35, 8.4.27, 8.5.12).
+
 ## 4.1.1 - 2026-10-31
 
 - **PHP on the stream php:8.2, at least 8.2.35** (php2shell, CVE-2026-109618,
