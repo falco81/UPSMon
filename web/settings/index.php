@@ -492,7 +492,7 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
     <button type="button" data-pane="web" data-icon="lock" title="The certificate of the web server, and how TLS is spoken.">Certificates and TLS</button>
     <button type="button" class="fulladmin-only" data-pane="acme" data-icon="lock" title="The certificate ordered from Let's Encrypt (or another ACME CA) and renewed by itself.">Automatic certificates</button>
     <div class="ctl-group">Server</div>
-    <button type="button" class="fulladmin-only" data-pane="proxy" data-icon="globe" title="An HTTP proxy for the updates only - the new versions of upsmon and the system updates.">Proxy</button>
+    <button type="button" class="fulladmin-only" data-pane="proxy" data-icon="globe" title="An HTTP proxy - and what goes through it: the new versions, the system updates, the automatic certificates.">Proxy</button>
     <button type="button" class="fulladmin-only" data-pane="time" data-icon="clock" title="The clock of this server: chrony, its time servers, how far off it is.">Time</button>
     <button type="button" class="fulladmin-only" data-pane="power" data-icon="power" title="Restart or switch off this server.">Restart and power off</button>
     <div class="ctl-group">Data</div>
@@ -836,9 +836,10 @@ upsmon --upgrade-status                    # an upgrade started on these pages</
 
   <div class="ctl-pane" id="pane-proxy" hidden>
     <div class="ctl-head"><h2 class="ctl-title">Proxy</h2>
-      <p class="ctl-lede">Where the server may reach the web only through an HTTP proxy: the updates go
-        through it - the new versions of upsmon, and the system updates (dnf, apt). Nothing else does: the UPS,
-        the plug, the sensors, the automatic certificates, mail and the backups never.</p></div>
+      <p class="ctl-lede">Where the server may reach the web only through an HTTP proxy. Off by default,
+        and used only for what is switched on below: the new versions of upsmon, the system updates, the CA of
+        the automatic certificates, the DNS API of DNS-01. The UPS, the plug, the sensors, the backups and the
+        time never go through it.</p></div>
     <div class="card full"><h2>Settings</h2><div id="sect-proxy"></div></div>
     <div id="px-host"></div>
   </div>

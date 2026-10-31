@@ -4,6 +4,28 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.2.3 - 2026-10-31
+
+**Settings → Proxy: a switch for each thing that may go through it** - all off
+by default, and with "Go out through a proxy" off nothing goes through it
+whatever they say:
+- *New versions of upsmon* - Settings → Upgrades: the daily look and the
+  download (GitHub).
+- *System updates (dnf, apt)* - Settings → System updates: the look and the
+  update, handed to root's helper.
+- *Automatic certificates: the CA* - every question to Let's Encrypt (or your
+  own CA): the account, the order, the certificate.
+- *Automatic certificates: the DNS API* - DNS-01 through deSEC, Cloudflare or
+  acme-dns.
+
+Never through it, nothing to switch: the UPS, the plug and the sensors (on the
+network), the backups (FTP, FTPS, SFTP, SCP, SMB), the time (NTP), RFC 2136
+(nsupdate) - none of them speaks HTTP. *Try it* goes through the proxy whenever
+it is on, to try the proxy itself.
+
+Where the proxy was on before, its use for the updates has to be switched on
+again here: the new switches start off.
+
 ## 4.2.2 - 2026-10-31
 
 - **The proxy is for the updates only**: the new versions of upsmon (the daily

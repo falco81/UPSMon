@@ -9831,25 +9831,53 @@
    "source": "While it is in maintenance the UPS, the plug and the sensors are still watched and their history kept, but nothing changes them: commands to the UPS, values set on it and the plug switched or reset are refused, and the dashboard and /api/health say maintenance. Its pages go on working.",
    "text": "V údržbě se UPS, zásuvka i senzory dál sledují a jejich historie se ukládá, ale nic je nemění: příkazy pro UPS, nastavení hodnot i přepnutí nebo reset zásuvky se odmítnou a dashboard i /api/health hlásí údržbu. Stránky fungují dál."
   },
-  "k42101": {
-   "source": "Where the server may reach the web only through an HTTP proxy: the updates go through it - the new versions of upsmon, and the system updates (dnf, apt). Nothing else does: the UPS, the plug, the sensors, the automatic certificates, mail and the backups never.",
-   "text": "Kde server smí na web jen přes HTTP proxy: jdou přes ni aktualizace – nové verze upsmon a systémové aktualizace (dnf, apt). Nic jiného: UPS, zásuvka, senzory, automatické certifikáty, pošta ani zálohy přes ni nikdy nejdou."
-  },
-  "k42102": {
-   "source": "An HTTP proxy for the updates only - the new versions of upsmon and the system updates.",
-   "text": "HTTP proxy jen pro aktualizace – nové verze upsmon a systémové aktualizace."
-  },
-  "k42103": {
-   "source": "An HTTP proxy for the updates only: the new versions of upsmon, and the system updates (dnf, apt) where switched on below. Nothing else upsmon does goes through it - the UPS, the plug, the sensors, the automatic certificates, mail and the backups never.",
-   "text": "HTTP proxy jen pro aktualizace: nové verze upsmon a systémové aktualizace (dnf, apt), pokud jsou níže zapnuté. Nic jiného z upsmon přes ni nejde – UPS, zásuvka, senzory, automatické certifikáty, pošta ani zálohy nikdy."
-  },
-  "k42104": {
-   "source": "dnf or apt fetch the updates of Settings → System updates through it.",
-   "text": "dnf nebo apt přes ni stahují aktualizace z Nastavení → Systémové aktualizace."
-  },
   "k42105": {
    "source": "An address asked from this node the way upsmon asks the web: through the proxy as it is saved, or straight where none is set or the address is in the list. Each step is shown. Empty: where the new versions are looked for.",
    "text": "Adresa dotázaná z tohoto serveru tak, jak se upsmon ptá webu: přes uloženou proxy, nebo přímo, když žádná není nastavená nebo je adresa v seznamu. Ukáže se každý krok. Prázdné: kde se hledají nové verze."
+  },
+  "k42301": {
+   "source": "Where the server may reach the web only through an HTTP proxy. Off by default, and used only for what is switched on below: the new versions of upsmon, the system updates, the CA of the automatic certificates, the DNS API of DNS-01. The UPS, the plug, the sensors, the backups and the time never go through it.",
+   "text": "Kde server smí na web jen přes HTTP proxy. Výchozí stav je vypnuto a používá se jen pro to, co je níže zapnuté: nové verze upsmon, systémové aktualizace, CA automatických certifikátů, DNS API pro DNS-01. UPS, zásuvka, senzory, zálohy ani čas přes ni nikdy nejdou."
+  },
+  "k42302": {
+   "source": "An HTTP proxy - and what goes through it: the new versions, the system updates, the automatic certificates.",
+   "text": "HTTP proxy – a co přes ni jde: nové verze, systémové aktualizace, automatické certifikáty."
+  },
+  "k42303": {
+   "source": "An HTTP proxy for what upsmon asks of the web - only for what is switched on below; off, nothing goes through it. The UPS, the plug, the sensors, the backups (FTP, SFTP, SCP, SMB) and the time (NTP) never do: they are on the network or speak no HTTP.",
+   "text": "HTTP proxy pro to, na co se upsmon ptá webu – jen pro to, co je níže zapnuté; vypnutá znamená, že přes ni nejde nic. UPS, zásuvka, senzory, zálohy (FTP, SFTP, SCP, SMB) ani čas (NTP) nikdy: jsou v síti nebo nemluví HTTP."
+  },
+  "k42304": {
+   "source": "New versions of upsmon",
+   "text": "Nové verze upsmon"
+  },
+  "k42305": {
+   "source": "System updates (dnf, apt)",
+   "text": "Systémové aktualizace (dnf, apt)"
+  },
+  "k42306": {
+   "source": "Automatic certificates: the CA",
+   "text": "Automatické certifikáty: CA"
+  },
+  "k42307": {
+   "source": "Automatic certificates: the DNS API",
+   "text": "Automatické certifikáty: DNS API"
+  },
+  "k42308": {
+   "source": "Settings → Upgrades: the daily look for a new version and its download, from where new versions are looked for (GitHub).",
+   "text": "Nastavení → Aktualizace: denní kontrola nové verze a její stažení z místa, kde se nové verze hledají (GitHub)."
+  },
+  "k42309": {
+   "source": "Settings → System updates: dnf or apt look for and fetch the packages through it - handed to root’s helper, never on a command line.",
+   "text": "Nastavení → Systémové aktualizace: dnf nebo apt přes ni hledají a stahují balíčky – předáno pomocníkovi roota, nikdy na příkazové řádce."
+  },
+  "k42310": {
+   "source": "Settings → Automatic certificates: every question to the CA (Let’s Encrypt, or your own) - the account, the order, the certificate. The CA’s own check of port 80 or of DNS comes from outside and never sees the proxy.",
+   "text": "Nastavení → Automatické certifikáty: každý dotaz na CA (Let’s Encrypt nebo vlastní) – účet, objednávka, certifikát. Vlastní kontrola portu 80 nebo DNS ze strany CA přichází zvenku a proxy nikdy nevidí."
+  },
+  "k42311": {
+   "source": "Settings → Automatic certificates, DNS-01: the TXT record put in through the API of deSEC, Cloudflare or acme-dns. RFC 2136 (nsupdate) speaks DNS, not HTTP, and never goes through it.",
+   "text": "Nastavení → Automatické certifikáty, DNS-01: záznam TXT vložený přes API deSEC, Cloudflare nebo acme-dns. RFC 2136 (nsupdate) mluví DNS, ne HTTP, a přes proxy nikdy nejde."
   }
  },
  "patterns": {

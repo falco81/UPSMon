@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.2.2'
+__version__ = '4.2.3'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -101,7 +101,10 @@ DEFAULTS = {'site_name': '',
  'proxy_user': '',
  'proxy_password': '',
  'proxy_no': 'localhost, 127.0.0.1, ::1',
- 'proxy_os': 1,
+ 'proxy_upgrade': 0,
+ 'proxy_os': 0,
+ 'proxy_acme': 0,
+ 'proxy_acme_dns': 0,
  'proxy_sms': 1,
   'acme': 0,
  'acme_email': '',
@@ -147,7 +150,10 @@ NAMES = {'site_name': 'What to call this installation',
  'proxy_user': 'User name at the proxy',
  'proxy_password': 'Password at the proxy',
  'proxy_no': 'Straight, not through the proxy',
- 'proxy_os': 'The system updates through it too',
+ 'proxy_upgrade': 'New versions of upsmon',
+ 'proxy_os': 'System updates (dnf, apt)',
+ 'proxy_acme': 'Automatic certificates: the CA',
+ 'proxy_acme_dns': 'Automatic certificates: the DNS API',
  'proxy_sms': 'The SMS gateway through it too',
  'acme': 'Certificates from an ACME CA',
  'acme_email': 'Mail of the account at the CA',
@@ -206,7 +212,16 @@ SAYS = {'site_name': 'The name at the top of the administration pages. Empty: th
  'proxy_password': 'Kept sealed, like the other passwords.',
  'proxy_no': 'Names and addresses reached without it, separated by commas: '
              '<code>.example.cz</code> is every name under it, <code>10.0.0.0/8</code> a net.',
- 'proxy_os': 'dnf or apt fetch the updates of Settings → System updates through it.',
+ 'proxy_upgrade': 'Settings → Upgrades: the daily look for a new version and its download, from '
+                  'where new versions are looked for (GitHub).',
+ 'proxy_os': 'Settings → System updates: dnf or apt look for and fetch the packages through it - '
+             'handed to root’s helper, never on a command line.',
+ 'proxy_acme': 'Settings → Automatic certificates: every question to the CA (Let’s Encrypt, or your '
+               'own) - the account, the order, the certificate. The CA’s own check of port 80 or '
+               'of DNS comes from outside and never sees the proxy.',
+ 'proxy_acme_dns': 'Settings → Automatic certificates, DNS-01: the TXT record put in through the '
+                   'API of deSEC, Cloudflare or acme-dns. RFC 2136 (nsupdate) speaks DNS, not '
+                   'HTTP, and never goes through it.',
  'proxy_sms': 'The HTTP SMS gateway asked through it.',
  'acme': 'The certificates ordered from the CA by HTTP-01 and renewed by themselves - port 80 of '
          'the name must reach a node. In a cluster the answer is kept in the database, so '
@@ -269,7 +284,10 @@ TUNABLE = {'ui_lang': ('cs', 'en'),
  'upgrade_check': (0, 1),
  'upgrade_downgrade': (0, 1),
  'proxy': (0, 1),
+ 'proxy_upgrade': (0, 1),
  'proxy_os': (0, 1),
+ 'proxy_acme': (0, 1),
+ 'proxy_acme_dns': (0, 1),
  'proxy_sms': (0, 1),
  'acme': (0, 1),
  'acme_ca': ('letsencrypt', 'letsencrypt-staging', 'custom'),
@@ -313,7 +331,10 @@ ONLY_WHEN = {'proxy_url': ['proxy', '1'],
  'proxy_user': ['proxy', '1'],
  'proxy_password': ['proxy', '1'],
  'proxy_no': ['proxy', '1'],
+ 'proxy_upgrade': ['proxy', '1'],
  'proxy_os': ['proxy', '1'],
+ 'proxy_acme': ['proxy', '1'],
+ 'proxy_acme_dns': ['proxy', '1'],
  'proxy_sms': ['proxy', '1'],
  'acme_for': ['acme', '1'],
  'acme_email': ['acme', '1'],
@@ -364,9 +385,10 @@ SAYS['upgrade_downgrade'] = ('Off: nothing on these pages offers going back to a
                              'Settings → Upgrades shows <i>Going back to an older version</i> - only the '
                              'versions it is safe to go back to, each with what changed in it. On the '
                              'server, root can always: upsmon --downgrade.')
-SAYS['proxy'] = ('An HTTP proxy for the updates only: the new versions of upsmon, and the system '
-                 'updates (dnf, apt) where switched on below. Nothing else upsmon does goes through it - '
-                 'the UPS, the plug, the sensors, the automatic certificates, mail and the backups never.')
+SAYS['proxy'] = ('An HTTP proxy for what upsmon asks of the web - only for what is switched on '
+                 'below; off, nothing goes through it. The UPS, the plug, the sensors, the '
+                 'backups (FTP, SFTP, SCP, SMB) and the time (NTP) never do: they are on the network '
+                 'or speak no HTTP.')
 SAYS['acme_dns_tsig_name'] = ('As the DNS server knows it, <code>upsmon-acme.</code>; allowed to update '
                               '_acme-challenge records only.')
 SAYS['acme_dns_tsig_secret'] = ('The key’s secret (base64). Kept sealed; written to a file only upsmon reads '
@@ -398,7 +420,8 @@ PANES = {
              'acme_dns_alias', 'acme_dns_wait', 'acme_resolvers'],
     'upgrade': ['upgrade_check', 'upgrade_url', 'upgrade_downgrade'],
     # Settings → Proxy (4.2.1), as OTP has it - the SMS gateway aside.
-    'proxy': ['proxy', 'proxy_url', 'proxy_user', 'proxy_password', 'proxy_no', 'proxy_os'],
+    'proxy': ['proxy', 'proxy_url', 'proxy_user', 'proxy_password', 'proxy_no',
+              'proxy_upgrade', 'proxy_os', 'proxy_acme', 'proxy_acme_dns'],
     'about': ['site_name', 'ui_lang', 'admin_port', 'debug', 'debug_api'],
 }
 HIDDEN_KEYS = ('acme_for',)
@@ -2447,18 +2470,22 @@ def online_fetch(store, version, by, older=False):
 # gateway - and, handed to the root helper in its request (never on a command
 # line), dnf or apt fetching the system updates. Mail, Active Directory, the
 # database, syslog and the other node never go through it.
+# What may go through the proxy, each by a switch of its own (4.2.3):
+# 'web' - the new versions of upsmon; 'os' - the system updates; 'acme' - the
+# CA of the automatic certificates; 'acme_dns' - the DNS APIs of DNS-01.
+# 'try' - Settings → Proxy → Try it, whenever the proxy is on. Anything else
+# ('direct') never goes through it.
+PROXY_USES = {'web': 'proxy_upgrade', 'os': 'proxy_os', 'acme': 'proxy_acme',
+              'acme_dns': 'proxy_acme_dns'}
+
+
 def proxy_on(purpose='web'):
-    # 'web' is the new versions of upsmon, 'os' the system updates; anything
-    # else ('direct') never goes through the proxy (4.2.2).
-    if purpose not in ('web', 'os', 'sms'):
-        return False
     if not CONFIG.get('proxy') or not str(CONFIG.get('proxy_url') or '').strip():
         return False
-    if purpose == 'sms':
-        return bool(CONFIG.get('proxy_sms', 1))
-    if purpose == 'os':
-        return bool(CONFIG.get('proxy_os', 1))
-    return True
+    if purpose == 'try':
+        return True
+    key = PROXY_USES.get(purpose)
+    return bool(key and CONFIG.get(key))
 
 
 def proxy_full(purpose='web'):
@@ -2550,12 +2577,12 @@ def proxy_try(url=''):
     tls_on = u.scheme == 'https'
     port = u.port or (443 if tls_on else 80)
     via, why = '', ''
-    if not proxy_on():
+    if not proxy_on('try'):
         why = 'no proxy is set' if not CONFIG.get('proxy') else 'the proxy has no address'
     elif proxy_skips(host):
         why = '%s is in the list reached straight' % host
     else:
-        via = proxy_full()
+        via = proxy_full('try')
     px = urllib.parse.urlsplit(via) if via else None
     out = {'url': url, 'host': host, 'port': port, 'mode': 'proxy' if via else 'direct',
            'why_direct': why, 'node': node_name(), 'steps': [], 'ok': False,
@@ -3783,7 +3810,7 @@ class Acme(object):
         if data is not None:
             req.add_header('Content-Type', 'application/jose+json')
         try:
-            with url_open(req, timeout=30, context=_acme_ctx()) as r:
+            with url_open(req, timeout=30, context=_acme_ctx(), purpose='acme') as r:
                 body, headers, status = r.read(1 << 20), r.headers, r.status
         except urllib.error.HTTPError as e:
             body, headers, status = e.read(1 << 20), e.headers, e.code
@@ -4569,7 +4596,7 @@ def _cf(method, path, body=None):
                                           'Content-Type': 'application/json',
                                           'User-Agent': 'upsmon/%s (acme)' % __version__})
     try:
-        with url_open(req, timeout=30, context=ssl.create_default_context()
+        with url_open(req, timeout=30, purpose='acme_dns', context=ssl.create_default_context()
                       if base.startswith('https') else None) as r:
             got = json.loads(r.read(1 << 20).decode())
     except urllib.error.HTTPError as e:
@@ -4611,7 +4638,7 @@ def _dns_acmedns(txt):
                  'X-Api-Key': unseal_secret(CONFIG.get('acme_dns_key') or '') or '',
                  'Content-Type': 'application/json'})
     try:
-        with url_open(req, timeout=30, context=ssl.create_default_context()
+        with url_open(req, timeout=30, purpose='acme_dns', context=ssl.create_default_context()
                       if url.startswith('https') else None) as r:
             r.read(4096)
     except urllib.error.HTTPError as e:
@@ -4635,7 +4662,7 @@ def _desec(method, path, body=None):
                                               'Content-Type': 'application/json',
                                               'User-Agent': 'upsmon/%s (acme)' % __version__})
         try:
-            with url_open(req, timeout=30, context=ssl.create_default_context()
+            with url_open(req, timeout=30, purpose='acme_dns', context=ssl.create_default_context()
                           if base.startswith('https') else None) as r:
                 raw = r.read(1 << 20)
                 return json.loads(raw.decode()) if raw.strip() else None
