@@ -1,0 +1,12 @@
+{
+ "_meta": {
+  "code": "en",
+  "name": "English",
+  "english": "English",
+  "version": "4.0.0",
+  "about": "The pages are written in English; this file only offers English in the language picker."
+ },
+ "strings": {},
+ "patterns": {},
+ "rich": {}
+}

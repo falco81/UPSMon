@@ -53,27 +53,48 @@ function upsmon_call(string $path, string $method = 'GET', ?array $payload = nul
         }
     }
 
-    $context = stream_context_create(['http' => [
-        'method'        => $method,
-        'timeout'       => $timeout,
-        'ignore_errors' => true,
-        'header'        => implode("\r\n", $headers),
-        'content'       => $body,
-    ]]);
-
-    $url = 'http://' . UPSMON_HOST . ':' . UPSMON_PORT . $path;
-    $reply = @file_get_contents($url, false, $context);
-    if ($reply === false) {
+    /* A socket spoken to by hand (4.0), as the Settings pages do: the pool
+       of these pages has allow_url_fopen off, and file_get_contents('http://')
+       would fail silently and say the daemon is not answering. The daemon
+       always sends a Content-Length and never chunks. */
+    $sock = @stream_socket_client('tcp://' . UPSMON_HOST . ':' . UPSMON_PORT, $errno, $errstr,
+                                  $timeout, STREAM_CLIENT_CONNECT);
+    if ($sock === false) {
         return [0, ''];
     }
-
-    $status = 0;
-    foreach (($http_response_header ?? []) as $header) {
-        if (preg_match('#^HTTP/\S+\s+(\d+)#', $header, $m)) {
-            $status = (int) $m[1];
-        }
+    stream_set_timeout($sock, (int) ceil($timeout));
+    $request = $method . ' ' . $path . " HTTP/1.1\r\n"
+        . 'Host: ' . UPSMON_HOST . ':' . UPSMON_PORT . "\r\n"
+        . "Connection: close\r\n"
+        . implode("\r\n", $headers) . "\r\n\r\n"
+        . ($body ?? '');
+    if (@fwrite($sock, $request) === false) {
+        @fclose($sock);
+        return [0, ''];
     }
-    return [$status, (string) $reply];
+    $raw = '';
+    while (!feof($sock)) {
+        $chunk = @fread($sock, 65536);
+        if ($chunk === false || $chunk === '') {
+            $info = stream_get_meta_data($sock);
+            if (!empty($info['timed_out'])) {
+                @fclose($sock);
+                return [0, ''];
+            }
+            break;
+        }
+        $raw .= $chunk;
+    }
+    @fclose($sock);
+    $split = strpos($raw, "\r\n\r\n");
+    if ($split === false) {
+        return [0, ''];
+    }
+    $status = 0;
+    if (preg_match('#^HTTP/\S+\s+(\d+)#', substr($raw, 0, $split), $m)) {
+        $status = (int) $m[1];
+    }
+    return [$status, (string) substr($raw, $split + 4)];
 }
 
 /** Call the daemon and return the decoded reply, or null. */

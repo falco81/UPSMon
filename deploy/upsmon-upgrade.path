@@ -1,0 +1,15 @@
+# /etc/systemd/system/upsmon-upgrade.path
+#
+# Watches for a new version asked for on the pages: the upsmon service lays a
+# signed package and request.json down in /var/lib/upsmon/upgrade/, and this
+# starts upsmon-upgrade.service, which checks the package as root and runs its
+# install.sh --upgrade. Nothing else can be asked for this way.
+[Unit]
+Description=upsmon - a new version asked for on the pages
+
+[Path]
+PathExists=/var/lib/upsmon/upgrade/request.json
+Unit=upsmon-upgrade.service
+
+[Install]
+WantedBy=multi-user.target

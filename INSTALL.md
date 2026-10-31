@@ -1,3 +1,63 @@
+# upsmon 4.0 - installing, and upgrading from 3.x
+
+The short way, on AlmaLinux 9:
+
+```bash
+tar xzf upsmon-4.0.0.tar.gz && cd upsmon-4.0.0
+sudo ./install.sh --nut-host 192.168.40.253 --server-name ups.example.cz
+```
+
+It installs the packages (python3, nginx, php-fpm 8, openssl), the service and
+root's two helpers (`upsmon-web.path`, `upsmon-upgrade.path`), the pages
+(the dashboard at `/`, Settings at `/settings/`, a php-fpm pool of their own),
+a certificate, and the first account of Settings - its password is printed at
+the end (and kept in `/var/lib/upsmon/first-login.txt` until it is changed).
+
+**Upgrading the standalone 3.x** (3.6.7 or any other) - the same package:
+
+```bash
+tar xzf upsmon-4.0.0.tar.gz && cd upsmon-4.0.0
+sudo ./install.sh --upgrade
+```
+
+- `/etc/upsmon/config.json` and `/var/lib/upsmon/history.db` stay as they are;
+- the certificate `server.pem` / `server.key` / `server.ca` is carried over to
+  `upsmon.pem` / `upsmon.key` / `upsmon-ca.pem` (the old files stay);
+- `/etc/nginx/conf.d/upsmon.conf` is written afresh, with the host name and
+  the allow list of the old one; the old one is kept as
+  `/etc/nginx/upsmon.conf.before-4.0`;
+- the first account of Settings is made, its password printed.
+
+From 4.0 on, new versions come by **Settings → Upgrades** (from the web, or a
+package sent by hand) or by `upsmon --upgrade-online`; `install.sh --upgrade`
+still works by hand. Every package is signed; the server takes only one signed
+by the release key in `/usr/local/lib/upsmon/release-keys/`.
+
+| What | Where |
+|---|---|
+| the daemon and Settings | `/usr/local/lib/upsmon/upsmon.py`, `upsmon_admin.py`; `/usr/local/bin/upsmon` |
+| root's helpers | `/usr/local/lib/upsmon/upsmon_web.py`, `upsmon_upgrade.py` - started by `upsmon-web.path`, `upsmon-upgrade.path` |
+| the configuration of the UPS | `/etc/upsmon/config.json` |
+| the history | `/var/lib/upsmon/history.db` |
+| accounts, settings of the pages, events | `/var/lib/upsmon/upsmon.db`, its secrets sealed with `/var/lib/upsmon/secrets.key` |
+| the APIs | 127.0.0.1:9848 (the dashboard), 127.0.0.1:9849 (Settings); tokens in `/run/upsmon/` |
+| the pages | `/var/www/upsmon/` - php-fpm pool `/etc/php-fpm.d/upsmon.conf` (user `upsmon-www`) |
+| nginx | `/etc/nginx/conf.d/upsmon.conf`, certificate `/etc/nginx/certs/upsmon.pem` / `.key` |
+| the console at login | `/etc/upsmon-console-login`, `/etc/profile.d/zz-upsmon-console.sh` |
+
+New options of `install.sh`: `--allow CIDR[,CIDR]` (who may reach the pages),
+`--admin-user`, `--admin-password`, `--rewrite-nginx`.
+
+Releases: `UPSMON_RELEASE_KEY=/path/to/upsmon-release-1.key python3
+tools/build-release.py` writes `MANIFEST` and `MANIFEST.sig`, packs
+`release/upsmon-X.Y.Z.tar.gz`, checks it as a server would, and keeps the last
+ten. The private key is never in the repository.
+
+What follows is the manual walkthrough of 3.x for the UPS side, which 4.0 has
+not changed.
+
+---
+
 # upsmon on AlmaLinux 9 — complete installation guide
 
 Every command, what it should print, and how to confirm each step worked before

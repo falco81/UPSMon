@@ -32,10 +32,11 @@ LogsDirectoryMode=0750
 # rather than looking like a read-only database later.
 ReadWritePaths=/var/lib/upsmon /var/log/upsmon
 
-# A poll every ten seconds and a small SQLite write every minute. These caps are
+# A poll every ten seconds and a small SQLite write every minute; Settings now and
+# then makes a key or asks a CA. These caps are
 # a backstop the daemon should never come near.
-CPUQuota=15%
-MemoryMax=150M
+CPUQuota=50%
+MemoryMax=300M
 Nice=10
 IOSchedulingClass=idle
 

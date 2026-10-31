@@ -9,6 +9,16 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/upsmon-api.php';
+require_once __DIR__ . '/upsmon-lang.php';
+
+/* The page sends its own security headers (4.0): nginx sends none, as the
+   Settings pages send theirs with a nonce. This page keeps its style and its
+   script inline, so it allows them - and nothing from anywhere else. */
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; "
+     . "style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+     . "object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: no-referrer');
 
 /**
  * PHP falls back to UTC when date.timezone isn't set, which makes every
@@ -223,11 +233,31 @@ $level     = $snapshot['level'] ?? 'unknown';
 $model     = $vars['device.model'] ?? ($vars['ups.model'] ?? 'UPS');
 $maker     = $vars['device.mfr'] ?? ($vars['ups.mfr'] ?? '');
 $online    = (bool) ($snapshot['online'] ?? false);
+/* The language (4.0): this browser's choice (the CS / EN in the header, the
+   same cookie as Settings), else what Settings → About says for every page. */
+$langDefault = 'cs';
+$langPort = (int) trim((string) @file_get_contents('/run/upsmon/admin-port'));
+if ($langPort >= 1024 && $langPort <= 65535 && ($_COOKIE['upsmon_lang'] ?? '') === '') {
+    $hs = @stream_socket_client('tcp://127.0.0.1:' . $langPort, $e1, $e2, 2.0);
+    if ($hs) {
+        stream_set_timeout($hs, 2);
+        fwrite($hs, "GET /api/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+        $raw = (string) stream_get_contents($hs);
+        fclose($hs);
+        $got = json_decode((string) substr($raw, (int) strpos($raw, "\r\n\r\n") + 4), true);
+        if (is_array($got) && !empty($got['lang'])) {
+            $langDefault = (string) $got['lang'];
+        }
+    }
+}
+$lang     = ups_lang_pick(null, $langDefault);
+$langPack = $lang !== 'en' ? ups_lang_pack($lang) : null;
+$langList = ups_lang_list();
 $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
               'crit' => 'Problem', 'unknown' => 'No data'][$level] ?? $level;
 ?>
 <!doctype html>
-<html lang="en">
+<html lang="<?= h($lang) ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -237,6 +267,11 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
 <link rel="alternate icon" href="favicon.ico" sizes="any">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="theme-color" content="#161b22">
+<script>window.OTP_LANGS = <?= json_encode($langList, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>; window.OTP_LANG = <?= json_encode($lang) ?>;<?php
+  if ($langPack !== null) {
+      echo ' window.OTP_LANG_PACK = ' . json_encode($langPack, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES) . ';';
+  } ?></script>
+<script src="/assets/i18n.js?v=<?= h((string) @filemtime(__DIR__ . '/assets/i18n.js')) ?>"></script>
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --panel2:#1c222b; --line:#262c37;
@@ -268,6 +303,14 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
     cursor:pointer;border-radius:8px 8px 0 0;transition:color .15s,border-color .15s}
   .tabs button:hover{color:var(--tx)}
   .tabs button[aria-selected="true"]{color:var(--info);border-bottom-color:var(--info)}
+  .tabs a.tablink{margin-left:auto;color:var(--tx-mut);text-decoration:none;padding:10px 16px;
+    border-bottom:2px solid transparent;font-size:14px;font-weight:500}
+  .tabs a.tablink:hover{color:var(--tx)}
+  .tabs a.tablink::before{content:"\2699\FE0E";margin-right:6px}
+  .langpick{display:flex;gap:4px}
+  .langpick button{appearance:none;background:none;border:1px solid var(--line);color:var(--tx-mut);
+    border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer}
+  .langpick button.on{color:var(--info);border-color:var(--info)}
   .panel[hidden]{display:none}
 
   .pill{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:999px;
@@ -506,6 +549,7 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
   <h1><?= h($model) ?> <span class="host"><?= h($maker) ?></span></h1>
   <span id="verdict" class="pill <?= h($level) ?>"><span class="dot"></span><?= h($levelText) ?></span>
   <span class="spacer"></span>
+  <span class="langpick" id="langpick" data-no-i18n></span>
   <div class="updated">
     <div id="stamp">—</div>
     <div><button id="autorefresh" class="refresh" type="button"
@@ -533,6 +577,7 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
   <button role="tab" aria-selected="false" data-tab="events">Events</button>
   <button role="tab" aria-selected="false" data-tab="control">Control</button>
   <button role="tab" aria-selected="false" data-tab="all">All variables</button>
+  <a class="tablink" href="/settings/" title="Accounts, certificates and TLS, automatic certificates, upgrades, the language - behind a sign-in.">Settings</a>
 </div>
 
 <!-- ==================== OVERVIEW ==================== -->
@@ -848,6 +893,24 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
 <div class="toast" id="toast"></div>
 
 <script>
+/* CS / EN (4.0): the same cookie as the Settings pages. */
+(function () {
+  var host = document.getElementById('langpick');
+  if (!host || !window.OTP_LANGS || window.OTP_LANGS.length < 2) return;
+  window.OTP_LANGS.forEach(function (l) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = l.code.toUpperCase();
+    b.title = l.name;
+    if (l.code === window.OTP_LANG) b.className = 'on';
+    b.onclick = function () {
+      document.cookie = 'upsmon_lang=' + encodeURIComponent(l.code) + '; path=/; max-age=31536000; '
+        + 'samesite=strict' + (location.protocol === 'https:' ? '; secure' : '');
+      location.reload();
+    };
+    host.appendChild(b);
+  });
+}());
 "use strict";
 // ---------------------------------------------------------------------------
 // Small helpers

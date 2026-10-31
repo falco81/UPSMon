@@ -1,17 +1,28 @@
 # upsmon
 
+> **4.0** - the dashboard as it always was, for everybody on the allowed
+> networks without signing in; and beside it **Settings** (`/settings/`),
+> built on the engine and the pages of [OTP](https://github.com/falco81/OTP):
+> accounts, certificates and TLS, automatic certificates (Let's Encrypt),
+> upgrades from the web, About, Czech and English, the console.
+> See [What 4.0 adds](#what-40-adds) and [CHANGELOG.md](CHANGELOG.md).
+
 Monitoring, history and control for a UPS published over the network by a
 Synology NAS or any other host running Network UPS Tools — and, optionally, for
 a Shelly smart plug and the sensors that report to it, so the power being drawn
 is measured rather than estimated and the socket can be switched from the same
 dashboard.
 
-* `install.sh` — sets the whole thing up on AlmaLinux 9, and can upgrade or remove it
-* `upsmon.py` — the daemon and the command-line tool, one file, standard library only
+* `install.sh` — sets the whole thing up on AlmaLinux 9, and can upgrade (also 3.x to 4.x) or remove it
+* `upsmon.py` — the daemon and the command-line tool, standard library only
+* `upsmon_admin.py` — Settings: the engine of OTP (accounts, TLS, ACME, upgrades, the console), started by the daemon
 * `web/index.php`, `web/upsmon-api.php` — the dashboard and its thin API client
-* `deploy/` — systemd unit, logrotate rules, sample configuration, nginx server block
-* `test/` — the checks used during development; nothing here ships to the server
-* `INSTALL.md` — the full AlmaLinux 9 walkthrough, twenty sections
+* `web/settings/`, `web/assets/`, `web/lang/` — Settings, OTP's pages; the languages
+* `deploy/` — systemd units, root's helpers (`upsmon_web.py`, `upsmon_upgrade.py`), the release key, nginx, php-fpm
+* `release/` — the signed packages, the last ten; Settings → Upgrades looks here
+* `tools/build-release.py` — makes a signed package
+* `test/` — the checks used during development
+* `INSTALL.md` — the full AlmaLinux 9 walkthrough
 
 ## Installing
 
@@ -23,6 +34,41 @@ Packages, service user, configuration, systemd unit, log rotation, nginx with
 TLS, SELinux, firewall, and a check that it all works. `--dry-run` shows what it
 would do, `--upgrade` replaces the program files, `--uninstall` removes it while
 keeping the recorded history. `INSTALL.md` covers doing it by hand.
+
+## What 4.0 adds
+
+```
+https://ups.example.cz/            the dashboard - nobody signs in (as in 3.x)
+https://ups.example.cz/settings/   Settings - an account of Settings needed
+```
+
+| Settings | |
+|---|---|
+| **Accounts** | full admin / read only, passwords, who is signed in, lockouts, everybody's own columns |
+| **Certificates and TLS** | upload (PEM, PFX), a request (CSR) made here, self-signed; protocols, ciphers, DH, HSTS - put in nginx by root |
+| **Automatic certificates** | ACME (Let's Encrypt or another CA), HTTP-01 or DNS-01, renewed by themselves |
+| **Upgrades** | a signed package from the pages, or the newest from `release/` of this repository, with one click |
+| **About** | the version, what it runs on, the language (CS / EN), debugging, the console at login |
+| **Events** | every sign-in and every change |
+
+It is OTP's code on one server (upsmon never runs as a cluster), SQLite only.
+The same work is on the command line and in `upsmon --console`:
+
+```bash
+upsmon --console                      # everything by its menus
+upsmon --users                        # the accounts of Settings
+upsmon --add-user novak --role fulladmin
+upsmon --passwd admin
+upsmon --cert                         # the certificate nginx has
+upsmon --setting acme=1 --setting acme_email=it@example.cz
+upsmon --acme-order                   # a certificate from Let's Encrypt now
+upsmon --upgrade-check                # a newer version in release/?
+upsmon --upgrade-online               # fetched, its signature checked, put in
+```
+
+From 3.x: `tar xzf upsmon-4.0.0.tar.gz && cd upsmon-4.0.0 && sudo ./install.sh --upgrade`.
+The configuration, the history and the certificate are kept; the first account
+of Settings is made and its password printed.
 
 ## How the pieces fit
 
@@ -284,4 +330,4 @@ The PHP is checked structurally rather than executed; no interpreter was
 available in the build environment. Run `php -l` on both files after copying
 them across, and see `test/README.md` for the checks used during development.
 
-Current version: **3.6.5**
+Current version: **4.0.0**

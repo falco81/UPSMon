@@ -1,0 +1,17 @@
+# /etc/systemd/system/upsmon-web.path
+#
+# Watches for what the settings pages ask of root: the certificate and TLS of
+# nginx, port 80 answering the ACME CA, the console at login. The upsmon
+# service lays the request down in /var/lib/upsmon/web/ and this starts
+# upsmon-web.service, which checks every value of it and does it as root.
+[Unit]
+Description=upsmon - the certificate and TLS of nginx, and the console at login, asked for on the pages
+
+[Path]
+PathExists=/var/lib/upsmon/web/request.json
+PathExists=/var/lib/upsmon/web/console.ask
+Unit=upsmon-web.service
+TriggerLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

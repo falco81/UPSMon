@@ -22,11 +22,19 @@ command line for testing:
     upsmon --check             health check against the running daemon
     upsmon --diag              API latency, database size, config in force
     upsmon --history 24h       recent samples as a table
+    upsmon --console           everything by its menus, on the terminal
+    upsmon --users             the accounts of the settings pages
+    upsmon --upgrade-check     a newer version on the web?
     upsmon                     run the daemon in the foreground
+
+Since 4.0 the dashboard has Settings behind it, built on the engine and the
+pages of OTP: accounts, certificates and TLS, automatic certificates (ACME),
+upgrades from the web, the language. That half is upsmon_admin.py, beside
+this file; the daemon starts it in threads of its own.
 """
 
-# Bumped by hand with every change to this file.
-__version__ = '3.6.7'
+# Bumped with every change; upsmon_admin.py carries the same number.
+__version__ = '4.0.0'
 
 import argparse
 import getpass
@@ -47,6 +55,15 @@ from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
+
+# upsmon_admin.py lies beside this file (also when it is run through the link
+# /usr/local/bin/upsmon, or by python -I, which leaves the folder out).
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+try:
+    import upsmon_admin
+except ImportError as _admin_missing:          # an install that lost it: the UPS goes on
+    upsmon_admin = None
+    _ADMIN_WHY = str(_admin_missing)
 
 # ---------------------------------------------------------------------------
 # Paths and defaults
@@ -3084,6 +3101,17 @@ class Daemon(object):
         api = threading.Thread(target=self.serve, daemon=True)
         api.start()
 
+        # Settings (4.0): accounts, certificates, upgrades - the engine of OTP,
+        # in threads of its own. Whatever happens to it, the UPS is watched.
+        if upsmon_admin is None:
+            log('the settings pages cannot start: upsmon_admin.py is missing (%s)'
+                % _ADMIN_WHY, level='error')
+        else:
+            try:
+                self.admin = upsmon_admin.start(self, log)
+            except Exception as e:
+                log('the settings pages could not start: %s' % e, level='error')
+
         if CONFIG['plug_host']:
             log('smart plug at %s, polled every %ss'
                 % (CONFIG['plug_host'], CONFIG['plug_poll_interval']))
@@ -4453,6 +4481,14 @@ def cmd_check(args, pal):
     print('  ' + (pal.ok('everything looks healthy') if not problems
                   else pal.bad('%d check(s) failed' % problems)))
     return 1 if problems else 0
+
+
+def ago(ts):
+    """How long ago a time was, in words (--diag used it before 4.0 without having it)."""
+    try:
+        return '%s ago' % _duration(max(0, time.time() - float(ts)))
+    except (TypeError, ValueError):
+        return 'at an unknown time'
 
 
 def cmd_diag(args, pal):
@@ -5881,7 +5917,26 @@ an environment variable with a UPSMON_ prefix (UPSMON_NUT_HOST=10.0.0.5).
     output.add_argument('-v', '--verbose', action='store_true', help='debug logging')
     output.add_argument('--version', action='version',
                         version='upsmon ' + __version__)
+    if upsmon_admin is not None:
+        upsmon_admin.add_cli_arguments(parser)
     return parser
+
+
+def ups_words_for_console():
+    """The UPS in a few words, for the bar of the console: what the daemon says."""
+    status, body = api_call('/api/status', timeout=4.0)
+    if status != 200 or not isinstance(body, dict):
+        return {'ups_words': 'daemon not answering', 'daemon_alive': False}
+    snap = body.get('snapshot') or {}
+    v = snap.get('vars') or {}
+    words = ['UPS ' + str(v.get('ups.status') or '?')]
+    if v.get('battery.charge') not in (None, ''):
+        words.append('%s %%' % v.get('battery.charge'))
+    if v.get('ups.load') not in (None, ''):
+        words.append('load %s %%' % v.get('ups.load'))
+    return {'ups_words': ' '.join(words), 'daemon_alive': True,
+            'problems': [str(i.get('text')) for i in snap.get('issues') or []
+                         if i.get('level') == 'crit'][:3]}
 
 
 def main(argv=None):
@@ -5920,6 +5975,13 @@ def main(argv=None):
     pal = Palette(colour_enabled(False if args.no_color else None))
     for problem in CONFIG_FATAL:
         print(pal.bad('CONFIG: ') + problem, file=sys.stderr)
+
+    if upsmon_admin is not None and upsmon_admin.cli_wanted(args):
+        try:
+            return upsmon_admin.cli_main(args, ups_words_for_console)
+        except KeyboardInterrupt:
+            print('\nstopped.')
+            return 130
 
     try:
         if args.status:

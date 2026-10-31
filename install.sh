@@ -1,14 +1,20 @@
 #!/bin/bash
 #
 # install.sh - set up upsmon on AlmaLinux 9, from packages to a working
-# dashboard. Everything the manual walkthrough in INSTALL.md does, in order,
-# and safe to run again: an existing configuration is kept, certificates are
-# not overwritten, and the database is never touched.
+# dashboard with its Settings behind a sign-in. Everything the manual
+# walkthrough in INSTALL.md does, in order, and safe to run again: an existing
+# configuration is kept, certificates are not overwritten, and the databases
+# are never touched.
 #
 #   sudo ./install.sh                       ask for what it needs
 #   sudo ./install.sh --nut-host 10.0.0.5 --yes
-#   sudo ./install.sh --upgrade             just the program files, then restart
+#   sudo ./install.sh --upgrade             a new version over an installed one -
+#                                           also the standalone 3.x, brought over
+#                                           to 4.x whole (history, config, certificate)
 #   sudo ./install.sh --uninstall           remove it, keeping the history
+#
+# Settings → Upgrades runs exactly this (--upgrade --yes) as root, through
+# upsmon-upgrade.service, once a signed package has been checked.
 #
 # Run --help for everything it accepts.
 
@@ -16,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='1.2.1'
+readonly INSTALLER_VERSION='4.0.0'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -27,6 +33,12 @@ readonly WEB_DIR=/var/www/upsmon
 readonly CERT_DIR=/etc/nginx/certs
 readonly UNIT=/etc/systemd/system/upsmon.service
 readonly SERVICE_USER=upsmon
+readonly WEB_USER=upsmon-www
+readonly STATE_DIR=/var/lib/upsmon
+readonly NGINX_CONF=/etc/nginx/conf.d/upsmon.conf
+readonly POOL=/etc/php-fpm.d/upsmon.conf
+readonly CONSOLE_FLAG=/etc/upsmon-console-login
+readonly CONSOLE_PROFILE=/etc/profile.d/zz-upsmon-console.sh
 
 # --- what we were asked to do ----------------------------------------------
 NUT_HOST=''
@@ -72,6 +84,12 @@ WITH_WEB=yes
 ASSUME_YES=''
 DRY_RUN=''
 MODE=install
+ALLOW_NETS=''
+ADMIN_USER=admin
+ADMIN_PASSWORD=''
+REWRITE_NGINX=''
+FIRST_PASSWORD=''
+NEW_VERSION=''
 
 # --- talking to the person -------------------------------------------------
 if [[ -t 1 ]] && [[ -z "${NO_COLOR:-}" ]]; then
@@ -156,6 +174,10 @@ the dashboard
   --ca FILE             the issuer chain, if it is in a separate file
   --self-signed         make a certificate instead, for a machine with no name
   --no-web              install the daemon only, no nginx and no dashboard
+  --allow CIDR[,CIDR]   who may reach the dashboard and Settings (default RFC 1918)
+  --admin-user NAME     the first account of Settings (admin)
+  --admin-password PASS its password (otherwise one is made and printed)
+  --rewrite-nginx       write the nginx file afresh (otherwise one of 4.x is kept)
 
 a smart plug and sensors, both optional
   --plug-host ADDR      a Shelly plug to watch alongside the UPS
@@ -240,6 +262,10 @@ while [[ $# -gt 0 ]]; do
         --ca) CA_FILE=$2; GIVEN[CA_FILE]=1; shift 2;;
         --self-signed)     SELF_SIGNED=yes; GIVEN[SELF_SIGNED]=1; shift;;
         --no-web)          WITH_WEB=''; shift;;
+        --allow)           ALLOW_NETS=$2; GIVEN[ALLOW_NETS]=1; shift 2;;
+        --admin-user)      ADMIN_USER=$2; shift 2;;
+        --admin-password)  ADMIN_PASSWORD=$2; shift 2;;
+        --rewrite-nginx)   REWRITE_NGINX=yes; shift;;
         --yes|-y)          ASSUME_YES=yes; shift;;
         --dry-run)         DRY_RUN=yes; shift;;
         --upgrade)         MODE=upgrade; shift;;
@@ -283,11 +309,16 @@ preflight() {
 
     local missing=()
     local file
-    for file in upsmon.py deploy/upsmon.service deploy/upsmon.logrotate; do
+    for file in upsmon.py upsmon_admin.py deploy/upsmon.service deploy/upsmon.logrotate \
+                deploy/upsmon_web.py deploy/upsmon_upgrade.py deploy/upsmon-web.path \
+                deploy/upsmon-web.service deploy/upsmon-upgrade.path deploy/upsmon-upgrade.service \
+                deploy/upsmon-console-login.sh; do
         [[ -f "$SOURCE_DIR/$file" ]] || missing+=("$file")
     done
     if [[ -n "$WITH_WEB" ]]; then
-        for file in web/index.php web/upsmon-api.php deploy/nginx-upsmon.conf; do
+        for file in web/index.php web/upsmon-api.php web/settings/index.php web/settings-api.php \
+                    web/upsmon-page.php web/upsmon-lang.php web/acme.php web/assets/settings.js \
+                    deploy/nginx-upsmon.conf deploy/php-fpm-upsmon.conf; do
             [[ -f "$SOURCE_DIR/$file" ]] || missing+=("$file")
         done
     fi
@@ -300,13 +331,13 @@ preflight() {
         cat >&2 <<'LAYOUT'
       upsmon/
         install.sh
-        upsmon.py
-        deploy/upsmon.service
+        upsmon.py  upsmon_admin.py
+        deploy/upsmon.service  upsmon_web.py  upsmon_upgrade.py  release-keys/
         deploy/upsmon.logrotate
         deploy/nginx-upsmon.conf
         deploy/config.json
-        web/index.php
-        web/upsmon-api.php
+        web/index.php  settings/index.php  assets/  lang/
+        web/upsmon-api.php  settings-api.php  upsmon-page.php  upsmon-lang.php
         web/favicon.svg  favicon.ico  favicon-32.png  apple-touch-icon.png
 LAYOUT
         printf '\n    Copy the whole folder across and run it from inside:\n' >&2
@@ -316,10 +347,21 @@ LAYOUT
         exit 1
     fi
 
-    python3 -m py_compile "$SOURCE_DIR/upsmon.py" 2>/dev/null \
-        || fail "upsmon.py does not compile - is it complete?"
-    rm -rf "$SOURCE_DIR/__pycache__" 2>/dev/null || true
-    good "the files are all here and upsmon.py compiles"
+    local py
+    for py in upsmon.py upsmon_admin.py deploy/upsmon_web.py deploy/upsmon_upgrade.py; do
+        python3 - "$SOURCE_DIR/$py" <<'PYCHECK' 2>/dev/null || fail "$py does not compile - is it complete?"
+import sys
+compile(open(sys.argv[1], encoding='utf-8').read(), sys.argv[1], 'exec')
+PYCHECK
+    done
+    ls "$SOURCE_DIR"/deploy/release-keys/*.pub >/dev/null 2>&1 \
+        || fail "deploy/release-keys/ holds no release key"
+    local v1 v2
+    v1=$(sed -n "s/^__version__ = '\([0-9.]*\)'.*/\1/p" "$SOURCE_DIR/upsmon.py")
+    v2=$(sed -n "s/^__version__ = '\([0-9.]*\)'.*/\1/p" "$SOURCE_DIR/upsmon_admin.py")
+    [[ "$v1" == "$v2" ]] || fail "upsmon.py says $v1 and upsmon_admin.py says $v2"
+    NEW_VERSION=$v1
+    good "the files are all here and they compile (upsmon $NEW_VERSION)"
 }
 
 # ---------------------------------------------------------------------------
@@ -393,6 +435,18 @@ gather_answers() {
 gather_web_answers() {
     if [[ -n "$WITH_WEB" ]]; then
         ask SERVER_NAME "Hostname the dashboard will answer on" "$(hostname -f 2>/dev/null || hostname)"
+        note "The dashboard and Settings answer only these networks (and this machine)."
+        ask ALLOW_NETS "Who may reach the pages (CIDR, comma separated)" \
+            "${ALLOW_NETS:-192.168.0.0/16,172.16.0.0/12,10.0.0.0/8}"
+
+        # A certificate already in place - this installation's, or the one the
+        # standalone 3.x had - is kept, and nothing about it is asked.
+        if [[ -z "$CERT_FILE" ]] && [[ -z "$SELF_SIGNED" ]] \
+           && { [[ -f "$CERT_DIR/upsmon.pem" ]] || [[ -f "$CERT_DIR/server.pem" ]]; }; then
+            say "a certificate is already in place in $CERT_DIR; it is kept"
+            note "replace it later on Settings → Certificates and TLS, or by ACME"
+            return 0
+        fi
 
         # A certs/ folder shipped alongside the script is the obvious place to
         # look, and saves typing three paths that are already right there.
@@ -504,9 +558,8 @@ ask_advanced() {
 
 install_packages() {
     step "Installing packages"
-    local wanted=(python3 policycoreutils-python-utils)
-    [[ -n "$WITH_WEB" ]] && wanted+=(nginx php-fpm php-json)
-    [[ -n "$SELF_SIGNED" ]] && wanted+=(openssl)
+    local wanted=(python3 openssl policycoreutils-python-utils)
+    [[ -n "$WITH_WEB" ]] && wanted+=(nginx php-fpm php-cli curl)
 
     local missing=()
     local package
@@ -515,35 +568,59 @@ install_packages() {
     done
     if [[ ${#missing[@]} -eq 0 ]]; then
         good "everything needed is already installed"
-        return
-    fi
-    say "installing: ${missing[*]}"
-    if [[ -n "$DRY_RUN" ]]; then
+    elif [[ -n "$DRY_RUN" ]]; then
         note "[would run] dnf install -y ${missing[*]}"
-        return
+    else
+        say "installing: ${missing[*]}"
+        # PHP 8 at least for the pages: AlmaLinux 9 has 8.0 as it comes, and the
+        # streams 8.1 - 8.3; a machine with no PHP yet gets 8.3.
+        if [[ " ${missing[*]} " == *" php-fpm "* ]] && ! rpm -q php-common >/dev/null 2>&1 \
+           && command -v dnf >/dev/null 2>&1; then
+            dnf -y module reset php >/dev/null 2>&1 || true
+            dnf -y module enable php:8.3 >/dev/null 2>&1 \
+                && note "PHP from the AppStream stream php:8.3" || true
+        fi
+        dnf install -y "${missing[@]}" >/dev/null || fail "package installation failed"
+        good "installed"
     fi
-    dnf install -y "${missing[@]}" >/dev/null || fail "package installation failed"
-    good "installed"
+    # colorama colours the console and the command line where it is there;
+    # nothing needs it.
+    if [[ -z "$DRY_RUN" ]] && ! python3 -c 'import colorama' >/dev/null 2>&1; then
+        dnf install -y python3-colorama >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$WITH_WEB" ]] && [[ -z "$DRY_RUN" ]]; then
+        local phpv
+        phpv=$(php -r 'echo PHP_VERSION;' 2>/dev/null || echo 0)
+        say "PHP $phpv"
+        php -r 'exit(PHP_MAJOR_VERSION >= 8 ? 0 : 1);' 2>/dev/null \
+            || fail "the pages need PHP 8 or newer: dnf module enable php:8.3 && dnf upgrade 'php*'"
+    fi
 }
 
 create_user() {
-    step "Creating the service user"
+    step "Creating the service accounts"
     if id "$SERVICE_USER" >/dev/null 2>&1; then
         good "user $SERVICE_USER already exists"
     else
-        run useradd --system --home-dir /var/lib/upsmon --shell /sbin/nologin \
+        run useradd --system --home-dir "$STATE_DIR" --shell /sbin/nologin \
             --comment 'upsmon daemon' "$SERVICE_USER"
         good "created $SERVICE_USER"
     fi
-
-    # PHP reads the API token, which only the upsmon group may read.
-    if [[ -n "$WITH_WEB" ]] && id nginx >/dev/null 2>&1; then
-        if id -nG nginx | tr ' ' '\n' | grep -qx "$SERVICE_USER"; then
-            good "nginx is already in the $SERVICE_USER group"
-        else
-            run usermod -a -G "$SERVICE_USER" nginx
-            good "added nginx to the $SERVICE_USER group"
-        fi
+    [[ -n "$WITH_WEB" ]] || return 0
+    # The pages run in a php-fpm pool of their own, as an account that may
+    # read the daemon's API tokens (the group upsmon) and nothing else.
+    if id "$WEB_USER" >/dev/null 2>&1; then
+        good "user $WEB_USER already exists"
+    else
+        run useradd --system --no-create-home --home-dir /var/www/upsmon --shell /sbin/nologin \
+            --comment 'upsmon pages (php-fpm)' "$WEB_USER"
+        good "created $WEB_USER, which runs the pages"
+    fi
+    if id -nG "$WEB_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$SERVICE_USER"; then
+        good "$WEB_USER may read the API tokens (group $SERVICE_USER)"
+    else
+        run usermod -a -G "$SERVICE_USER" "$WEB_USER"
+        good "$WEB_USER added to the group $SERVICE_USER"
     fi
 }
 
@@ -551,17 +628,45 @@ install_program() {
     step "Installing the program"
     run install -d -m 755 "$LIB_DIR"
     run install -m 755 "$SOURCE_DIR/upsmon.py" "$LIB_DIR/upsmon.py"
-    [[ -f "$SOURCE_DIR/INSTALL.md" ]] && run install -m 644 "$SOURCE_DIR/INSTALL.md" "$LIB_DIR/INSTALL.md"
+    run install -m 644 "$SOURCE_DIR/upsmon_admin.py" "$LIB_DIR/upsmon_admin.py"
+    # Root's helpers: what the pages ask of root, each started by its path unit.
+    run install -m 700 "$SOURCE_DIR/deploy/upsmon_web.py" "$LIB_DIR/upsmon_web.py"
+    run install -m 755 "$SOURCE_DIR/deploy/upsmon_upgrade.py" "$LIB_DIR/upsmon_upgrade.py"
+    local doc
+    for doc in INSTALL.md README.md CHANGELOG.md; do
+        [[ -f "$SOURCE_DIR/$doc" ]] && run install -m 644 "$SOURCE_DIR/$doc" "$LIB_DIR/$doc"
+    done
+    rm -rf "$LIB_DIR/__pycache__" 2>/dev/null || true
 
+    # The release keys a package from the pages must be signed by: root's alone,
+    # exactly the ones this version ships (a key no longer shipped is no longer
+    # trusted).
+    run install -d -m 755 "$LIB_DIR/release-keys"
     if [[ -z "$DRY_RUN" ]]; then
+        rm -f "$LIB_DIR"/release-keys/*.pub
+        install -m 644 "$SOURCE_DIR"/deploy/release-keys/*.pub "$LIB_DIR/release-keys/"
+        # How far back Settings → Upgrades may go: never below the highest floor
+        # of any version installed here (only root writes it).
+        local floor had
+        floor=$(sed -n "s/^DOWNGRADE_FLOOR = '\([0-9.]*\)'.*/\1/p" "$SOURCE_DIR/upsmon_admin.py")
+        had=$(cat "$LIB_DIR/downgrade-floor" 2>/dev/null || true)
+        if [[ -z "$had" ]] || [[ "$(printf '%s\n%s\n' "$had" "$floor" | sort -V | tail -1)" == "$floor" ]]; then
+            printf '%s\n' "$floor" > "$LIB_DIR/downgrade-floor"
+        fi
+        chmod 644 "$LIB_DIR/downgrade-floor"
+
         cat > "$BIN" <<EOF
 #!/bin/sh
 # upsmon - installed by install.sh $INSTALLER_VERSION
 exec /usr/bin/python3 $LIB_DIR/upsmon.py "\$@"
 EOF
         chmod 755 "$BIN"
+        # The folders the daemon lays its requests to root in, made as the
+        # daemon's own account (never through a link root would follow).
+        install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 750 "$STATE_DIR"
+        runuser -u "$SERVICE_USER" -- mkdir -p -m 750 "$STATE_DIR/web" "$STATE_DIR/upgrade" 2>/dev/null || true
     else
-        note "[would write] $BIN"
+        note "[would write] $BIN, $LIB_DIR/release-keys, $LIB_DIR/downgrade-floor"
     fi
     good "installed to $LIB_DIR, and $BIN runs it"
 }
@@ -702,60 +807,83 @@ install_service() {
     step "Installing the service"
     run install -m 644 "$SOURCE_DIR/deploy/upsmon.service" "$UNIT"
     run install -m 644 "$SOURCE_DIR/deploy/upsmon.logrotate" /etc/logrotate.d/upsmon
+    local u
+    for u in upsmon-web.path upsmon-web.service upsmon-upgrade.path upsmon-upgrade.service; do
+        run install -m 644 "$SOURCE_DIR/deploy/$u" "/etc/systemd/system/$u"
+    done
     run systemctl daemon-reload
     if [[ -z "$DRY_RUN" ]]; then
         systemctl enable upsmon >/dev/null 2>&1 || true
+        systemctl enable --now upsmon-web.path upsmon-upgrade.path >/dev/null 2>&1 || true
     fi
-    good "installed and enabled"
+    # The console when root signs in: on the first time, as otp has it.
+    run install -m 644 "$SOURCE_DIR/deploy/upsmon-console-login.sh" "$CONSOLE_PROFILE"
+    if [[ -z "$DRY_RUN" ]] && [[ ! -e "$CONSOLE_FLAG" ]]; then
+        printf 'on\n' > "$CONSOLE_FLAG"
+        chmod 644 "$CONSOLE_FLAG"
+        note "root signing in lands in the upsmon console (q leaves it):"
+        note "  upsmon --console-at-login off   to land in the shell instead"
+    fi
+    good "installed and enabled: upsmon, upsmon-web.path, upsmon-upgrade.path"
 }
 
 install_web() {
     [[ -n "$WITH_WEB" ]] || return 0
-    step "Installing the dashboard"
+    step "Installing the pages"
 
-    run install -d -m 755 "$WEB_DIR"
+    run install -d -m 755 "$WEB_DIR" "$WEB_DIR/settings" "$WEB_DIR/assets" "$WEB_DIR/lang"
     local file
-    for file in index.php upsmon-api.php favicon.svg favicon.ico favicon-32.png \
-                apple-touch-icon.png; do
+    for file in index.php upsmon-api.php upsmon-page.php upsmon-lang.php settings-api.php acme.php \
+                favicon.svg favicon.ico favicon-32.png apple-touch-icon.png settings/index.php; do
         [[ -f "$SOURCE_DIR/web/$file" ]] || continue
         run install -m 644 "$SOURCE_DIR/web/$file" "$WEB_DIR/$file"
     done
-    good "copied to $WEB_DIR"
+    for file in "$SOURCE_DIR"/web/assets/* "$SOURCE_DIR"/web/lang/*; do
+        run install -m 644 "$file" "$WEB_DIR/${file#"$SOURCE_DIR/web/"}"
+    done
+    good "copied to $WEB_DIR (the dashboard, Settings, the languages)"
 
-    # php-fpm serves it over a socket nginx can reach; the default pool runs as
-    # apache, which is not in the upsmon group and so cannot read the token.
-    if [[ -f /etc/php-fpm.d/www.conf ]] && [[ -z "$DRY_RUN" ]]; then
-        if grep -q '^user = apache' /etc/php-fpm.d/www.conf; then
-            cp -a /etc/php-fpm.d/www.conf /etc/php-fpm.d/www.conf.bak
-            sed -i 's/^user = apache/user = nginx/; s/^group = apache/group = nginx/' \
-                /etc/php-fpm.d/www.conf
-            sed -i 's/^listen.acl_users = apache,nginx/listen.acl_users = nginx/' \
-                /etc/php-fpm.d/www.conf
-            good "php-fpm now runs as nginx (the original is kept as www.conf.bak)"
-        else
-            good "php-fpm is already running as nginx"
-        fi
-    fi
+    # php-fpm: a pool of upsmon's own, as the account that may read the tokens.
+    run install -m 644 "$SOURCE_DIR/deploy/php-fpm-upsmon.conf" "$POOL"
+    run install -m 644 "$SOURCE_DIR/deploy/99-php2shell.ini" /etc/php.d/99-php2shell.ini
     if [[ -z "$DRY_RUN" ]]; then
-        systemctl enable --now php-fpm >/dev/null 2>&1 || true
+        systemctl enable php-fpm >/dev/null 2>&1 || true
+        systemctl restart php-fpm || fail "php-fpm did not start with $POOL"
+        good "php-fpm: the pool upsmon ($WEB_USER, /run/php-fpm/upsmon.sock)"
     fi
 }
 
 install_certificate() {
     [[ -n "$WITH_WEB" ]] || return 0
     step "TLS certificate"
-    run install -d -m 700 "$CERT_DIR"
+    run install -d -m 755 "$CERT_DIR"
 
-    if [[ -f "$CERT_DIR/server.pem" ]] && [[ -z "$CERT_FILE" ]]; then
+    # The standalone 3.x kept it as server.pem / server.key / server.ca: carried
+    # over to the names Settings looks after, the old files left where they are.
+    if [[ ! -f "$CERT_DIR/upsmon.pem" ]] && [[ -f "$CERT_DIR/server.pem" ]] \
+       && [[ -f "$CERT_DIR/server.key" ]] && [[ -z "$CERT_FILE" ]]; then
+        run install -m 644 "$CERT_DIR/server.pem" "$CERT_DIR/upsmon.pem"
+        run install -m 600 "$CERT_DIR/server.key" "$CERT_DIR/upsmon.key"
+        [[ -f "$CERT_DIR/server.ca" ]] && run install -m 644 "$CERT_DIR/server.ca" "$CERT_DIR/upsmon-ca.pem"
+        good "the certificate of upsmon 3.x carried over (server.pem → upsmon.pem)"
+        return
+    fi
+
+    if [[ -f "$CERT_DIR/upsmon.pem" ]] && [[ -z "$CERT_FILE" ]]; then
         good "a certificate is already in place; leaving it alone"
         return
     fi
 
     if [[ -n "$CERT_FILE" ]]; then
         check_certificate "$CERT_FILE" "$KEY_FILE" "$CA_FILE"
-        run install -m 644 "$CERT_FILE" "$CERT_DIR/server.pem"
-        run install -m 600 "$KEY_FILE" "$CERT_DIR/server.key"
-        [[ -n "$CA_FILE" ]] && run install -m 644 "$CA_FILE" "$CERT_DIR/server.ca"
+        if [[ -n "$CA_FILE" ]]; then
+            run sh -c "cat '$CERT_FILE' '$CA_FILE' > '$CERT_DIR/upsmon.pem'"
+            run install -m 644 "$CA_FILE" "$CERT_DIR/upsmon-ca.pem"
+        else
+            run install -m 644 "$CERT_FILE" "$CERT_DIR/upsmon.pem"
+        fi
+        run chmod 644 "$CERT_DIR/upsmon.pem"
+        run install -m 600 "$KEY_FILE" "$CERT_DIR/upsmon.key"
         good "installed the certificate"
         return
     fi
@@ -765,15 +893,16 @@ install_certificate() {
         return
     fi
 
+    local name=${SERVER_NAME:-$(hostname -f 2>/dev/null || hostname)}
     openssl req -x509 -newkey rsa:2048 -nodes -days 825 \
-        -keyout "$CERT_DIR/server.key" -out "$CERT_DIR/server.pem" \
-        -subj "/CN=$SERVER_NAME" \
-        -addext "subjectAltName=DNS:$SERVER_NAME,DNS:localhost,IP:127.0.0.1" \
+        -keyout "$CERT_DIR/upsmon.key" -out "$CERT_DIR/upsmon.pem" \
+        -subj "/CN=$name" \
+        -addext "subjectAltName=DNS:$name,DNS:localhost,IP:127.0.0.1" \
         >/dev/null 2>&1 || fail "could not create a certificate"
-    chmod 600 "$CERT_DIR/server.key"
-    chmod 644 "$CERT_DIR/server.pem"
-    good "made a self-signed certificate for $SERVER_NAME"
-    note "browsers will warn about it until you replace it with a real one"
+    chmod 600 "$CERT_DIR/upsmon.key"
+    chmod 644 "$CERT_DIR/upsmon.pem"
+    good "made a self-signed certificate for $name"
+    note "replace it on Settings → Certificates and TLS, or have ACME order one"
 }
 
 check_certificate() {
@@ -838,23 +967,76 @@ configure_nginx() {
     [[ -n "$WITH_WEB" ]] || return 0
     step "Configuring nginx"
 
-    local target=/etc/nginx/conf.d/upsmon.conf
-    if [[ -n "$DRY_RUN" ]]; then
-        note "[would write] $target for $SERVER_NAME"
+    # One of 4.x is kept as it is: Settings writes its certificate and TLS into
+    # it (and ACME its port 80). One of the standalone 3.x is written afresh,
+    # its host name and its allow list kept.
+    if [[ -f "$NGINX_CONF" ]] && grep -q 'location = /settings/' "$NGINX_CONF" && [[ -z "$REWRITE_NGINX" ]]; then
+        good "$NGINX_CONF is upsmon 4's own and is kept (--rewrite-nginx writes it afresh)"
+        if [[ -z "$DRY_RUN" ]]; then
+            nginx -t >/dev/null 2>&1 && { systemctl enable nginx >/dev/null 2>&1 || true
+                                          systemctl reload nginx 2>/dev/null || systemctl restart nginx; }
+        fi
         return
     fi
 
-    sed "s/ups\.falco81\.net/$SERVER_NAME/g" \
-        "$SOURCE_DIR/deploy/nginx-upsmon.conf" > "$target"
-    chmod 644 "$target"
+    local name="$SERVER_NAME" nets="$ALLOW_NETS"
+    if [[ -f "$NGINX_CONF" ]]; then
+        [[ -z "$name" ]] && name=$(awk '$1 == "server_name" && $2 !~ /^_;?$/ {gsub(";","",$2); print $2; exit}' "$NGINX_CONF")
+        if [[ -z "$nets" ]]; then
+            nets=$(awk '$1 == "allow" {gsub(";","",$2); if ($2 != "127.0.0.1" && $2 != "::1") print $2}' \
+                   "$NGINX_CONF" | sort -u | paste -sd, -)
+        fi
+        say "the nginx file of upsmon 3.x: ${name:-no name}, allowed: ${nets:-nothing}"
+    fi
+    name=${name:-$(hostname -f 2>/dev/null || hostname)}
+    nets=${nets:-192.168.0.0/16,172.16.0.0/12,10.0.0.0/8}
+
+    if [[ -n "$DRY_RUN" ]]; then
+        note "[would write] $NGINX_CONF for $name, allowing $nets"
+        return
+    fi
+
+    local allow='' one
+    IFS=',' read -r -a list <<<"$nets"
+    for one in "${list[@]}"; do
+        one=$(tr -d ' ' <<<"$one")
+        [[ $one =~ ^[0-9A-Fa-f:.]+(/[0-9]{1,3})?$ ]] || fail "not an address or a network: $one"
+        allow+="        allow $one;"$'\n'
+    done
+    local had=''
+    if [[ -f "$NGINX_CONF" ]]; then
+        had="$NGINX_CONF.before-4.0"
+        cp -a "$NGINX_CONF" "$had"
+        note "the old one is kept as $had"
+    fi
+    python3 - "$SOURCE_DIR/deploy/nginx-upsmon.conf" "$NGINX_CONF" "$name" "$allow" \
+              "$([[ -f "$CERT_DIR/upsmon-ca.pem" ]] && echo yes)" <<'PYNGINX'
+import re, sys
+src, dst, name, allow, ca = sys.argv[1:6]
+t = open(src).read()
+t = t.replace('ups.example.local', name)
+t = re.sub(r'        # ALLOW-BEGIN\n.*?        # ALLOW-END\n',
+           '        # ALLOW-BEGIN\n' + allow + '        # ALLOW-END\n', t, flags=re.S)
+if ca:
+    t = t.replace('    ssl_certificate_key       /etc/nginx/certs/upsmon.key;\n',
+                  '    ssl_certificate_key       /etc/nginx/certs/upsmon.key;\n'
+                  '    ssl_trusted_certificate   /etc/nginx/certs/upsmon-ca.pem;\n')
+open(dst, 'w').write(t)
+PYNGINX
+    chmod 644 "$NGINX_CONF"
+    if [[ -n "$had" ]]; then mv "$had" "/etc/nginx/upsmon.conf.before-4.0"; had=/etc/nginx/upsmon.conf.before-4.0; fi
 
     if ! nginx -t >/dev/null 2>&1; then
         nginx -t || true
-        fail "nginx rejected the configuration; $target is written but not loaded"
+        if [[ -n "$had" ]]; then
+            cp -a "$had" "$NGINX_CONF"
+            fail "nginx rejected the new configuration; the old one is back in $NGINX_CONF"
+        fi
+        fail "nginx rejected the configuration; $NGINX_CONF is written but not loaded"
     fi
     systemctl enable nginx >/dev/null 2>&1 || true
     systemctl reload nginx 2>/dev/null || systemctl restart nginx
-    good "serving $SERVER_NAME over HTTPS"
+    good "serving $name over HTTPS: the dashboard at /, Settings at /settings/"
 }
 
 configure_selinux() {
@@ -866,17 +1048,17 @@ configure_selinux() {
     say "$(getenforce)"
 
     if [[ -n "$WITH_WEB" ]]; then
-        # PHP has to open a socket to the daemon's localhost API.
+        # PHP has to open a socket to the daemon's two localhost APIs.
         if [[ -n "$DRY_RUN" ]]; then
             note "[would run] setsebool -P httpd_can_network_connect 1"
             note "[would run] semanage fcontext -a -t httpd_sys_content_t \"$WEB_DIR(/.*)?\""
-            note "[would run] restorecon -Rv $WEB_DIR"
+            note "[would run] restorecon -Rv $WEB_DIR $CERT_DIR"
             return
         fi
         setsebool -P httpd_can_network_connect 1
         semanage fcontext -a -t httpd_sys_content_t "$WEB_DIR(/.*)?" >/dev/null 2>&1 || true
-        restorecon -Rv "$WEB_DIR" >/dev/null 2>&1 || true
-        good "allowed php to reach the local API, and labelled $WEB_DIR"
+        restorecon -R "$WEB_DIR" "$CERT_DIR" "$NGINX_CONF" >/dev/null 2>&1 || true
+        good "allowed php to reach the local APIs, and labelled $WEB_DIR and the certificates"
     fi
 }
 
@@ -958,12 +1140,50 @@ verify() {
             warn "the dashboard answered $code over HTTPS on localhost"
             note "check: systemctl status nginx php-fpm"
         fi
+        code=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost/settings/" 2>/dev/null || echo '000')
+        if [[ $code == 200 ]]; then
+            good "Settings answer over HTTPS"
+        else
+            warn "Settings answered $code over HTTPS on localhost"
+        fi
     fi
+}
+
+first_account() {
+    # Settings needs an account: one full administrator made the first time,
+    # its password printed here and kept in $STATE_DIR/first-login.txt (the
+    # daemon's alone) until it is changed on the pages.
+    [[ -n "$DRY_RUN" ]] && { note "[would make] the account $ADMIN_USER of Settings"; return 0; }
+    local n
+    n=$(upsmon --users --json 2>/dev/null | python3 -c 'import json,sys; print(len(json.load(sys.stdin).get("users") or []))' 2>/dev/null || echo 0)
+    if [[ "$n" != 0 ]]; then
+        good "Settings has $n account(s) already"
+        return 0
+    fi
+    step "The first account of Settings"
+    local pw="$ADMIN_PASSWORD"
+    [[ -n "$pw" ]] || pw=$(python3 -c 'import secrets, string; a = string.ascii_letters + string.digits; print("".join(secrets.choice(a) for _ in range(16)))')
+    UPSMON_PASSWORD="$pw" upsmon --add-user "$ADMIN_USER" --role fulladmin \
+        --note 'made by install.sh' >/dev/null || fail "the first account could not be made"
+    if [[ -z "$ADMIN_PASSWORD" ]]; then
+        FIRST_PASSWORD=$pw
+        ( umask 077
+          printf 'name: %s\npassword: %s\n' "$ADMIN_USER" "$pw" > "$STATE_DIR/first-login.txt" )
+        chown "$SERVICE_USER:$SERVICE_USER" "$STATE_DIR/first-login.txt"
+    fi
+    good "made $ADMIN_USER, a full administrator"
 }
 
 summary() {
     step "Done"
-    say "Dashboard   https://$SERVER_NAME/"
+    local name=${SERVER_NAME:-$(awk '$1 == "server_name" && $2 !~ /^_;?$/ {gsub(";","",$2); print $2; exit}' "$NGINX_CONF" 2>/dev/null)}
+    say "Dashboard   https://${name:-localhost}/          (no sign-in)"
+    say "Settings    https://${name:-localhost}/settings/ (accounts, certificates, upgrades)"
+    if [[ -n "$FIRST_PASSWORD" ]]; then
+        say "            sign in as $ADMIN_USER with the password ${C_WARN}$FIRST_PASSWORD${C_OFF}"
+        note "            (also in $STATE_DIR/first-login.txt until it is changed)"
+    fi
+    say "Console     upsmon --console"
     say "Service     systemctl status upsmon"
     say "Log         journalctl -u upsmon -f    or  /var/log/upsmon/upsmon.log"
     say "Config      $CONFIG_FILE"
@@ -984,7 +1204,8 @@ summary() {
     if [[ -n "$SELF_SIGNED" ]]; then
         echo
         note "The certificate is self-signed, so a browser will warn once."
-        note "Replace it later with: sudo ./install.sh --cert FILE --key FILE"
+        note "Replace it on Settings → Certificates and TLS, or let Automatic"
+        note "certificates order one from Let's Encrypt."
     fi
 }
 
@@ -995,44 +1216,63 @@ do_upgrade() {
     step "Upgrading"
     [[ -f "$LIB_DIR/upsmon.py" ]] || fail "upsmon is not installed here; run without --upgrade"
     local previous
-    previous=$(upsmon --version 2>/dev/null || echo unknown)
-
-    install_program
-    if [[ -n "$WITH_WEB" ]] && [[ -d "$WEB_DIR" ]]; then
-        install_web
-        [[ -z "$DRY_RUN" ]] && restorecon -Rv "$WEB_DIR" >/dev/null 2>&1 || true
+    previous=$(sed -n "s/^__version__ = '\([0-9.]*\)'.*/\1/p" "$LIB_DIR/upsmon.py" 2>/dev/null || echo unknown)
+    say "upsmon ${previous:-unknown} → $NEW_VERSION"
+    if [[ "$previous" == 3.* ]]; then
+        note "from the standalone 3.x: the dashboard stays as it was, Settings comes"
+        note "beside it - the configuration, the history and the certificate are kept"
     fi
-    run install -m 644 "$SOURCE_DIR/deploy/upsmon.service" "$UNIT"
-    run install -m 644 "$SOURCE_DIR/deploy/upsmon.logrotate" /etc/logrotate.d/upsmon
-    run systemctl daemon-reload
+    [[ -d "$WEB_DIR" ]] || WITH_WEB=''
+
+    install_packages
+    create_user
+    install_program
+    install_service
+    if [[ -n "$WITH_WEB" ]]; then
+        install_web
+        install_certificate
+        configure_nginx
+        configure_selinux
+    fi
     start_service
-    say "was $previous, now $(upsmon --version 2>/dev/null || echo unknown)"
+    first_account
+    say "was ${previous:-unknown}, now $(upsmon --version 2>/dev/null || echo unknown)"
     note "the configuration and the recorded history were not touched"
+    if [[ -n "$FIRST_PASSWORD" ]]; then
+        local name
+        name=$(awk '$1 == "server_name" && $2 !~ /^_;?$/ {gsub(";","",$2); print $2; exit}' "$NGINX_CONF" 2>/dev/null)
+        say "Settings    https://${name:-localhost}/settings/"
+        say "            sign in as $ADMIN_USER with the password ${C_WARN}$FIRST_PASSWORD${C_OFF}"
+        note "            (also in $STATE_DIR/first-login.txt until it is changed)"
+    fi
 }
 
 do_uninstall() {
     step "Removing upsmon"
     if [[ -z "$ASSUME_YES" ]]; then
-        confirm "Remove the service, the program and the dashboard?" \
+        confirm "Remove the service, the program and the pages?" \
             || { say "left alone"; exit 0; }
     fi
 
-    run systemctl disable --now upsmon 2>/dev/null || true
-    run rm -f "$UNIT" /etc/logrotate.d/upsmon
+    run systemctl disable --now upsmon upsmon-web.path upsmon-upgrade.path 2>/dev/null || true
+    run rm -f "$UNIT" /etc/logrotate.d/upsmon /etc/systemd/system/upsmon-web.path \
+        /etc/systemd/system/upsmon-web.service /etc/systemd/system/upsmon-upgrade.path \
+        /etc/systemd/system/upsmon-upgrade.service "$CONSOLE_PROFILE"
     run systemctl daemon-reload
     run rm -rf "$LIB_DIR" "$BIN"
     run rm -rf "$WEB_DIR"
-    run rm -f /etc/nginx/conf.d/upsmon.conf
+    run rm -f "$NGINX_CONF" "$POOL"
     if [[ -z "$DRY_RUN" ]] && command -v nginx >/dev/null 2>&1; then
         nginx -t >/dev/null 2>&1 && systemctl reload nginx 2>/dev/null || true
+        systemctl restart php-fpm 2>/dev/null || true
     fi
 
-    good "removed the service, the program and the dashboard"
-    note "kept: $CONFIG_DIR, /var/lib/upsmon (the history), /var/log/upsmon"
-    note "kept: the $SERVICE_USER account, and the certificate in $CERT_DIR"
+    good "removed the service, the program and the pages"
+    note "kept: $CONFIG_DIR, $STATE_DIR (the history, the accounts, the settings), /var/log/upsmon"
+    note "kept: the accounts $SERVICE_USER and $WEB_USER, and the certificate in $CERT_DIR"
     note "to remove those too:"
-    note "  sudo rm -rf $CONFIG_DIR /var/lib/upsmon /var/log/upsmon"
-    note "  sudo userdel $SERVICE_USER"
+    note "  sudo rm -rf $CONFIG_DIR $STATE_DIR /var/log/upsmon $CONSOLE_FLAG"
+    note "  sudo userdel $WEB_USER; sudo userdel $SERVICE_USER"
 }
 
 # ---------------------------------------------------------------------------
@@ -1058,6 +1298,7 @@ main() {
     configure_selinux
     configure_firewall
     start_service
+    first_account
     verify
     summary
 }
