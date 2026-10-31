@@ -4279,10 +4279,6 @@
    "source": "This is the database in use.",
    "text": "To je databáze, která se používá."
   },
-  "os2841": {
-   "source": "This is the only server: while it is in maintenance nobody can sign in to the VPN. Its pages go on working.",
-   "text": "Toto je jediný server: dokud je v údržbě, nikdo se nepřihlásí do VPN. Jeho stránky fungují dál."
-  },
   "os2844": {
    "source": "This makes the database and the account on that server, and gives the account rights on that one database and no other. The first time, it needs an administrator on the server to do it — root on MariaDB, postgres on PostgreSQL, or anyone who may create a database.",
    "text": "Tohle na tom serveru vytvoří databázi a účet a dá účtu práva k té jediné databázi a k žádné jiné. Poprvé je k tomu potřeba administrátor serveru – root na MariaDB, postgres na PostgreSQL nebo kdokoli, kdo smí vytvořit databázi."
@@ -9790,6 +9786,34 @@
   "k41901": {
    "source": "DNS record",
    "text": "Záznam DNS"
+  },
+  "k42001": {
+   "source": "The nodes",
+   "text": "Server"
+  },
+  "k42002": {
+   "source": "the output",
+   "text": "výstup"
+  },
+  "k42003": {
+   "source": "In maintenance",
+   "text": "V údržbě"
+  },
+  "k42004": {
+   "source": "- the UPS is still watched and its history kept, but nothing is changed: commands, values and the plug wait until it is back in service.",
+   "text": "– UPS se dál sleduje a jeho historie se ukládá, ale nic se nemění: příkazy, hodnoty i zásuvka počkají, až bude zpět v provozu."
+  },
+  "k42005": {
+   "source": "A new version put in from here: send the package, or take it from the web, and the server is upgraded - taken out of service first, its signature checked, put in by root, the service restarted, and brought back only once it answers again. The UPS is watched all the while; the history and the settings stay. The command line (install.sh --upgrade) works as it always has.",
+   "text": "Nová verze nasazená odsud: pošlete balíček nebo ho vezměte z webu a server se aktualizuje – nejdřív se vyřadí z provozu, ověří se podpis, root ho nasadí, služba se restartuje a do provozu se vrátí, až zase odpovídá. UPS se celou dobu sleduje; historie i nastavení zůstanou. Příkazová řádka (install.sh --upgrade) funguje jako vždy."
+  },
+  "k42006": {
+   "source": "A server in maintenance goes on watching the UPS, the plug and the sensors and keeps their history, but nothing changes them: a command to the UPS, a value set on it, the plug switched or reset are refused, the dashboard says so and /api/health says maintenance - so monitoring leaves it alone. These pages go on working.",
+   "text": "Server v údržbě dál sleduje UPS, zásuvku i senzory a ukládá jejich historii, ale nic je nemění: příkaz pro UPS, nastavení hodnoty, přepnutí nebo reset zásuvky se odmítnou, dashboard to oznámí a /api/health hlásí údržbu – monitoring ho tak nechá být. Tyto stránky fungují dál."
+  },
+  "k42007": {
+   "source": "While it is in maintenance the UPS, the plug and the sensors are still watched and their history kept, but nothing changes them: commands to the UPS, values set on it and the plug switched or reset are refused, and the dashboard and /api/health say maintenance. Its pages go on working.",
+   "text": "V údržbě se UPS, zásuvka i senzory dál sledují a jejich historie se ukládá, ale nic je nemění: příkazy pro UPS, nastavení hodnot i přepnutí nebo reset zásuvky se odmítnou a dashboard i /api/health hlásí údržbu. Stránky fungují dál."
   }
  },
  "patterns": {
@@ -12388,6 +12412,10 @@
   "kp41810": {
    "source": "{0} holds no certificate in PEM (a .cer in DER: openssl x509 -inform der -in it.cer)",
    "text": "{0} neobsahuje certifikát v PEM (.cer v DER převedete: openssl x509 -inform der -in soubor.cer)"
+  },
+  "kp42001": {
+   "source": "upsmon is in maintenance{0} - nothing is changed until it is back in service (Settings → Upgrades)",
+   "text": "upsmon je v údržbě{0} – nic se nemění, dokud nebude zpět v provozu (Nastavení → Aktualizace)"
   }
  },
  "rich": {

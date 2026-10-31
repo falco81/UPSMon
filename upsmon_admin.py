@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.1.11'
+__version__ = '4.2.0'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -658,7 +658,8 @@ def node_address():
 
 def ha_nodes(store):
     return [{'name': node_name(), 'me': True, 'alive': True, 'version': __version__,
-             'address': node_address(), 'age': 0, 'host': socket.gethostname()}]
+             'address': node_address(), 'age': 0, 'at': time.time(),
+             'host': socket.gethostname()}]
 
 
 def ha_peer_db():
@@ -9018,7 +9019,7 @@ def _upgrade_view(h):
         nodes.append(n)
     if not nodes:
         nodes = [{'name': node_name(), 'version': __version__, 'me': True, 'alive': True,
-                  'maintenance': maintenance_row(h.store)}]
+                  'at': time.time(), 'maintenance': maintenance_row(h.store)}]
     ok, why = upgrade_checks(h.store, meta, pages=True)
     plan = upgrade_plan(h.store)
     # A finished one hidden by Hide this (1.0.123).

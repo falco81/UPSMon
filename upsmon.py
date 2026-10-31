@@ -34,7 +34,7 @@ this file; the daemon starts it in threads of its own.
 """
 
 # Bumped with every change; upsmon_admin.py carries the same number.
-__version__ = '4.1.11'
+__version__ = '4.2.0'
 
 import argparse
 import getpass
@@ -3207,8 +3207,10 @@ class Daemon(object):
 
                 if path in ('/status', '/api/status', '/data.json'):
                     with daemon.lock:
-                        self._send(200, daemon.snapshot or
-                                   {'online': False, 'error': daemon.last_error})
+                        snap = dict(daemon.snapshot or
+                                    {'online': False, 'error': daemon.last_error})
+                    snap['maintenance'] = daemon.maintenance()
+                    self._send(200, snap)
                 elif path in ('/history', '/api/history'):
                     span = parse_span(query.get('range', ['24h'])[0])
                     points = min(5000, int(query.get('points', ['600'])[0] or 600))
@@ -3290,6 +3292,19 @@ class Daemon(object):
                         payload = json.loads(self.rfile.read(length).decode('utf-8'))
                     except ValueError:
                         payload = {}
+
+                # In maintenance (4.2.0) the UPS is watched, but nothing that
+                # changes it, the plug or what is recorded is done.
+                if path in ('/command', '/api/command', '/set', '/api/set',
+                            '/plug/switch', '/api/plug/switch', '/plug/reset',
+                            '/api/plug/reset', '/reset', '/api/reset'):
+                    m = daemon.maintenance()
+                    if m.get('on'):
+                        self._send(503, {'ok': False, 'maintenance': m, 'error':
+                                         'upsmon is in maintenance%s - nothing is changed '
+                                         'until it is back in service (Settings → Upgrades)'
+                                         % ((': ' + m['why']) if m.get('why') else '')})
+                        return
 
                 if path in ('/command', '/api/command'):
                     cmd = payload.get('command') or query.get('command', [''])[0]
@@ -3387,13 +3402,29 @@ class Daemon(object):
         server.daemon_threads = True
         server.serve_forever()
 
+    def maintenance(self):
+        """Whether this server is in maintenance (4.2.0), as Settings → Upgrades
+        set it: {'on': bool, 'why', 'by', 'at'} - off when the settings side
+        is not running."""
+        admin = getattr(self, 'admin', None)
+        if upsmon_admin is None or admin is None or getattr(admin, 'store', None) is None:
+            return {'on': False}
+        try:
+            row = upsmon_admin.maintenance_now(admin.store) or {}
+        except Exception:
+            return {'on': False}
+        return {k: row.get(k) for k in ('on', 'why', 'by', 'at') if k in row} or {'on': False}
+
     def health(self):
         stats = self.store.stats()
         with self.lock:
             snap = self.snapshot
         age = int(time.time() - self.last_ok) if self.last_ok else None
+        maint = self.maintenance()
         return {
             'ok': bool(self.last_ok) and self.consecutive_errors == 0,
+            'maintenance': maint,
+            'state': 'maintenance' if maint.get('on') else 'in service',
             'version': __version__,
             'uptime': int(time.time() - self.started),
             'ups': self.ups_name,

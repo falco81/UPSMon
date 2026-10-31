@@ -17,7 +17,7 @@ if (PHP_SAPI !== 'cli' && isset($_SERVER['SCRIPT_FILENAME'])
     exit;
 }
 
-const UPS_VERSION = '4.1.11';
+const UPS_VERSION = '4.2.0';
 define('UPS_LANG_CODE', '/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/');
 
 header('Cache-Control: no-cache, no-store, must-revalidate');

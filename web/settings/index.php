@@ -574,13 +574,16 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
   <div class="ctl-pane" id="pane-upgrade" hidden>
     <div class="ctl-head"><h2 class="ctl-title">Upgrades and maintenance</h2>
       <p class="ctl-lede">A new version put in from here: send the package, or take it from the
-        web, and the server is upgraded - its signature checked, put in by root, the service
-        restarted and checked again. The UPS is watched again within seconds; the history
-        and the settings stay. The command line (install.sh --upgrade) works as it always has.</p></div>
+        web, and the server is upgraded - taken out of service first, its signature checked, put
+        in by root, the service restarted, and brought back only once it answers again. The UPS
+        is watched all the while; the history and the settings stay. The command line
+        (install.sh --upgrade) works as it always has.</p></div>
     <div class="card full">
-      <h2>This server</h2>
-      <p class="note">While it is in maintenance - during an upgrade - the dashboard and these
-        pages go on working.</p>
+      <h2>The nodes</h2>
+      <p class="note">A server in maintenance goes on watching the UPS, the plug and the sensors
+        and keeps their history, but nothing changes them: a command to the UPS, a value set on
+        it, the plug switched or reset are refused, the dashboard says so and /api/health says
+        maintenance - so monitoring leaves it alone. These pages go on working.</p>
       <div id="up-nodes"></div>
     </div>
     <div class="card full admin-only" id="up-web-card">
@@ -632,16 +635,23 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
       <h2>What root said last <span class="mono small muted" id="up-log-node" data-no-i18n></span></h2>
       <p class="note"><span>The output of install.sh, the last time this server was upgraded from these pages.</span>
         <span class="mono" data-no-i18n>/var/lib/upsmon/upgrade/last.log</span></p>
-      <div class="seg" id="up-log-nodes" hidden style="margin-bottom:10px"></div>
-      <pre class="lines" id="up-log">–</pre>
+      <!-- Folded until asked for (as OTP 1.0.196): a long log pushed the rest down. -->
+      <details class="fold" id="up-log-fold">
+        <summary>the output</summary>
+        <div class="seg" id="up-log-nodes" hidden style="margin:10px 0"></div>
+        <pre class="lines" id="up-log">–</pre>
+      </details>
     </div>
     <div class="card full">
       <h2>On the command line</h2>
       <p class="note">The same, by hand, as root:</p>
-      <pre class="lines">upsmon --upgrade-check                     # what is on the web, and whether it is newer
+      <pre class="lines">upsmon --maintenance on --why "upgrade"  # out of service
+upsmon --upgrade-check                     # what is on the web, and whether it is newer
 upsmon --upgrade-online                    # the newest: fetched, checked, put in
 tar xzf upsmon-X.Y.Z.tar.gz && cd upsmon-X.Y.Z
-./install.sh --upgrade                     # a package by hand
+./install.sh --upgrade                     # takes it out and back by itself as well
+upsmon --maintenance off                   # back in service (if it was put out by hand)
+upsmon --maintenance status                # which it is
 upsmon --upgrade-status                    # an upgrade started on these pages</pre>
     </div>
   </div>

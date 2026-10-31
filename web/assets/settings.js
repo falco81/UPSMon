@@ -3130,7 +3130,7 @@ function maintenanceAsk(n, on, then) {
   modal('Take ' + n.name + ' out of service', function (body) {
     var p = el('p', 'note');
     p.textContent = alone
-      ? 'This is the only server: while it is in maintenance the dashboard is away. Its pages go on working.'
+      ? 'While it is in maintenance the UPS, the plug and the sensors are still watched and their history kept, but nothing changes them: commands to the UPS, values set on it and the plug switched or reset are refused, and the dashboard and /api/health say maintenance. Its pages go on working.'
       : 'It is in maintenance while it is upgraded. Its pages go on working.';
     if (alone) p.className = 'note bad';
     body.appendChild(p);
@@ -6314,7 +6314,10 @@ function acmeNameAsk(t) {
 /* In your DNS (1.0.170): what each certificate asked for needs there - by the
    way the CA checks it - the steps of the way chosen, and a check that looks
    each record up from this node. */
-var AC_DNS = {at: 0, rows: null};
+var AC_DNS = (function () {
+  try { var k = JSON.parse(sessionStorage.getItem('upsmon-acme-dns') || 'null'); if (k && k.rows) return k; } catch (e) {}
+  return {at: 0, rows: null};
+})();
 var ACME_DNS_STEPS = {
   'http-01': ['Each name points at the address that reaches port 80 of its node (or of the VIP address) - from the internet, or from your own CA.',
               'Port 80 is open to it - the firewall in front of the servers, and Firewall and access here.',
@@ -6400,6 +6403,7 @@ function acmeDnsGuide(d) {
     busy(chk, true);
     api('acme', {action: 'dns_check'}).then(function (x) {
       AC_DNS = {at: Date.now() / 1000, rows: x.rows, own: x.own_resolvers};
+      try { sessionStorage.setItem('upsmon-acme-dns', JSON.stringify(AC_DNS)); } catch (e) {}
       busy(chk, false); drawAcme();
     }).catch(function (e) { busy(chk, false); oops(e); });
   };

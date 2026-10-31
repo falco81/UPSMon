@@ -540,6 +540,13 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
     body{padding-top:18px}
     .metric .value{font-size:26px}
   }
+  /* upsmon 4.2.0: the server in maintenance, said at the top */
+  .maint-banner{display:flex;align-items:flex-start;gap:10px;margin:0 0 16px;padding:12px 16px;
+    border:1px solid rgba(210,153,34,.35);border-radius:var(--r);background:var(--warn-bg);color:var(--tx)}
+  .maint-banner .dot{flex:none;width:9px;height:9px;margin-top:6px;border-radius:50%;background:var(--warn)}
+  .maint-banner[hidden]{display:none}
+  .maint-banner b{color:var(--warn)}
+  .maint-banner .sub{display:block;color:var(--tx-dim);font-size:13px;margin-top:2px}
 </style>
 </head>
 <body>
@@ -570,6 +577,7 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
 </div>
 <?php endif; ?>
 
+<div class="maint-banner" id="maint-banner" role="status" hidden></div>
 <div class="tabs" role="tablist">
   <button role="tab" aria-selected="true"  data-tab="overview">Overview</button>
   <button role="tab" aria-selected="false" data-tab="history">History</button>
@@ -3211,8 +3219,32 @@ function renderSensorVariables(sensors) {
 // ---------------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------------
+/* In maintenance (4.2.0): the UPS is still watched, nothing is changed -
+   set on Settings → Upgrades, or upsmon --maintenance on. */
+function drawMaintenance(m) {
+  var box = $("maint-banner");
+  if (!box) return;
+  if (!m || !m.on) { box.hidden = true; return; }
+  box.textContent = "";
+  var dot = document.createElement("span"); dot.className = "dot"; box.appendChild(dot);
+  var words = document.createElement("div");
+  var b = document.createElement("b"); b.textContent = "In maintenance"; words.appendChild(b);
+  words.appendChild(document.createTextNode(" - the UPS is still watched and its history kept, but nothing is changed: commands, values and the plug wait until it is back in service."));
+  var sub = document.createElement("span"); sub.className = "sub";
+  var bits = [];
+  if (m.why) bits.push(m.why);
+  if (m.by) bits.push(m.by);
+  if (m.at) bits.push(new Date(m.at * 1000).toLocaleString());
+  sub.textContent = bits.join(" · ");
+  sub.setAttribute("data-no-i18n", "");
+  if (bits.length) words.appendChild(sub);
+  box.appendChild(words);
+  box.hidden = false;
+}
+
 function refresh() {
   return api("status").then(function (snap) {
+    drawMaintenance(snap && snap.maintenance);
     if (!snap || snap.online === false) {
       var verdict = $("verdict");
       verdict.className = "pill crit";

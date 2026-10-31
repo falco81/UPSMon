@@ -4,6 +4,30 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.2.0 - 2026-10-31
+
+**Upgrades and maintenance, as OTP 1.0.197 has them (one server, no HA)**
+(Settings → Upgrades):
+- *The nodes*: this server with its version, when it was heard from, its state
+  (in service / in maintenance, why, by whom, since when) and **Maintenance** /
+  **Back in service**.
+- **Maintenance** takes upsmon out of service the way OTP does for its node:
+  the UPS, the plug and the sensors are still watched and their history kept,
+  but nothing changes them - a command to the UPS, a value set on it, the plug
+  switched or reset, a reset of what is recorded are refused (HTTP 503, "upsmon
+  is in maintenance"); the dashboard says so at the top, `/api/status` and
+  `/api/health` carry `maintenance` (health: `"state": "maintenance"`) for
+  monitoring. An upgrade, a system update and a restart from these pages put it
+  in maintenance and back by themselves.
+- `upsmon --maintenance on --why "..." | off | status` (status exits 3 while in
+  maintenance); the command-line card lists it.
+- *What root said last* folded until opened, as in OTP 1.0.196.
+
+**Automatic certificates → In your DNS**: laid out across the whole width,
+every column a fixed share and the copy buttons in narrow columns of their own,
+one under the other - nothing moves between a reload (F5) and Check DNS; the
+last check is kept across a reload in that tab.
+
 ## 4.1.11 - 2026-10-31
 
 - Automatic certificates → In your DNS: the copy buttons line up one under the
