@@ -6354,27 +6354,31 @@ function acmeDnsGuide(d) {
     var c = checked && checked[i] && checked[i].record === r.record ? checked[i] : {};
     return Object.assign({}, r, {ok: c.ok, said: c.said});
   });
-  var t = listTable(['Certificate', 'Record', 'Type', 'Points at / value', 'In DNS now'], rows, function (r) {
+  var t = listTable(['Certificate', 'DNS record', '', 'Type', 'Points at / value', '', 'In DNS now'], rows, function (r) {
     var tr = el('tr');
     tr.appendChild(r.target === 'vip' ? el('td', '', 'the VIP address') : (r.type === 'NS' ? el('td', '', 'its zone at deSEC') : noI18n(el('td', '', r.target))));
-    var rec = el('td', 'mono small dns-cell');
+    var rec = el('td', 'mono small dns-txt');
+    var recb = el('td', 'dns-copy');
     if (r.record) {
       rec.appendChild(noI18n(el('span', '', r.record)));
       var cp = iconButton('copy', 'Copy');
       cp.onclick = function () { copyText(r.record, cp); };
-      rec.appendChild(cp);
+      recb.appendChild(cp);
     } else rec.appendChild(el('span', 'muted', r.why || ''));
     tr.appendChild(rec);
+    tr.appendChild(recb);
     tr.appendChild(noI18n(el('td', 'mono small', r.type || '')));
-    var val = el('td', 'mono small dns-cell');
+    var val = el('td', 'mono small dns-txt');
+    var valb = el('td', 'dns-copy');
     if (r.type === 'CNAME' || r.type === 'NS' || (r.type === 'A' && r.value)) {
       val.appendChild(noI18n(el('span', '', r.value)));
       var cv = iconButton('copy', 'Copy');
       cv.onclick = function () { copyText(r.value, cv); };
-      val.appendChild(cv);
+      valb.appendChild(cv);
       if (r.type === 'A') val.appendChild(el('div', 'muted', 'or the public address in front of it'));
     } else val.appendChild(el('span', 'muted', r.type === 'TXT' ? (r.value || r.why) : ''));
     tr.appendChild(val);
+    tr.appendChild(valb);
     var st = el('td', 'small');
     if (r.check) {
       if (r.ok === undefined) st.appendChild(el('span', 'muted', 'not checked yet'));
@@ -6385,28 +6389,9 @@ function acmeDnsGuide(d) {
       }
     } else st.appendChild(el('span', 'muted', r.type === 'TXT' && !r.value ? 'upsmon puts it in' : '–'));
     tr.appendChild(st);
-    /* The text and its button in one box: the button at the column's edge. */
-    Array.prototype.forEach.call(tr.querySelectorAll('td.dns-cell'), function (td) {
-      var box = el('div', 'dns-val');
-      while (td.firstChild) box.appendChild(td.firstChild);
-      td.appendChild(box);
-    });
     return tr;
   });
   card.appendChild(t);
-  /* The copy buttons right after the text, one under the other: the text of
-     a column as wide as its longest (1.0.172). */
-  setTimeout(function () {
-    [1, 3].forEach(function (col) {
-      var spans = Array.prototype.map.call(t.querySelectorAll('tbody tr'), function (tr) {
-        var td = tr.children[col];
-        return td && td.querySelector('.dns-val > span:first-child');
-      }).filter(Boolean);
-      var w = 0;
-      spans.forEach(function (sp) { sp.style.width = ''; w = Math.max(w, sp.getBoundingClientRect().width); });
-      spans.forEach(function (sp) { sp.style.width = Math.ceil(w) + 'px'; });
-    });
-  }, 0);
   var row = el('div', 'btnrow');
   var chk = cmdButton('Check DNS', 'search', 'small');
   explain(chk, 'Each record looked up from this node now, through its DNS servers - as the CA will look. A record just put in may take a while to show (its TTL).');

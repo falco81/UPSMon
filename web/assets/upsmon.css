@@ -3371,3 +3371,11 @@ a:hover{color:#79c0ff}
 .pem-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px}
 .pem-says{font-size:12px;margin-left:4px}
 .pem-says.good{color:var(--good,#3fb950)}.pem-says.bad{color:var(--bad,#f85149)}.pem-says.dim{color:var(--tx-dim)}
+
+/* ---- upsmon 4.1.9: In your DNS - the text as wide as its longest, the copy button right after it ---- */
+.acme-dns table{width:100%}
+.acme-dns td.dns-txt{width:1%;white-space:nowrap;padding-right:6px}
+.acme-dns td.dns-txt > div{white-space:normal}
+.acme-dns td.dns-copy{width:1%;padding-left:0;padding-right:22px}
+.acme-dns td.dns-copy button{display:block}
+.acme-dns th:empty{padding:0}

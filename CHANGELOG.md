@@ -4,6 +4,15 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.9 - 2026-10-31
+
+- Automatic certificates → In your DNS: the copy buttons sit in a column of
+  their own, right after the longest text and one under the other - laid out
+  by the table itself, so they no longer jump at every refresh (they were
+  measured and moved after drawing).
+- The column "Record" there is "DNS record" ("Záznam DNS" in Czech; it read
+  "Bilance", the dashboard's word).
+
 ## 4.1.8 - 2026-10-31
 
 - Automatic certificates → The CA's own certificate (and every setting that

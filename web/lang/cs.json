@@ -9786,6 +9786,10 @@
   "k41807": {
    "source": "that file could not be read",
    "text": "ten soubor nejde přečíst"
+  },
+  "k41901": {
+   "source": "DNS record",
+   "text": "Záznam DNS"
   }
  },
  "patterns": {
