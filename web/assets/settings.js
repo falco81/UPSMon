@@ -620,6 +620,69 @@ function settingByKey(key) {
 function isBool(s) {
   return typeof s.default === 'boolean' || (s.min === 0 && s.max === 1 && typeof s.default === 'number');
 }
+/* Settings that hold certificates in PEM (4.1.8): drawn as a memo. */
+var PEM_KEYS = {acme_ca_pem: 1, isemon_ca: 1, siem_ca: 1};
+
+function pemSays(text) {
+  text = String(text || '').trim();
+  if (!text) return ['empty - the system’s own trusted roots are used', 'dim'];
+  var n = (text.match(/-----BEGIN CERTIFICATE-----/g) || []).length;
+  var e = (text.match(/-----END CERTIFICATE-----/g) || []).length;
+  if (/PRIVATE KEY-----/.test(text)) return ['a private key does not belong here - only the certificate', 'bad'];
+  if (!n || n !== e) return ['not a certificate in PEM: it begins -----BEGIN CERTIFICATE----- and ends -----END CERTIFICATE-----', 'bad'];
+  return [n === 1 ? '1 certificate in PEM' : n + ' certificates in PEM', 'good'];
+}
+
+function pemTools(item, input, s) {
+  var bar = el('div', 'pem-bar');
+  var said = el('span', 'pem-says');
+  function look() {
+    var x = pemSays(input.value);
+    said.className = 'pem-says ' + x[1];
+    said.textContent = x[0];
+    item.classList.toggle('pem-bad', x[1] === 'bad');
+  }
+  function take(file) {
+    if (!file) return;
+    if (file.size > 256 * 1024) { toast('that file is far bigger than a certificate (' + bytes(file.size) + ')', 'bad'); return; }
+    var r = new FileReader();
+    r.onerror = function () { toast('that file could not be read', 'bad'); };
+    r.onload = function () {
+      var t = String(r.result || '');
+      if (!/-----BEGIN CERTIFICATE-----/.test(t)) { toast(file.name + ' holds no certificate in PEM (a .cer in DER: openssl x509 -inform der -in it.cer)', 'bad'); return; }
+      input.value = t.replace(/\r\n/g, '\n').trim() + '\n';
+      input.dispatchEvent(new Event('input'));
+      look();
+    };
+    r.readAsText(file);
+  }
+  if (ADMIN) {
+    var load = cmdButton('Load a file…', 'upload', 'small');
+    load.onclick = function () {
+      var pick = el('input');
+      pick.type = 'file';
+      pick.accept = '.pem,.crt,.cer,.ca-bundle,text/plain,application/x-pem-file';
+      pick.onchange = function () { take(pick.files && pick.files[0]); };
+      pick.click();
+    };
+    var clear = cmdButton('Empty', 'close', 'small');
+    clear.onclick = function () { input.value = ''; input.dispatchEvent(new Event('input')); look(); };
+    bar.appendChild(load);
+    bar.appendChild(clear);
+    input.addEventListener('dragover', function (e) { e.preventDefault(); input.classList.add('over'); });
+    input.addEventListener('dragleave', function () { input.classList.remove('over'); });
+    input.addEventListener('drop', function (e) {
+      e.preventDefault();
+      input.classList.remove('over');
+      take(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]);
+    });
+  }
+  bar.appendChild(said);
+  input.addEventListener('input', look);
+  look();
+  item.appendChild(bar);
+}
+
 var TALL = {portal_help: 1, portal_groups: 1, sms_body: 1, sms_headers: 1, isemon_targets: 1, admin_group_full: 1,
             admin_group_token: 1, admin_group_readonly: 1};
 
@@ -1055,6 +1118,15 @@ function settingItemBare(s) {
     input.min = s.min;
     input.max = s.max;
     input.value = s.value;
+  } else if (PEM_KEYS[s.key]) {
+    item.classList.add('tall', 'pem-item');
+    input = el('textarea', 'pem-memo');
+    input.value = s.value === null || s.value === undefined ? '' : String(s.value);
+    input.rows = 12;
+    input.spellcheck = false;
+    input.setAttribute('wrap', 'off');
+    input.setAttribute('autocomplete', 'off');
+    input.placeholder = '-----BEGIN CERTIFICATE-----\nMIIF…\n-----END CERTIFICATE-----';
   } else if (TALL[s.key]) {
     item.classList.add('tall');
     input = el('textarea');
@@ -1072,6 +1144,7 @@ function settingItemBare(s) {
   input.addEventListener('input', function () { markDirty(item, s); });
   input.addEventListener('change', function () { markDirty(item, s); });
   item.appendChild(input);
+  if (PEM_KEYS[s.key]) pemTools(item, input, s);
   if (s.key === 'portal_groups' && ADMIN) {
     /* The groups found in the directory and picked, rather than typed - the
        same list as for a realm and for the administrators' groups. */

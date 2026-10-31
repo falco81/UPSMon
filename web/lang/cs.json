@@ -9758,6 +9758,34 @@
   "k41617": {
    "source": "and the second one (ECDSA) beside it",
    "text": "a druhý (ECDSA) vedle něj"
+  },
+  "k41801": {
+   "source": "empty - the system’s own trusted roots are used",
+   "text": "prázdné - použijí se kořenové certifikáty, kterým věří systém"
+  },
+  "k41802": {
+   "source": "a private key does not belong here - only the certificate",
+   "text": "privátní klíč sem nepatří - jen certifikát"
+  },
+  "k41803": {
+   "source": "not a certificate in PEM: it begins -----BEGIN CERTIFICATE----- and ends -----END CERTIFICATE-----",
+   "text": "není to certifikát v PEM: začíná -----BEGIN CERTIFICATE----- a končí -----END CERTIFICATE-----"
+  },
+  "k41804": {
+   "source": "1 certificate in PEM",
+   "text": "1 certifikát v PEM"
+  },
+  "k41805": {
+   "source": "Load a file…",
+   "text": "Načíst ze souboru…"
+  },
+  "k41806": {
+   "source": "Empty",
+   "text": "Vyprázdnit"
+  },
+  "k41807": {
+   "source": "that file could not be read",
+   "text": "ten soubor nejde přečíst"
   }
  },
  "patterns": {
@@ -12344,6 +12372,18 @@
   "kp41621": {
    "source": "{0} + {1} (a second certificate beside it)",
    "text": "{0} + {1} (druhý certifikát vedle něj)"
+  },
+  "kp41808": {
+   "source": "{0} certificates in PEM",
+   "text": "certifikáty v PEM: {0}"
+  },
+  "kp41809": {
+   "source": "that file is far bigger than a certificate ({0})",
+   "text": "ten soubor je mnohem větší než certifikát ({0})"
+  },
+  "kp41810": {
+   "source": "{0} holds no certificate in PEM (a .cer in DER: openssl x509 -inform der -in it.cer)",
+   "text": "{0} neobsahuje certifikát v PEM (.cer v DER převedete: openssl x509 -inform der -in soubor.cer)"
   }
  },
  "rich": {

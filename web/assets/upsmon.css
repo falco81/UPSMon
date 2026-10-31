@@ -3360,3 +3360,14 @@ a:hover{color:#79c0ff}
 .acme-steps-done .si-row{align-items:flex-start}
 .acme-steps-done .si-row .mono{flex:0 0 56px;white-space:nowrap;overflow-wrap:normal}
 .acme-steps-done .si-row span:last-child{flex:1;min-width:0;text-align:left;overflow-wrap:anywhere}
+
+/* ---- upsmon 4.1.8: a certificate in PEM written into a setting ---- */
+.set-item.pem-item > textarea.pem-memo{min-height:230px;max-height:560px;resize:vertical;white-space:pre;
+  overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:10px 12px;
+  border-radius:10px;tab-size:4}
+.set-item.pem-item > textarea.pem-memo::placeholder{color:var(--tx-dim);opacity:.55}
+.set-item.pem-item > textarea.pem-memo.over{border-color:var(--accent);background:var(--info-bg)}
+.set-item.pem-item.pem-bad > textarea.pem-memo{border-color:rgba(248,81,73,.6)}
+.pem-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:8px}
+.pem-says{font-size:12px;margin-left:4px}
+.pem-says.good{color:var(--good,#3fb950)}.pem-says.bad{color:var(--bad,#f85149)}.pem-says.dim{color:var(--tx-dim)}

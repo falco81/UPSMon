@@ -4,6 +4,15 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.1.8 - 2026-10-31
+
+- Automatic certificates → The CA's own certificate (and every setting that
+  holds a certificate in PEM): a large memo across the whole width instead of
+  a one-line box - monospace, not wrapped, resizable; **Load a file…**
+  (.pem, .crt, .cer) or a file dropped onto it; **Empty**; and under it what
+  it holds: "1 certificate in PEM", not PEM, or a private key that does not
+  belong there.
+
 ## 4.1.7 - 2026-10-31
 
 - ACME: an order stopped with "the key is ec, ec384, rsa2048, rsa3072 or rsa4096" -
