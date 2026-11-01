@@ -4,6 +4,19 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.3.2 - 2026-11-01
+
+- **Certificates from acme looks and works exactly as in ai 1.0.60**: the state in
+  the card's head (off / on - not paired yet / on - paired), the two switches in
+  the card, the tiles - the address for acme, this server's id, its sealing key -
+  each copied with a click; Pair with an acme shows the code large, with the
+  address and until when, a click copies it; Or paste acme's key with a name for
+  it; Paired with, What acme sees here, the last push. The switches and *Forget
+  it* (struck through, *Keep it*) wait for **Save changes** at the bottom;
+  *Put them back* throws them away. Czech words as ai's.
+- The address shown for acme is `https://NAME/` (as ai's); `/settings/` works the
+  same.
+
 ## 4.3.1 - 2026-11-01
 
 - Certificates from acme: *Take certificates from acme* and *Take certificates of

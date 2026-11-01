@@ -1509,7 +1509,7 @@ $('set-save').onclick = function () {
       }).catch(function (e) { oops(e); return false; });
     });
   });
-  chain.then(function () { markDirtyCount(); busy($('set-save'), false); if (PANE === 'web' && typeof loadPush === 'function') loadPush(); });
+  chain.then(function () { markDirtyCount(); busy($('set-save'), false); });
 };
 $('set-reset').onclick = function () {
   var keys = Object.keys(PENDING);
@@ -6704,170 +6704,162 @@ function pxSteps(x) {
   return ul;
 }
 
-
-/* ---- Certificates from acme (acme push, protocol 1 - upsmon 4.3.0) ---------------
-   acme, the certificate manager, pairs with this server once and then puts its
-   certificate in and renews it. Off until switched on here. */
-var PUSH = {d: null};
+/* ---- Certificates from acme (1.0.58): acme push, the receiving end ---------- */
+var PUSH = {};
 function loadPush() {
-  if (!$('web-push')) return;
-  api('acme-push').then(function (d) { PUSH.d = d; drawPush(); }).catch(function (e) {
-    var host = $('web-push');
-    if (host) { clear(host); host.appendChild(el('p', 'note bad', String((e && e.message) || e))); }
-  });
+  if (!ADMIN || !$('web-push')) return;
+  api('acme-push').then(drawPush).catch(function () { /* the card stays as it was */ });
 }
-function pushDo(body, after) {
+function pushDo(body, then) {
   return api('acme-push', body).then(function (d) {
-    PUSH.d = d;
     if (d.message) toast(d.message, 'good');
-    drawPush();
-    if (after) after(d);
+    drawPush(d);
+    if (then) then(d);
     return d;
   }).catch(oops);
 }
-function pushAddress() {
-  return location.protocol + '//' + location.host + '/settings/';
-}
-function pushCode(d) {
-  modal('Pair with an acme', function (body) {
-    body.appendChild(el('p', 'note', 'In acme: Targets → add “An application of ours (acme push)”, the address below, and this code in Pairing code - then Try. The code is shown only now, works once, for 15 minutes; five wrong tries and it is gone.'));
-    var big = el('div', 'push-code');
-    big.appendChild(noI18n(el('span', 'mono', d.code)));
-    var cp = iconButton('copy', 'Copy');
-    cp.onclick = function () { copyText(d.code, cp); };
-    big.appendChild(cp);
-    body.appendChild(big);
-    var adr = el('div', 'push-code small');
-    adr.appendChild(noI18n(el('span', 'mono', pushAddress())));
-    var ca = iconButton('copy', 'Copy');
-    ca.onclick = function () { copyText(pushAddress(), ca); };
-    adr.appendChild(ca);
-    body.appendChild(formField('The address for acme', adr, 'Where acme reaches these pages. acme’s address must be among those that may open them (the access list of the pages).'));
-  }, [{words: 'Done', cls: 'primary', close: true}], true);
-}
-function pushPaste() {
-  modal('Paste acme’s key', function (body) {
-    body.appendChild(el('p', 'note', 'Instead of a pairing code: acme’s own key, one line, as acme shows it (Certificates from acme → This acme’s own key). acme takes this server’s keys at its next Try.'));
-    var area = el('textarea', 'pem-memo');
-    area.id = 'push-key';
-    area.rows = 3;
-    area.spellcheck = false;
-    area.placeholder = 'acme-push-ed25519 AAAA… acme@acme1';
-    body.appendChild(area);
-    setTimeout(function () { area.focus(); }, 50);
-  }, [{words: 'Cancel', close: true},
-      {words: 'Take this key', cls: 'primary', icon: 'key', close: true, go: function () {
-        pushDo({action: 'paste', key: ($('push-key') || {}).value || ''});
-      }}], true);
-}
-function pushSlotNow(c) {
-  if (!c) return el('span', 'muted', 'nothing yet');
-  var box = el('div', 'push-now');
-  box.appendChild(noI18n(el('div', 'mono small', (c.subject || '').replace(/^CN=/, '') || '?')));
-  var bits = [];
-  if (c.key_type) bits.push(c.key_type + (c.alt && c.alt.key_type ? ' + ' + c.alt.key_type : ''));
-  if (c.not_after) bits.push('until ' + new Date(c.not_after * 1000).toLocaleDateString(numLang()));
-  if (c.issuer) bits.push((c.issuer.match(/CN=([^,]+)/) || [])[1] || c.issuer);
-  box.appendChild(noI18n(el('div', 'muted small', bits.join(' · '))));
+/* The tiles of the card and of the code (1.0.60): a click copies what is in
+   it - the code, the address for acme, the id, the key - for acme's Target. */
+function pushTiles(box, values) {
+  Array.prototype.forEach.call(box.querySelectorAll('.fact'), function (cell, i) {
+    if (values[i]) copyOnClick(cell, values[i], 'copied: ' + cell.querySelector('.k').textContent);
+  });
   return box;
 }
-var PUSH_MANAGED = {'none': ['nothing yet', 'dim'], 'manual': ['put in by hand', 'dim'],
-                    'own-acme': ['Automatic certificates', 'info'], 'acme-push': ['acme push', 'ok']};
-function drawPush() {
+function pushCode(code, until) {
+  modal('Pair with an acme', function (body) {
+    body.appendChild(el('p', 'note', 'In acme: Targets → add An application of ours (acme push), its address below, and this code in Pairing code - then Try. The code is shown this once, works once, for 15 minutes; five wrong tries end it.'));
+    var big = noI18n(el('div', 'push-code mono', code));
+    copyOnClick(big, code, 'the pairing code is copied');
+    body.appendChild(big);
+    body.appendChild(pushTiles(peekFacts([['The address for acme', noI18n(el('span', 'mono', location.origin + '/'))],
+      ['Valid until', new Date(until * 1000).toLocaleTimeString(numLang())]]), [location.origin + '/']));
+    body.appendChild(el('p', 'btnhelp', 'A click on the code or the address copies it.'));
+  }, [{words: 'Close', close: true}], true);
+}
+/* What is changed on the card and not saved yet (1.0.59): the two switches
+   and the acmes to forget wait for the save bar at the bottom, as every other
+   setting does; Put them back throws them away. */
+var PUSH_WANT = {forget: {}};
+function pushWanted() {
+  var w = PUSH_WANT, d = PUSH || {};
+  var any = (w.on !== undefined && w.on !== d.on) || (w.other_names !== undefined && w.other_names !== d.other_names)
+    || Object.keys(w.forget).length;
+  if (!any) { PUSH_WANT = {forget: {}}; delete PENDING.push; markDirtyCount(); return; }
+  pendingSet('push', {pane: 'web', save: pushSave, reset: function () { PUSH_WANT = {forget: {}}; drawPush(PUSH); }});
+}
+function pushSave() {
+  var w = PUSH_WANT, d = PUSH || {}, chain = Promise.resolve();
+  var step = function (body) { chain = chain.then(function () { return api('acme-push', body); }); };
+  /* Forgotten first, while it is still on; switched off last. */
+  Object.keys(w.forget).forEach(function (kid) { step({action: 'key_forget', key_id: kid}); });
+  if (w.on === true && !d.on) step({action: 'switch', on: true});
+  if (w.other_names !== undefined && w.other_names !== d.other_names) step({action: 'other_names', on: w.other_names});
+  if (w.on === false && d.on) step({action: 'switch', on: false});
+  return chain.then(function () {
+    PUSH_WANT = {forget: {}};
+    toast('Certificates from acme: saved', 'good');
+    loadPush();
+    return true;
+  });
+}
+function drawPush(d) {
+  PUSH = d || {};
+  var W = PUSH_WANT;
   var host = $('web-push');
   if (!host) return;
-  var d = PUSH.d || {};
   clear(host);
-  /* The two switches are settings of the pages (4.3.1), drawn above in
-     #sect-web and saved with Save changes at the bottom. */
-  if (!d.on) {
-    host.appendChild(el('p', 'muted small', 'Switch Take certificates from acme on above, then Save changes: pairing and the rest show here.'));
-    return;
+  var st = $('web-push-state');
+  if (st) { clear(st); st.appendChild(el('span', 'tag ' + (d.on ? (d.keys.length ? 'ok' : 'warn') : 'dim'), d.on ? (d.keys.length ? 'on - paired' : 'on - not paired yet') : 'off')); }
+  var g = el('div', 'set-grid');
+  var sw = switchBox(W.on !== undefined ? W.on : d.on);
+  sw._input.onchange = function () { PUSH_WANT.on = !!sw._get(); pushWanted(); };
+  g.appendChild(formField('Take certificates from acme', sw, 'Off: hello says only that it is off, and nothing is taken.'));
+  if (d.on) {
+    var sw2 = switchBox(W.other_names !== undefined ? W.other_names : d.other_names);
+    sw2._input.onchange = function () { PUSH_WANT.other_names = !!sw2._get(); pushWanted(); };
+    g.appendChild(formField('Take certificates of other names', sw2, 'Off: a certificate must hold the name of this server (' + ((d.slots || [])[0] || {names: ['?']}).names.join(', ') + '). On: acme may say not to check it.'));
   }
-
-
-  /* Who this is, to acme. */
-  host.appendChild(netFacts([
-    ['The address for acme', pushAddress(), true],
-    ['This server’s id', d.app_id || '', true],
-    ['Its sealing key (X25519)', d.enc_key || '', true],
-    ['Cryptography', d.crypto || '']
-  ]));
-
-  /* Pairing. */
+  host.appendChild(g);
+  if (!d.on) return;
+  host.appendChild(pushTiles(peekFacts([
+    ['The address for acme', noI18n(el('span', 'mono', location.origin + '/'))],
+    ['This server’s id', noI18n(el('span', 'mono', d.app_id || ''))],
+    ['Its sealing key (X25519)', noI18n(el('span', 'mono small', d.enc_key || ''))]]),
+    [location.origin + '/', d.app_id, d.enc_key]));
+  /* pairing */
   var row = el('div', 'btnrow');
-  var pair = cmdButton('Pair with an acme…', 'key', 'primary');
-  pair.disabled = !ADMIN;
-  explain(pair, 'Makes a one-time code (15 minutes, five tries) to give to acme’s target. acme proves it was given the code; this server proves it to acme the same way.');
-  pair.onclick = function () { pushDo({action: 'code'}, function (x) { if (x.code) pushCode(x); }); };
+  var pair = cmdButton('Pair with an acme', 'key', 'primary');
+  pair.onclick = function () { pushDo({action: 'pair'}, function (x) { if (x.code) pushCode(x.code, x.pairing.until); }); };
   row.appendChild(pair);
-  var paste = cmdButton('Or paste acme’s key…', 'key', '');
-  paste.disabled = !ADMIN;
-  paste.onclick = pushPaste;
-  row.appendChild(paste);
   if (d.pairing) {
     var back = cmdButton('Take it back', 'undo', '');
-    back.disabled = !ADMIN;
-    back.onclick = function () { pushDo({action: 'code_drop'}); };
+    back.onclick = function () { pushDo({action: 'pair_stop'}); };
     row.appendChild(back);
-    var until = new Date(d.pairing.until * 1000).toLocaleTimeString(numLang());
-    var w = el('span', 'muted small', d.pairing.tries ? 'a code waits until ' + until + ' - ' + d.pairing.tries + ' wrong'
-                                                      : 'a code waits until ' + until);
-    row.appendChild(w);
+    row.appendChild(el('span', 'small muted', 'A code waits until ' + new Date(d.pairing.until * 1000).toLocaleTimeString(numLang()) + ' (' + num(d.pairing.tries) + ' wrong so far).'));
   }
+  var paste = cmdButton('Or paste acme’s key…', 'edit', '');
+  paste.onclick = function () {
+    var ta, nm;
+    modal('Paste acme’s key', function (body) {
+      body.appendChild(el('p', 'note', 'acme’s own Certificates from acme card shows This acme’s own key: acme-push-ed25519 AAAA… acme then pins this server when it first sees it - keep Check the application’s certificate on there.'));
+      ta = el('textarea', 'mono'); ta.rows = 3; ta.placeholder = 'acme-push-ed25519 …';
+      body.appendChild(formField('acme’s key', ta));
+      nm = textBox('', 'acme1', '');
+      body.appendChild(formField('A name for it', nm));
+    }, [{words: 'Close', close: true}, {words: 'Take this key', cls: 'primary', icon: 'key', go: function (b) {
+      busy(b, true);
+      api('acme-push', {action: 'key_add', key: ta.value.trim(), name: nm.value.trim()})
+        .then(function (x) { toast(x.message, 'good'); closeModal(); drawPush(x); })
+        .catch(function (e) { busy(b, false); oops(e); });
+    }}], true);
+  };
+  row.appendChild(paste);
   host.appendChild(row);
-
-  /* The acmes paired. */
-  var keys = d.keys || [];
-  host.appendChild(el('h3', 'push-h', 'Paired with'));
-  if (!keys.length) host.appendChild(el('p', 'muted small', 'No acme yet - pair one, or paste its key.'));
-  else host.appendChild(listTable(['acme', 'Key id', 'How', 'Since', 'Last push', ''], keys, function (k) {
-    var tr = el('tr');
-    tr.appendChild(noI18n(el('td', '', k.name || k.comment || 'acme')));
-    tr.appendChild(noI18n(el('td', 'mono small', k.key_id)));
-    tr.appendChild(el('td', 'small', k.how || ''));
-    tr.appendChild(el('td', 'small muted', k.at ? ago(k.at) : ''));
-    tr.appendChild(el('td', 'small muted', k.last ? ago(k.last) : 'never'));
-    var tools = el('td', 'rowtools');
-    var fg = cmdButton('Forget it', 'forget', 'small danger');
-    fg.disabled = !ADMIN;
-    fg.onclick = function () {
-      confirmThen('Forget ' + (k.name || 'this acme'), 'Nothing more is taken from it: its requests are refused. The certificate it put in stays until replaced.', 'Forget it', function () { pushDo({action: 'forget', key_id: k.key_id}); }, true);
-    };
-    tools.appendChild(fg);
-    tr.appendChild(tools);
-    return tr;
-  }, 'plain'));
-
-  /* What acme sees here. */
-  host.appendChild(el('h3', 'push-h', 'What acme sees here'));
-  host.appendChild(listTable(['Slot', 'Names', 'Now', 'Looked after by'], d.slots || [], function (s) {
+  /* the acmes paired */
+  if ((d.keys || []).length) {
+    host.appendChild(el('h4', '', 'Paired with'));
+    host.appendChild(listTable(['acme', 'Key', 'Since', 'How', {words: '', cls: 'act'}], d.keys, function (k) {
+      var tr = el('tr');
+      tr.appendChild(noI18n(el('td', '', k.name || k.comment || '–')));
+      tr.appendChild(noI18n(el('td', 'mono small', k.key_id)));
+      tr.appendChild(stampCell(k.at));
+      tr.appendChild(el('td', 'muted', k.how || ''));
+      var act = el('td', 'rowtools');
+      if (W.forget[k.key_id]) {
+        tr.classList.add('push-gone');
+        var keep = cmdButton('Keep it', 'undo', 'small');
+        keep.onclick = function () { delete PUSH_WANT.forget[k.key_id]; pushWanted(); drawPush(PUSH); };
+        act.appendChild(el('span', 'small muted', 'forgotten when saved'));
+        act.appendChild(keep);
+      } else {
+        var f = cmdButton('Forget it', 'trash', 'small danger');
+        explain(f, 'Nothing more is taken from it once saved; the certificate it put in stays until another one replaces it.');
+        f.onclick = function () { PUSH_WANT.forget[k.key_id] = true; pushWanted(); drawPush(PUSH); };
+        act.appendChild(f);
+      }
+      tr.appendChild(act);
+      return tr;
+    }));
+  }
+  /* what acme sees here */
+  host.appendChild(el('h4', '', 'What acme sees here'));
+  host.appendChild(listTable(['Slot', 'Names', 'Now', 'Until', 'Looked after by'], d.slots || [], function (s) {
     var tr = el('tr');
     tr.appendChild(noI18n(el('td', 'mono small', s.id)));
-    tr.appendChild(noI18n(el('td', 'mono small', (s.names || []).join(', ') || '-')));
-    var now = el('td');
-    now.appendChild(pushSlotNow(s.current));
-    tr.appendChild(now);
-    var m = PUSH_MANAGED[s.managed_by] || [s.managed_by, 'dim'];
-    var mt = el('td');
-    mt.appendChild(el('span', 'tag ' + m[1], m[0]));
-    if (!s.installable && s.why_not) mt.appendChild(el('div', 'muted small', s.why_not));
-    tr.appendChild(mt);
+    tr.appendChild(noI18n(el('td', 'mono small', (s.names || []).join(', '))));
+    var c = s.current || {};
+    tr.appendChild(el('td', 'small', c.fingerprint ? (c.issuer || '') + (c.alt ? ' + ' + (c.alt.key_type || '') : '') : 'none'));
+    tr.appendChild(c.not_after ? stampCell(c.not_after) : el('td', 'muted', '–'));
+    tr.appendChild(el('td', '', {none: 'nobody (none)', manual: 'by hand', 'own-acme': 'Automatic certificates', 'acme-push': 'acme push'}[s.managed_by] || s.managed_by));
     return tr;
-  }, 'plain'));
-
-  /* The last push. */
-  var last = d.last;
-  if (last && last.at) {
-    host.appendChild(el('h3', 'push-h', 'The last push'));
-    host.appendChild(netFacts([
-      ['When', ago(last.at)],
-      ['From', last.acme || '', true],
-      ['Certificate', (last.subject || '').replace(/^CN=/, ''), true],
-      ['Until', last.not_after ? new Date(last.not_after * 1000).toLocaleDateString(numLang()) : ''],
-      ['What was done', last.said || '']
-    ]));
+  }));
+  if (d.last) {
+    var l = el('p', 'note good');
+    l.textContent = 'The last push: ' + (d.last.acme || '') + ' · ' + ago(d.last.at) + ' · ' + (d.last.said || '');
+    host.appendChild(l);
   }
+  dressButtons(host);
 }
 
 /* ======== helpers of the panes above, from OTP admin.js ======== */

@@ -577,13 +577,12 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
       <div id="web-certs" class="cert-grid"></div>
     </div>
     <div class="card full fulladmin-only" id="web-push-card">
-      <h2>Certificates from acme</h2>
-      <p class="note">acme - the certificate manager - puts this server's certificate in and renews
-        it by itself (acme push): paired once with a code, every request signed by acme, the private
-        key sealed to this server on its way. What it puts in is kept exactly like a certificate
-        uploaded above, and the server's own Automatic certificates leave it alone. Off until
-        switched on; nothing else changes.</p>
-      <div id="sect-web"></div>
+      <h2>Certificates from acme <span class="right" id="web-push-state"></span></h2>
+      <p class="note">acme, the certificate manager, can give this server its certificate and renew it
+        by itself (acme push). Paired once with a code shown here, acme signs every request with its key and
+        sends the certificate's private key sealed for this server alone; the certificate is kept exactly where
+        an upload above keeps it, and the Automatic certificates leave it alone from then on. Off until switched
+        on; acme's address must be among those that may reach these pages.</p>
       <div id="web-push"></div>
     </div>
 

@@ -3389,12 +3389,12 @@ a:hover{color:#79c0ff}
 .acme-dns td.dns-copy button{display:block}
 @media (max-width:1000px){.acme-dns td.dns-txt{white-space:normal;overflow-wrap:anywhere}}
 
-/* ---- upsmon 4.3.0: Certificates from acme ---- */
-.push-top{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;margin-bottom:12px}
-.push-h{margin:18px 0 8px;font-size:14px}
-.push-code{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid var(--line);
-  border-radius:12px;background:var(--panel2);margin:10px 0}
-.push-code > .mono{font-size:22px;letter-spacing:.08em;color:var(--tx)}
-.push-code.small > .mono{font-size:13px;letter-spacing:0}
-.push-now .mono{color:var(--tx)}
-#web-push .btnrow{margin-top:12px}
+/* Certificates from acme (as ai 1.0.60) */
+.push-code{font-size:30px;letter-spacing:.12em;text-align:center;padding:18px 10px;margin:12px 0;border:1px dashed var(--line);border-radius:10px;background:var(--panel2);user-select:all;overflow-wrap:anywhere}
+#web-push .facts{margin:12px 0}
+#web-push h4{margin:16px 0 8px}
+#web-push tr.push-gone td:not(.rowtools){text-decoration:line-through;opacity:.55}
+#web-push .rowtools .muted{margin-right:8px}
+/* the tiles of Certificates from acme copy what is in them (ai 1.0.60) */
+.fact.copyable:hover,.push-code.copyable:hover{border-color:var(--info);box-shadow:0 0 0 1px var(--info) inset}
+.push-code.copyable{user-select:all;-webkit-user-select:all}

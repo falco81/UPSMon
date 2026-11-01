@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.3.1'
+__version__ = '4.3.2'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -431,14 +431,12 @@ PANES = {
              'acme_dns_key', 'acme_dns_subdomain', 'acme_desec_domain', 'acme_desec_token',
              'acme_dns_alias', 'acme_dns_wait', 'acme_resolvers'],
     'upgrade': ['upgrade_check', 'upgrade_url', 'upgrade_downgrade'],
-    # Certificates and TLS → Certificates from acme (4.3.1): saved with Save changes.
-    'web': ['acme_push', 'acme_push_other_names'],
     # Settings → Proxy (4.2.1), as OTP has it - the SMS gateway aside.
     'proxy': ['proxy', 'proxy_url', 'proxy_user', 'proxy_password', 'proxy_no',
               'proxy_upgrade', 'proxy_os', 'proxy_acme', 'proxy_acme_dns'],
     'about': ['site_name', 'ui_lang', 'admin_port', 'debug', 'debug_api'],
 }
-HIDDEN_KEYS = ('acme_for',)
+HIDDEN_KEYS = ('acme_for', 'acme_push', 'acme_push_other_names')
 
 # ---- the settings of The database, Backups, System updates, Restart and power off (4.1)
 DEFAULTS.update({'backup_daily': 1,
@@ -13922,6 +13920,9 @@ def _push_do(h):
     s = h.me('fulladmin')
     b = h.body()
     act = str(b.get('action') or '')
+    # The card's words, as ai's card says them (4.3.2): the same actions.
+    act = {'switch': 'on', 'pair': 'code', 'pair_stop': 'code_drop', 'key_add': 'paste',
+           'key_forget': 'forget'}.get(act, act)
     who = s['name']
     store = h.store
     # The two switches are settings of the pages (4.3.1): saved like any other -
@@ -13947,7 +13948,8 @@ def _push_do(h):
     if act == 'paste':
         try:
             pub, comment = push_parse_key(b.get('key'))
-            kid = _push_take_key(store, b.get('key'), comment, who, 'pasted')
+            kid = _push_take_key(store, b.get('key'), str(b.get('name') or '').strip()[:200] or comment,
+                                 who, 'pasted')
         except ValueError as e:
             raise ApiError(400, str(e))
         store.add_event('settings', '%s pasted the key of an acme (%s, key %s)'

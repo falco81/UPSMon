@@ -9915,14 +9915,6 @@
    "source": "The address for acme",
    "text": "Adresa pro acme"
   },
-  "k43009": {
-   "source": "This server’s id",
-   "text": "ID tohoto serveru"
-  },
-  "k43010": {
-   "source": "Its sealing key (X25519)",
-   "text": "Jeho pečeticí klíč (X25519)"
-  },
   "k43011": {
    "source": "Cryptography",
    "text": "Kryptografie"
@@ -9974,10 +9966,6 @@
   "k43023": {
    "source": "Nothing more is taken from it: its requests are refused. The certificate it put in stays until replaced.",
    "text": "Nic dalšího se od něj nevezme: jeho požadavky se odmítnou. Certifikát, který vložilo, zůstane, dokud ho něco nenahradí."
-  },
-  "k43024": {
-   "source": "What acme sees here",
-   "text": "Co tady acme vidí"
   },
   "k43025": {
    "source": "Slot",
@@ -10106,6 +10094,194 @@
   "k43102": {
    "source": "On: a paired acme may put this server’s certificate in and renew it (acme push). It is kept like one uploaded here, and Automatic certificates leave it alone. Off: acme’s requests are refused; the certificate in place and the pairings stay.",
    "text": "Zapnuto: spárované acme smí vložit a obnovovat certifikát tohoto serveru (acme push). Uloží se jako ručně nahraný a Automatické certifikáty ho nechají být. Vypnuto: požadavky acme se odmítají; certifikát na místě i spárování zůstanou."
+  },
+  "ais0031": {
+   "source": "A click on the code or the address copies it.",
+   "text": "Kliknutím na kód nebo adresu se zkopíruje."
+  },
+  "ais0059": {
+   "source": "A name for it",
+   "text": "Jméno pro něj"
+  },
+  "ais0144": {
+   "source": "acme push",
+   "text": "acme push"
+  },
+  "ais0145": {
+   "source": "acme, the certificate manager, can give this server its certificate and renew it by itself (acme push). Paired once with a code shown here, acme signs every request with its key and sends the certificate's private key sealed for this server alone; the certificate is kept exactly where an upload above keeps it, and the Automatic certificates leave it alone from then on. Off until switched on; acme's address must be among those that may reach these pages.",
+   "text": "acme, správce certifikátů, může tomuto serveru dávat certifikát a sám ho obnovovat (acme push). Po jednorázovém spárování kódem z této karty acme podepisuje každý požadavek svým klíčem a soukromý klíč certifikátu posílá zapečetěný jen pro tento server; certifikát se uloží přesně tam, kam ho ukládá ruční nahrání výše, a Automatické certifikáty ho od té doby nechají být. Vypnuté, dokud to nezapnete; adresa acme musí patřit mezi ty, které na tyto stránky smějí."
+  },
+  "ais0146": {
+   "source": "acme’s key",
+   "text": "Klíč acme"
+  },
+  "ais0147": {
+   "source": "acme’s own Certificates from acme card shows This acme’s own key: acme-push-ed25519 AAAA… acme then pins this server when it first sees it - keep Check the application’s certificate on there.",
+   "text": "Karta Certifikáty z acme v samotném acme ukazuje Vlastní klíč tohoto acme: acme-push-ed25519 AAAA… acme si pak tento server zapamatuje, až ho poprvé uvidí – nechte tam zapnuté Kontrolovat certifikát aplikace."
+  },
+  "ais0244": {
+   "source": "Automatic certificates",
+   "text": "Automatické certifikáty"
+  },
+  "ais0278": {
+   "source": "by hand",
+   "text": "ručně"
+  },
+  "ais0285": {
+   "source": "Certificate",
+   "text": "Certifikát"
+  },
+  "ais0287": {
+   "source": "Certificates",
+   "text": "Certifikáty"
+  },
+  "ais0289": {
+   "source": "Certificates from acme",
+   "text": "Certifikáty z acme"
+  },
+  "ais0290": {
+   "source": "Certificates from acme: saved",
+   "text": "Certifikáty z acme: uloženo"
+  },
+  "ais0361": {
+   "source": "Close",
+   "text": "Zavřít"
+  },
+  "ais0569": {
+   "source": "Forget it",
+   "text": "Zapomenout"
+  },
+  "ais0573": {
+   "source": "forgotten when saved",
+   "text": "zapomene se po uložení"
+  },
+  "ais0612": {
+   "source": "How",
+   "text": "Jak"
+  },
+  "ais0648": {
+   "source": "In acme: Targets → add An application of ours (acme push), its address below, and this code in Pairing code - then Try. The code is shown this once, works once, for 15 minutes; five wrong tries end it.",
+   "text": "V acme: Cíle → přidat Naše aplikace (acme push), adresu níže a tento kód do Párovací kód – pak Vyzkoušet. Kód se ukáže jen teď, platí jednou a 15 minut; pět chybných pokusů ho zruší."
+  },
+  "ais0730": {
+   "source": "Keep it",
+   "text": "Ponechat"
+  },
+  "ais0741": {
+   "source": "kept",
+   "text": "ponecháno"
+  },
+  "ais0793": {
+   "source": "Looked after by",
+   "text": "Spravuje"
+  },
+  "ais0854": {
+   "source": "Names",
+   "text": "Jména"
+  },
+  "ais0899": {
+   "source": "nobody (none)",
+   "text": "nikdo (žádný)"
+  },
+  "ais0901": {
+   "source": "none",
+   "text": "žádný"
+  },
+  "ais0938": {
+   "source": "Nothing more is taken from it once saved; the certificate it put in stays until another one replaces it.",
+   "text": "Po uložení se od něj už nic nepřevezme; certifikát, který vložilo, zůstane, dokud ho nenahradí jiný."
+  },
+  "ais0947": {
+   "source": "Now",
+   "text": "Teď"
+  },
+  "ais0959": {
+   "source": "Off: hello says only that it is off, and nothing is taken.",
+   "text": "Vypnuto: acme se dozví jen to, že je to vypnuté, a nic se nepřevezme."
+  },
+  "ais0966": {
+   "source": "on - not paired yet",
+   "text": "zapnuto – zatím nespárováno"
+  },
+  "ais0967": {
+   "source": "on - paired",
+   "text": "zapnuto – spárováno"
+  },
+  "ais1032": {
+   "source": "Or paste acme’s key…",
+   "text": "Nebo vložit klíč acme…"
+  },
+  "ais1048": {
+   "source": "Pair with an acme",
+   "text": "Spárovat s acme"
+  },
+  "ais1049": {
+   "source": "Paired with",
+   "text": "Spárováno s"
+  },
+  "ais1054": {
+   "source": "Paste acme’s key",
+   "text": "Vložit klíč acme"
+  },
+  "ais1233": {
+   "source": "Since",
+   "text": "Od"
+  },
+  "ais1238": {
+   "source": "Slot",
+   "text": "Slot"
+  },
+  "ais1292": {
+   "source": "Take certificates from acme",
+   "text": "Brát certifikáty z acme"
+  },
+  "ais1293": {
+   "source": "Take certificates of other names",
+   "text": "Brát certifikáty i na jiná jména"
+  },
+  "ais1295": {
+   "source": "Take it back",
+   "text": "Vzít zpět"
+  },
+  "ais1303": {
+   "source": "Take this key",
+   "text": "Vzít tento klíč"
+  },
+  "ais1336": {
+   "source": "The address for acme",
+   "text": "Adresa pro acme"
+  },
+  "ais1512": {
+   "source": "the pairing code is copied",
+   "text": "párovací kód je zkopírovaný"
+  },
+  "ais1625": {
+   "source": "this server",
+   "text": "tento server"
+  },
+  "ais1665": {
+   "source": "Until",
+   "text": "Do"
+  },
+  "ais1687": {
+   "source": "Valid until",
+   "text": "Platí do"
+  },
+  "ais1757": {
+   "source": "where",
+   "text": "kde"
+  },
+  "ais0719": {
+   "source": "Its sealing key (X25519)",
+   "text": "Jeho klíč pro pečetění (X25519)"
+  },
+  "ais1628": {
+   "source": "This server’s id",
+   "text": "Id tohoto serveru"
+  },
+  "ais1704": {
+   "source": "What acme sees here",
+   "text": "Co tu acme vidí"
   }
  },
  "patterns": {
@@ -12744,6 +12920,30 @@
   "kp43061": {
    "source": "this server, {0} ({1})",
    "text": "tento server, {0} ({1})"
+  },
+  "aip0003": {
+   "source": "A code waits until {0} ({1} wrong so far).",
+   "text": "Kód čeká do {0} (zatím {1} chybných)."
+  },
+  "aip0027": {
+   "source": "copied: {0}",
+   "text": "zkopírováno: {0}"
+  },
+  "aip0060": {
+   "source": "Off: a certificate must hold the name of this server ({0}). On: acme may say not to check it.",
+   "text": "Vypnuto: certifikát musí obsahovat jméno tohoto serveru ({0}). Zapnuto: acme smí říct, ať se nekontroluje."
+  },
+  "aip0067": {
+   "source": "Put {0} back",
+   "text": "Obnovit {0}"
+  },
+  "aip0102": {
+   "source": "The last push: {0} · {1} · {2}",
+   "text": "Poslední push: {0} · {1} · {2}"
+  },
+  "aip0167": {
+   "source": "{0} · {1} · {2} ago",
+   "text": "{0} · {1} · před {2}"
   }
  },
  "rich": {
