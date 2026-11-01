@@ -49,6 +49,12 @@ use_system_timezone();
 // ---- JSON endpoints the page polls ---------------------------------------
 if (isset($_GET['api'])) {
     $what = (string) $_GET['api'];
+    /* acme push (4.3.0): https://NAME/?api=acme-push-… too, as isemon and zigmon
+       take it - the same as /settings/?api=acme-push-…. */
+    if (strncmp($what, 'acme-push-', 10) === 0) {
+        require_once __DIR__ . '/acme-push.php';
+        ups_acme_push_serve($what);
+    }
 
     if ($what === 'status') {
         upsmon_relay('/api/status');

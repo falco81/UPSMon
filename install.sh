@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.2.5'
+readonly INSTALLER_VERSION='4.3.0'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -1247,7 +1247,7 @@ install_web() {
 
     run install -d -m 755 "$WEB_DIR" "$WEB_DIR/settings" "$WEB_DIR/assets" "$WEB_DIR/lang"
     local file
-    for file in index.php upsmon-api.php upsmon-page.php upsmon-lang.php settings-api.php acme.php \
+    for file in index.php upsmon-api.php upsmon-page.php upsmon-lang.php settings-api.php acme.php acme-push.php \
                 favicon.svg favicon.ico favicon-32.png apple-touch-icon.png settings/index.php; do
         [[ -f "$SOURCE_DIR/web/$file" ]] || continue
         run install -m 644 "$SOURCE_DIR/web/$file" "$WEB_DIR/$file"

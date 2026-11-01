@@ -4,6 +4,32 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.3.0 - 2026-11-01
+
+**Certificates from acme (acme push, protocol 1)** - Settings → Certificates and
+TLS, a new card. Your acme pairs with this server once and then puts its
+certificate in and renews it (`docs/acme-push-protocol.md`):
+- The four requests at `https://NAME/settings/?api=acme-push-…` (and at `/`):
+  `hello`, `pair`, `inventory`, `install`. The page decides nothing: the raw body
+  and the five `X-Acme-Push-*` headers go to the daemon as they came.
+- Every request signed by acme (Ed25519 over the seven lines), time within
+  300 s, each nonce once (kept in the database 15 minutes); the certificate's
+  key sealed to this server (X25519 + HKDF-SHA256 + AES-256-GCM).
+- Pairing with a code (16 characters, 15 minutes, five tries, once), or acme's
+  key pasted. The acmes paired listed, each *Forget it*.
+- One slot, `node:NAME`: the certificate's name, what is there now and who looks
+  after it. A dual one (RSA + its ECDSA twin) is taken; the same again is
+  `already`; certificates of other names only when switched on.
+- The cryptography from the `cryptography` package where the Python has it,
+  else in plain Python - both checked against the document's test vectors.
+
+**Only one more way - nothing else changes** (chapter 0 of the document): off
+by default; a pushed certificate is stored exactly where an upload is, through
+the same code, and counts as one (own ACME leaves it alone, *Look after it*
+gives it back); upload, CSR, self-signed, own ACME, export, copies and the
+command line as before - tested with push off and with push on and paired
+(`tests/acme-push/`). Every install is an event "by acme push, key …".
+
 ## 4.2.5 - 2026-11-01
 
 **Passwords kept: a full administrator sees dots and their last two characters,

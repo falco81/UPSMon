@@ -22,6 +22,12 @@ require_once dirname(__DIR__) . '/settings-api.php';
 if (isset($_GET['api'])) {
     $what = (string) $_GET['api'];
     $post = $_SERVER['REQUEST_METHOD'] === 'POST';
+    /* acme push (4.3.0): the certificate manager's four requests - signed,
+       before any session or CSRF check; acme-push.php hands them on as they came. */
+    if (strncmp($what, 'acme-push-', 10) === 0) {
+        require_once dirname(__DIR__) . '/acme-push.php';
+        ups_acme_push_serve($what);
+    }
     if ($what === 'lang' && !$post) {
         ups_serve_lang();
     }
@@ -247,7 +253,7 @@ if (isset($_GET['api'])) {
         'whoami' => '/api/auth/whoami', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push',
         'rbackup' => '/api/rbackup',
     ];
     $writes = [
@@ -256,7 +262,7 @@ if (isset($_GET['api'])) {
         'columns' => '/api/auth/columns', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push',
         'rbackup' => '/api/rbackup',
     ];
     if ($post) {
@@ -569,6 +575,15 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
         what the authority sends back is uploaded; or Automatic certificates orders it. Root
         puts it in nginx and asks nginx before reloading it.</p>
       <div id="web-certs" class="cert-grid"></div>
+    </div>
+    <div class="card full fulladmin-only" id="web-push-card">
+      <h2>Certificates from acme</h2>
+      <p class="note">acme - the certificate manager - puts this server's certificate in and renews
+        it by itself (acme push): paired once with a code, every request signed by acme, the private
+        key sealed to this server on its way. What it puts in is kept exactly like a certificate
+        uploaded above, and the server's own Automatic certificates leave it alone. Off until
+        switched on; nothing else changes.</p>
+      <div id="web-push"></div>
     </div>
 
   </div>

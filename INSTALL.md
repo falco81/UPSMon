@@ -83,6 +83,27 @@ not changed.
 
 ---
 
+## Certificates from acme (acme push, 4.3)
+
+Your acme - the certificate manager - can put this server's certificate in and
+renew it by itself. It is one more way, off by default; uploading, a CSR,
+self-signed and Automatic certificates work as before
+(`docs/acme-push-protocol.md`, chapter 0).
+
+1. Settings → Certificates and TLS → **Certificates from acme**: switch
+   *Take certificates from acme* on, then **Pair with an acme…** - a code is
+   shown once (15 minutes, five tries).
+2. In acme: Targets → *An application of ours (acme push)*, the address
+   `https://ups.example.net/settings/` (or `https://ups.example.net/`), the code
+   in *Pairing code*, **Try**, then **Discover**.
+3. acme's address must be among those that may open the pages (the `allow`
+   lines of `/etc/nginx/conf.d/upsmon.conf`).
+
+What acme puts in is kept like an upload; Automatic certificates leave it
+alone (*Look after it* on that page gives it back). The server has one slot,
+`node:NAME`, for the name of the certificate (Automatic certificates → its
+name). Forget it, or switch it off, and the certificate in place stays.
+
 # upsmon on AlmaLinux 9 — complete installation guide
 
 Every command, what it should print, and how to confirm each step worked before

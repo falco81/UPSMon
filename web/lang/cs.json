@@ -451,6 +451,10 @@
    "source": "An administrator on that server",
    "text": "Administrátor toho serveru"
   },
+  "os0380": {
+   "source": "An app",
+   "text": "Aplikace"
+  },
   "os0384": {
    "source": "An empty end means up to now.",
    "text": "Prázdné Do znamená až do teď."
@@ -7483,6 +7487,10 @@
    "source": "trying a code (Tokens)",
    "text": "zkouška kódu (Tokeny)"
   },
+  "os4806": {
+   "source": "unnamed",
+   "text": "bez názvu"
+  },
   "os4807": {
    "source": "unreachable",
    "text": "nedostupný"
@@ -9874,6 +9882,222 @@
   "k42501": {
    "source": "Its passphrase is kept, sealed:",
    "text": "Jeho passphrase je uložená, zapečetěná:"
+  },
+  "k43001": {
+   "source": "Certificates from acme",
+   "text": "Certifikáty z acme"
+  },
+  "k43002": {
+   "source": "acme - the certificate manager - puts this server's certificate in and renews it by itself (acme push): paired once with a code, every request signed by acme, the private key sealed to this server on its way. What it puts in is kept exactly like a certificate uploaded above, and the server's own Automatic certificates leave it alone. Off until switched on; nothing else changes.",
+   "text": "acme – správce certifikátů – sám vkládá a obnovuje certifikát tohoto serveru (acme push): jednou se spáruje kódem, každý požadavek acme podepisuje a privátní klíč cestuje zapečetěný pro tento server. Co vloží, se uloží přesně jako certifikát nahraný výše a vlastní Automatické certifikáty serveru ho nechají být. Vypnuto, dokud se nezapne; nic jiného se nemění."
+  },
+  "k43003": {
+   "source": "Take certificates from acme",
+   "text": "Brát certifikáty z acme"
+  },
+  "k43004": {
+   "source": "On: a paired acme may put this server’s certificate in and renew it. It is kept like one uploaded here, and Automatic certificates leave it alone.",
+   "text": "Zapnuto: spárované acme smí vložit a obnovovat certifikát tohoto serveru. Uloží se jako ručně nahraný a Automatické certifikáty ho nechají být."
+  },
+  "k43005": {
+   "source": "Off: acme’s requests are refused; nothing changes here.",
+   "text": "Vypnuto: požadavky acme se odmítají; tady se nic nemění."
+  },
+  "k43006": {
+   "source": "Take certificates of other names",
+   "text": "Brát certifikáty i na jiná jména"
+  },
+  "k43007": {
+   "source": "Off (the safe way): only a certificate holding this server’s name is put in. On: acme may also send one for other names, when it says so.",
+   "text": "Vypnuto (bezpečná volba): vloží se jen certifikát se jménem tohoto serveru. Zapnuto: acme smí poslat i certifikát na jiná jména, když to výslovně řekne."
+  },
+  "k43008": {
+   "source": "The address for acme",
+   "text": "Adresa pro acme"
+  },
+  "k43009": {
+   "source": "This server’s id",
+   "text": "ID tohoto serveru"
+  },
+  "k43010": {
+   "source": "Its sealing key (X25519)",
+   "text": "Jeho pečeticí klíč (X25519)"
+  },
+  "k43011": {
+   "source": "Cryptography",
+   "text": "Kryptografie"
+  },
+  "k43012": {
+   "source": "Pair with an acme…",
+   "text": "Spárovat s acme…"
+  },
+  "k43013": {
+   "source": "Makes a one-time code (15 minutes, five tries) to give to acme’s target. acme proves it was given the code; this server proves it to acme the same way.",
+   "text": "Vytvoří jednorázový kód (15 minut, pět pokusů) pro cíl v acme. acme dokáže, že kód dostalo; tento server to acme dokáže stejně."
+  },
+  "k43014": {
+   "source": "Or paste acme’s key…",
+   "text": "Nebo vložit klíč acme…"
+  },
+  "k43015": {
+   "source": "Take it back",
+   "text": "Vzít zpět"
+  },
+  "k43016": {
+   "source": "Paired with",
+   "text": "Spárováno s"
+  },
+  "k43017": {
+   "source": "No acme yet - pair one, or paste its key.",
+   "text": "Zatím žádné acme – spárujte ho, nebo vložte jeho klíč."
+  },
+  "k43018": {
+   "source": "Key id",
+   "text": "ID klíče"
+  },
+  "k43019": {
+   "source": "How",
+   "text": "Jak"
+  },
+  "k43020": {
+   "source": "Since",
+   "text": "Od"
+  },
+  "k43021": {
+   "source": "Last push",
+   "text": "Poslední push"
+  },
+  "k43022": {
+   "source": "Forget it",
+   "text": "Zapomenout"
+  },
+  "k43023": {
+   "source": "Nothing more is taken from it: its requests are refused. The certificate it put in stays until replaced.",
+   "text": "Nic dalšího se od něj nevezme: jeho požadavky se odmítnou. Certifikát, který vložilo, zůstane, dokud ho něco nenahradí."
+  },
+  "k43024": {
+   "source": "What acme sees here",
+   "text": "Co tady acme vidí"
+  },
+  "k43025": {
+   "source": "Slot",
+   "text": "Slot"
+  },
+  "k43026": {
+   "source": "Names",
+   "text": "Jména"
+  },
+  "k43027": {
+   "source": "Now",
+   "text": "Teď"
+  },
+  "k43028": {
+   "source": "Looked after by",
+   "text": "Spravuje"
+  },
+  "k43029": {
+   "source": "nothing yet",
+   "text": "zatím nic"
+  },
+  "k43030": {
+   "source": "put in by hand",
+   "text": "vloženo ručně"
+  },
+  "k43031": {
+   "source": "acme push",
+   "text": "acme push"
+  },
+  "k43032": {
+   "source": "The last push",
+   "text": "Poslední push"
+  },
+  "k43033": {
+   "source": "When",
+   "text": "Kdy"
+  },
+  "k43034": {
+   "source": "From",
+   "text": "Od koho"
+  },
+  "k43035": {
+   "source": "Certificate",
+   "text": "Certifikát"
+  },
+  "k43036": {
+   "source": "Until",
+   "text": "Do"
+  },
+  "k43037": {
+   "source": "What was done",
+   "text": "Co se stalo"
+  },
+  "k43038": {
+   "source": "Pair with an acme",
+   "text": "Spárovat s acme"
+  },
+  "k43039": {
+   "source": "In acme: Targets → add “An application of ours (acme push)”, the address below, and this code in Pairing code - then Try. The code is shown only now, works once, for 15 minutes; five wrong tries and it is gone.",
+   "text": "V acme: Cíle → přidat „Naše aplikace (acme push)“, adresu níže a tento kód do Pairing code – pak Vyzkoušet. Kód se ukáže jen teď, platí jednou a 15 minut; po pěti chybných pokusech zmizí."
+  },
+  "k43040": {
+   "source": "Where acme reaches these pages. acme’s address must be among those that may open them (the access list of the pages).",
+   "text": "Kde acme tyto stránky najde. Adresa acme musí být mezi těmi, které je smí otevřít (přístupový seznam stránek)."
+  },
+  "k43041": {
+   "source": "Done",
+   "text": "Hotovo"
+  },
+  "k43042": {
+   "source": "Paste acme’s key",
+   "text": "Vložit klíč acme"
+  },
+  "k43043": {
+   "source": "Instead of a pairing code: acme’s own key, one line, as acme shows it (Certificates from acme → This acme’s own key). acme takes this server’s keys at its next Try.",
+   "text": "Místo párovacího kódu: vlastní klíč acme na jednom řádku, jak ho acme ukazuje (Certifikáty z acme → Vlastní klíč tohoto acme). acme si klíče tohoto serveru vezme při příštím Vyzkoušet."
+  },
+  "k43044": {
+   "source": "Take this key",
+   "text": "Vzít tento klíč"
+  },
+  "k43045": {
+   "source": "Take no more certificates from acme",
+   "text": "Už nebrat certifikáty z acme"
+  },
+  "k43046": {
+   "source": "acme’s requests are refused from now on; the certificate in place stays as it is. The paired keys are kept: switched on again, it goes on as before.",
+   "text": "Požadavky acme se od teď odmítají; certifikát na místě zůstane, jak je. Spárované klíče se ponechají: po zapnutí to pokračuje jako dřív."
+  },
+  "k43047": {
+   "source": "Switch it off",
+   "text": "Vypnout"
+  },
+  "k43048": {
+   "source": "paired with a code",
+   "text": "spárováno kódem"
+  },
+  "k43049": {
+   "source": "pasted",
+   "text": "vložen ručně"
+  },
+  "k43050": {
+   "source": "never",
+   "text": "nikdy"
+  },
+  "k43051": {
+   "source": "the code waits for 15 minutes",
+   "text": "kód čeká 15 minut"
+  },
+  "k43052": {
+   "source": "the code is taken back",
+   "text": "kód je vzatý zpět"
+  },
+  "k43053": {
+   "source": "acme's key is taken - nothing else is needed here",
+   "text": "klíč acme je přijatý – tady už nic dalšího není potřeba"
+  },
+  "k43054": {
+   "source": "forgotten",
+   "text": "zapomenuto"
   }
  },
  "patterns": {
@@ -12484,6 +12708,34 @@
   "kp42001": {
    "source": "upsmon is in maintenance{0} - nothing is changed until it is back in service (Settings → Upgrades)",
    "text": "upsmon je v údržbě{0} – nic se nemění, dokud nebude zpět v provozu (Nastavení → Aktualizace)"
+  },
+  "kp43055": {
+   "source": "a code waits until {0}",
+   "text": "kód čeká do {0}"
+  },
+  "kp43056": {
+   "source": "a code waits until {0} - {1} wrong",
+   "text": "kód čeká do {0} – {1} chybně"
+  },
+  "kp43057": {
+   "source": "Forget {0}",
+   "text": "Zapomenout {0}"
+  },
+  "kp43058": {
+   "source": "until {0}",
+   "text": "do {0}"
+  },
+  "kp43059": {
+   "source": "certificates from acme: {0}",
+   "text": "certifikáty z acme: {0}"
+  },
+  "kp43060": {
+   "source": "put in for {0} - the server puts it into nginx within seconds",
+   "text": "vloženo pro {0} – server ho během pár sekund dá do nginxu"
+  },
+  "kp43061": {
+   "source": "this server, {0} ({1})",
+   "text": "tento server, {0} ({1})"
   }
  },
  "rich": {
