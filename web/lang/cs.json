@@ -4175,10 +4175,6 @@
    "source": "The system",
    "text": "Systém"
   },
-  "os2767": {
-   "source": "The system updates through it too",
-   "text": "Přes ni i aktualizace systému"
-  },
   "os2768": {
    "source": "The tail of",
    "text": "Konec souboru"
@@ -5518,10 +5514,6 @@
   "os3570": {
    "source": "dnf (or apt) updates every package. RADIUS goes on answering meanwhile; a restart it needs is offered at the end.",
    "text": "dnf (nebo apt) aktualizuje všechny balíčky. RADIUS mezitím dál odpovídá; potřebný restart se nabídne na konci."
-  },
-  "os3571": {
-   "source": "dnf or apt fetch the updates of System → Updates through it.",
-   "text": "dnf nebo apt přes ni stahují aktualizace ze Systém → Aktualizace."
   },
   "os3572": {
    "source": "done",

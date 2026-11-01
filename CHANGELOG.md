@@ -4,6 +4,19 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.2.4 - 2026-11-01
+
+- **Only errors on the machine's console** (as otp 1.0.210): lines like
+  `systemd-rc-local-generator: /etc/rc.d/rc.local is not marked executable,
+  skipping` came in bursts over the login prompt and the upsmon console on tty1
+  - systemd's generators write to the kernel's log at every daemon-reload (a dnf
+  update, an upgrade), and a console log level of 7 put all of it on the screen.
+  install.sh writes `/etc/sysctl.d/80-upsmon-console.conf` (`kernel.printk = 4 4
+  1 7`, RHEL's own default) and applies it; the journal keeps everything
+  (`journalctl -k`). A `kernel.printk` set by hand in another file is left alone;
+  the same file on every run; taken away by --uninstall. rc.local is not made
+  executable.
+
 ## 4.2.3 - 2026-10-31
 
 **Settings → Proxy: a switch for each thing that may go through it** - all off

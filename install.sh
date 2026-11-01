@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.2.3'
+readonly INSTALLER_VERSION='4.2.4'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -1191,6 +1191,31 @@ PYEOF
     good "wrote $CONFIG_FILE (root:$SERVICE_USER, mode 640)"
 }
 
+# Only errors on the machine's console (4.2.4, as otp 1.0.210): systemd's
+# generators log to the kernel at every daemon-reload - a dnf update, an upgrade
+# - and with a console log level of 7 lines like "rc.local is not marked
+# executable" were written over the login prompt and the upsmon console on tty1.
+# Nothing is lost: journalctl -k keeps them. A kernel.printk set by hand stays.
+readonly CONSOLE_SYSCTL=/etc/sysctl.d/80-upsmon-console.conf
+console_quiet() {
+    local own
+    own=$(grep -ls '^[[:space:]]*kernel\.printk' /etc/sysctl.d/*.conf /etc/sysctl.conf 2>/dev/null \
+          | grep -v "^$CONSOLE_SYSCTL\$" || true)
+    if [[ -n "$own" ]]; then
+        note "kernel.printk is set by hand ($(echo $own)): left as it is"
+        return 0
+    fi
+    if [[ -n "$DRY_RUN" ]]; then
+        say "[dry-run] write $CONSOLE_SYSCTL: kernel.printk = 4 4 1 7"
+        return 0
+    fi
+    printf '%s\n' '# Written by upsmon: only errors on the console; everything is in journalctl -k.' \
+        'kernel.printk = 4 4 1 7' > "$CONSOLE_SYSCTL"
+    chmod 0644 "$CONSOLE_SYSCTL"
+    sysctl -q -p "$CONSOLE_SYSCTL" >/dev/null 2>&1 || true
+    good "only errors on the console (kernel.printk 4 4 1 7; the rest in journalctl -k)"
+}
+
 install_service() {
     step "Installing the service"
     run install -m 644 "$SOURCE_DIR/deploy/upsmon.service" "$UNIT"
@@ -1212,6 +1237,7 @@ install_service() {
         note "root signing in lands in the upsmon console (q leaves it):"
         note "  upsmon --console-at-login off   to land in the shell instead"
     fi
+    console_quiet
     good "installed and enabled: upsmon, upsmon-web.path, upsmon-upgrade.path"
 }
 
@@ -1648,7 +1674,7 @@ do_uninstall() {
     run systemctl disable --now upsmon upsmon-web.path upsmon-upgrade.path 2>/dev/null || true
     run rm -f "$UNIT" /etc/logrotate.d/upsmon /etc/systemd/system/upsmon-web.path \
         /etc/systemd/system/upsmon-web.service /etc/systemd/system/upsmon-upgrade.path \
-        /etc/systemd/system/upsmon-upgrade.service "$CONSOLE_PROFILE"
+        /etc/systemd/system/upsmon-upgrade.service "$CONSOLE_PROFILE" "$CONSOLE_SYSCTL"
     run systemctl daemon-reload
     run rm -rf "$LIB_DIR" "$BIN"
     run rm -rf "$WEB_DIR"
