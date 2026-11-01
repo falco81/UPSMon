@@ -10098,6 +10098,14 @@
   "k43054": {
    "source": "forgotten",
    "text": "zapomenuto"
+  },
+  "k43101": {
+   "source": "Switch Take certificates from acme on above, then Save changes: pairing and the rest show here.",
+   "text": "Nahoře zapněte Brát certifikáty z acme a dejte Uložit změny: párování a ostatní se ukážou tady."
+  },
+  "k43102": {
+   "source": "On: a paired acme may put this server’s certificate in and renew it (acme push). It is kept like one uploaded here, and Automatic certificates leave it alone. Off: acme’s requests are refused; the certificate in place and the pairings stay.",
+   "text": "Zapnuto: spárované acme smí vložit a obnovovat certifikát tohoto serveru (acme push). Uloží se jako ručně nahraný a Automatické certifikáty ho nechají být. Vypnuto: požadavky acme se odmítají; certifikát na místě i spárování zůstanou."
   }
  },
  "patterns": {

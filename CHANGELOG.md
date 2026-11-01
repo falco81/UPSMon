@@ -4,6 +4,15 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.3.1 - 2026-11-01
+
+- Certificates from acme: *Take certificates from acme* and *Take certificates of
+  other names* are settings of the pages now - a click only marks them changed,
+  and **Save changes** at the bottom (or *Put them back*) does it, as on every
+  other pane. What 4.3.0 kept apart is taken over once by itself. The actions on
+  the card (Pair with an acme, paste a key, Forget it, Take it back) are done
+  when pressed, as before.
+
 ## 4.3.0 - 2026-11-01
 
 **Certificates from acme (acme push, protocol 1)** - Settings → Certificates and

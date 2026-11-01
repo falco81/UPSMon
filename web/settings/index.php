@@ -583,6 +583,7 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
         key sealed to this server on its way. What it puts in is kept exactly like a certificate
         uploaded above, and the server's own Automatic certificates leave it alone. Off until
         switched on; nothing else changes.</p>
+      <div id="sect-web"></div>
       <div id="web-push"></div>
     </div>
 

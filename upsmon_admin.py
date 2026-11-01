@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.3.0'
+__version__ = '4.3.1'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -102,6 +102,8 @@ DEFAULTS = {'site_name': '',
  'proxy_password': '',
  'proxy_no': 'localhost, 127.0.0.1, ::1',
  'proxy_upgrade': 0,
+ 'acme_push': 0,
+ 'acme_push_other_names': 0,
  'proxy_os': 0,
  'proxy_acme': 0,
  'proxy_acme_dns': 0,
@@ -151,6 +153,8 @@ NAMES = {'site_name': 'What to call this installation',
  'proxy_password': 'Password at the proxy',
  'proxy_no': 'Straight, not through the proxy',
  'proxy_upgrade': 'New versions of upsmon',
+ 'acme_push': 'Take certificates from acme',
+ 'acme_push_other_names': 'Take certificates of other names',
  'proxy_os': 'System updates (dnf, apt)',
  'proxy_acme': 'Automatic certificates: the CA',
  'proxy_acme_dns': 'Automatic certificates: the DNS API',
@@ -212,6 +216,11 @@ SAYS = {'site_name': 'The name at the top of the administration pages. Empty: th
  'proxy_password': 'Kept sealed, like the other passwords.',
  'proxy_no': 'Names and addresses reached without it, separated by commas: '
              '<code>.example.cz</code> is every name under it, <code>10.0.0.0/8</code> a net.',
+ 'acme_push': 'On: a paired acme may put this server’s certificate in and renew it (acme push). It is kept '
+              'like one uploaded here, and Automatic certificates leave it alone. Off: acme’s requests '
+              'are refused; the certificate in place and the pairings stay.',
+ 'acme_push_other_names': 'Off (the safe way): only a certificate holding this server’s name is put in. '
+                          'On: acme may also send one for other names, when it says so.',
  'proxy_upgrade': 'Settings → Upgrades: the daily look for a new version and its download, from '
                   'where new versions are looked for (GitHub).',
  'proxy_os': 'Settings → System updates: dnf or apt look for and fetch the packages through it - '
@@ -285,6 +294,8 @@ TUNABLE = {'ui_lang': ('cs', 'en'),
  'upgrade_downgrade': (0, 1),
  'proxy': (0, 1),
  'proxy_upgrade': (0, 1),
+ 'acme_push': (0, 1),
+ 'acme_push_other_names': (0, 1),
  'proxy_os': (0, 1),
  'proxy_acme': (0, 1),
  'proxy_acme_dns': (0, 1),
@@ -332,6 +343,7 @@ ONLY_WHEN = {'proxy_url': ['proxy', '1'],
  'proxy_password': ['proxy', '1'],
  'proxy_no': ['proxy', '1'],
  'proxy_upgrade': ['proxy', '1'],
+ 'acme_push_other_names': ['acme_push', '1'],
  'proxy_os': ['proxy', '1'],
  'proxy_acme': ['proxy', '1'],
  'proxy_acme_dns': ['proxy', '1'],
@@ -419,6 +431,8 @@ PANES = {
              'acme_dns_key', 'acme_dns_subdomain', 'acme_desec_domain', 'acme_desec_token',
              'acme_dns_alias', 'acme_dns_wait', 'acme_resolvers'],
     'upgrade': ['upgrade_check', 'upgrade_url', 'upgrade_downgrade'],
+    # Certificates and TLS → Certificates from acme (4.3.1): saved with Save changes.
+    'web': ['acme_push', 'acme_push_other_names'],
     # Settings → Proxy (4.2.1), as OTP has it - the SMS gateway aside.
     'proxy': ['proxy', 'proxy_url', 'proxy_user', 'proxy_password', 'proxy_no',
               'proxy_upgrade', 'proxy_os', 'proxy_acme', 'proxy_acme_dns'],
@@ -13373,8 +13387,42 @@ def push_parse_key(text):
     return pub, (m.group(2) or '').strip()
 
 
+def _push_migrate(store):
+    """4.3.0 kept the two switches apart from the settings; from 4.3.1 they are
+    settings of the pages (saved with Save changes, as every other). Taken
+    over once, then the old ones are gone."""
+    old_on = _meta_json(store, 'acme_push:on')
+    old_other = _meta_json(store, 'acme_push:other_names')
+    if not old_on and not old_other:
+        return
+    saved = store.settings_saved()
+    want = {}
+    if old_on and 'acme_push' not in saved and old_on.get('on'):
+        want['acme_push'] = 1
+    if old_other and 'acme_push_other_names' not in saved and old_other.get('on'):
+        want['acme_push_other_names'] = 1
+    if want:
+        _push_setting_set(store, want, 'upsmon 4.3.1')
+    store.db.run("DELETE FROM meta WHERE k IN ('acme_push:on', 'acme_push:other_names')")
+
+
+def _push_setting_set(store, want, who):
+    if ENGINE[0] is not None:
+        ENGINE[0].save_settings(want, by=who)
+    else:
+        for k, v in want.items():
+            store.save_setting(k, check_setting(k, v), who)
+            CONFIG[k] = v
+
+
 def _push_on(store):
-    return bool((_meta_json(store, 'acme_push:on') or {}).get('on'))
+    _push_migrate(store)
+    return bool(CONFIG.get('acme_push'))
+
+
+def _push_other(store):
+    _push_migrate(store)
+    return bool(CONFIG.get('acme_push_other_names'))
 
 
 def push_box(store):
@@ -13661,7 +13709,7 @@ def push_install(store, body, entry):
         if not isinstance(body['alt'], dict):
             raise PushRefused(400, 'bad_request', 'alt is an object')
         alt = _push_one(store, body['alt'], 'the second certificate')
-    other = bool((_meta_json(store, 'acme_push:other_names') or {}).get('on'))
+    other = _push_other(store)
     check = body.get('check_names', True) is not False or not other
     want = []
     for a in asked:
@@ -13805,8 +13853,7 @@ def push_request(store, op, raw, headers):
             app_id = push_box(store)[0]
             return 200, {'ok': True, 'app': PUSH_APP, 'version': __version__, 'app_id': app_id,
                          'cluster': push_cluster(store),
-                         'other_names': bool((_meta_json(store, 'acme_push:other_names') or {})
-                                             .get('on')),
+                         'other_names': _push_other(store),
                          'slots': push_slots(store)}
         return 200, push_install(store, body, entry)
     except PushRefused as e:
@@ -13852,9 +13899,7 @@ def _push_install(h):
 # ---- the card on Certificates and TLS --------------------------------------------------
 def push_view(store):
     code = push_code_state(store)
-    on = _meta_json(store, 'acme_push:on') or {}
-    out = {'on': bool(on.get('on')), 'on_at': on.get('at'), 'on_by': on.get('by'),
-           'other_names': bool((_meta_json(store, 'acme_push:other_names') or {}).get('on')),
+    out = {'on': _push_on(store), 'other_names': _push_other(store),
            'keys': [{k: v for k, v in x.items() if k != 'pub'} for x in push_keys(store)],
            'pairing': {'at': code.get('at'), 'until': float(code.get('at') or 0) + PUSH_CODE_S,
                        'tries': int(code.get('tries') or 0)} if code else None,
@@ -13879,21 +13924,11 @@ def _push_do(h):
     act = str(b.get('action') or '')
     who = s['name']
     store = h.store
-    if act == 'on':
-        on = bool(b.get('on'))
-        store.set_meta('acme_push:on', json.dumps({'on': on, 'at': time.time(), 'by': who}))
-        if on:
-            push_box(store)
-        else:
-            store.db.run('DELETE FROM meta WHERE k = ?', ('acme_push:code',))
-        store.add_event('settings', '%s %s certificates from acme (acme push)'
-                        % (who, 'takes' if on else 'no longer takes'), 'warn', who=who)
-        return dict(push_view(store), message='certificates from acme: %s' % ('on' if on else 'off'))
-    if act == 'other_names':
-        on = bool(b.get('on'))
-        store.set_meta('acme_push:other_names', json.dumps({'on': on, 'at': time.time(), 'by': who}))
-        store.add_event('settings', '%s: acme push %s certificates of other names'
-                        % (who, 'may put in' if on else 'may no longer put in'), 'warn', who=who)
+    # The two switches are settings of the pages (4.3.1): saved like any other -
+    # on the card with Save changes; here for the command line and the tests.
+    if act in ('on', 'other_names'):
+        key = 'acme_push' if act == 'on' else 'acme_push_other_names'
+        _push_setting_set(store, {key: 1 if b.get('on') else 0}, who)
         return dict(push_view(store), message='saved')
     if not _push_on(store) and act in ('code', 'paste'):
         raise ApiError(400, 'switch Take certificates from acme on first')

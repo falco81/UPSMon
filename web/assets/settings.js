@@ -1509,7 +1509,7 @@ $('set-save').onclick = function () {
       }).catch(function (e) { oops(e); return false; });
     });
   });
-  chain.then(function () { markDirtyCount(); busy($('set-save'), false); });
+  chain.then(function () { markDirtyCount(); busy($('set-save'), false); if (PANE === 'web' && typeof loadPush === 'function') loadPush(); });
 };
 $('set-reset').onclick = function () {
   var keys = Object.keys(PENDING);
@@ -6778,29 +6778,13 @@ function drawPush() {
   if (!host) return;
   var d = PUSH.d || {};
   clear(host);
-  var top = el('div', 'push-top');
-  var sw = switchBox(d.on);
-  sw._input.disabled = !ADMIN;
-  sw._input.onchange = function () {
-    var on = sw._input.checked;
-    if (!on && (d.keys || []).length) {
-      sw._input.checked = true;
-      confirmThen('Take no more certificates from acme', 'acme’s requests are refused from now on; the certificate in place stays as it is. The paired keys are kept: switched on again, it goes on as before.', 'Switch it off', function () { pushDo({action: 'on', on: false}); }, true);
-      return;
-    }
-    pushDo({action: 'on', on: on});
-  };
-  top.appendChild(formField('Take certificates from acme', sw, d.on
-    ? 'On: a paired acme may put this server’s certificate in and renew it. It is kept like one uploaded here, and Automatic certificates leave it alone.'
-    : 'Off: acme’s requests are refused; nothing changes here.'));
-  if (d.on) {
-    var other = switchBox(d.other_names);
-    other._input.disabled = !ADMIN;
-    other._input.onchange = function () { pushDo({action: 'other_names', on: other._input.checked}); };
-    top.appendChild(formField('Take certificates of other names', other, 'Off (the safe way): only a certificate holding this server’s name is put in. On: acme may also send one for other names, when it says so.'));
+  /* The two switches are settings of the pages (4.3.1), drawn above in
+     #sect-web and saved with Save changes at the bottom. */
+  if (!d.on) {
+    host.appendChild(el('p', 'muted small', 'Switch Take certificates from acme on above, then Save changes: pairing and the rest show here.'));
+    return;
   }
-  host.appendChild(top);
-  if (!d.on) return;
+
 
   /* Who this is, to acme. */
   host.appendChild(netFacts([
