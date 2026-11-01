@@ -9870,6 +9870,10 @@
   "k42311": {
    "source": "Settings → Automatic certificates, DNS-01: the TXT record put in through the API of deSEC, Cloudflare or acme-dns. RFC 2136 (nsupdate) speaks DNS, not HTTP, and never goes through it.",
    "text": "Nastavení → Automatické certifikáty, DNS-01: záznam TXT vložený přes API deSEC, Cloudflare nebo acme-dns. RFC 2136 (nsupdate) mluví DNS, ne HTTP, a přes proxy nikdy nejde."
+  },
+  "k42501": {
+   "source": "Its passphrase is kept, sealed:",
+   "text": "Jeho passphrase je uložená, zapečetěná:"
   }
  },
  "patterns": {

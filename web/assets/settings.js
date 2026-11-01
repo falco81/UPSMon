@@ -5023,7 +5023,7 @@ function rbSshBlock(body, t, f, cur) {
   [mk, own, dl, fg].forEach(function (b) { P.row.appendChild(b); });
   P.row.appendChild(el('span', 'spacer'));
   P.row.appendChild(rbTryButton(t, cur));
-  var state = {pub: t.pub, has: !!t.has_key};
+  var state = {pub: t.pub, has: !!t.has_key, pass: t.key_pass || ''};
   var paint = function () {
     clear(P.below);
     dl.disabled = !state.has;
@@ -5032,6 +5032,11 @@ function rbSshBlock(body, t, f, cur) {
     if (!state.has || !state.pub) {
       P.below.appendChild(el('p', 'btnhelp', 'No key yet — make one, or let it sign in with a password.'));
       return;
+    }
+    if (state.pass) {
+      var kp = el('p', 'btnhelp', 'Its passphrase is kept, sealed: ');
+      kp.appendChild(noI18n(el('span', 'mono', state.pass)));
+      P.below.appendChild(kp);
     }
     P.below.appendChild(el('p', 'btnhelp', 'The public half. Click it to copy.'));
     P.below.appendChild(rbCopyme(state.pub, 'the public key is on the clipboard'));
@@ -5044,7 +5049,7 @@ function rbSshBlock(body, t, f, cur) {
       'A fresh ed25519 pair is made here. The private half stays on this machine and the public half is shown for you to put on the server.' + (state.has ? '<br><br><b>The key kept now is replaced</b>, so until the new public half is on the server, backups cannot sign in there.' : ''),
       'Make one', function () {
         rbNeedSaved(t.kind, cur).then(function () { return api('rbackup', {action: 'keygen', id: cur.id}); })
-          .then(function (x) { state.pub = x.pub; state.has = true; paint(); toast('a new key was made — put the public half on the server', 'good'); })
+          .then(function (x) { state.pub = x.pub; state.has = true; state.pass = ''; paint(); toast('a new key was made — put the public half on the server', 'good'); })
           .catch(oops);
       }, false);
   };
@@ -5068,7 +5073,7 @@ function rbSshBlock(body, t, f, cur) {
           {words: 'Keep this key', cls: 'primary', close: true, go: function () {
             var key = $('rb-paste-area').value, pass = $('rb-paste-pp').value;
             rbNeedSaved(t.kind, cur).then(function () { return api('rbackup', {action: 'key_paste', id: cur.id, key: key, passphrase: pass}); })
-              .then(function (x) { state.pub = x.pub; state.has = true; paint(); toast('the key was stored', 'good'); })
+              .then(function (x) { state.pub = x.pub; state.has = true; state.pass = x.key_pass || ''; paint(); toast('the key was stored', 'good'); })
               .catch(oops);
           }}]);
     });

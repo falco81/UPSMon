@@ -34,7 +34,7 @@ this file; the daemon starts it in threads of its own.
 """
 
 # Bumped with every change; upsmon_admin.py carries the same number.
-__version__ = '4.2.4'
+__version__ = '4.2.5'
 
 import argparse
 import getpass
@@ -5907,6 +5907,11 @@ an environment variable with a UPSMON_ prefix (UPSMON_NUT_HOST=10.0.0.5).
                          metavar='VAR=VALUE', help='change a writable variable')
     actions.add_argument('--exec', action='append', default=[], dest='exec_cmds',
                          metavar='COMMAND', help='run an instant command')
+    # --pin (4.2.5): --set and --exec read it, and it was never offered - so they
+    # stopped at once ("'Namespace' object has no attribute 'pin'").
+    actions.add_argument('--pin', metavar='PIN',
+                         help='with --set / --exec / the plug: the PIN, where the daemon asks '
+                              'for one (asked on the terminal when not given)')
     actions.add_argument('--check', action='store_true',
                          help='health check of daemon, upsd and database')
     actions.add_argument('--diag', action='store_true',

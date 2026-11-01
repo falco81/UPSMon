@@ -4,6 +4,25 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.2.5 - 2026-11-01
+
+**Passwords kept: a full administrator sees dots and their last two characters,
+typing shows dots only** - checked through the whole application:
+- Settings: the proxy's password, the password of the backups, the deSEC token,
+  the Cloudflare token, the acme-dns key, the TSIG secret - on the pages and in
+  `upsmon --settings`.
+- Backups → a destination: its password, and now also **the passphrase of its
+  ssh key** (kept, but not shown before) beside the key.
+- Not kept anywhere, so nothing to show: the passwords of the accounts (a hash
+  only), and what is asked for one moment (a certificate's export, a PFX
+  uploaded, a copy's passphrase).
+- Anyone else than a full administrator gets nothing of them.
+
+**`upsmon --set VAR=VALUE` and `--exec`** (a value of the UPS, a command)
+stopped at once since 3.6.7 ("'Namespace' object has no attribute 'pin'"): the
+`--pin` they read was never offered. It is now (asked on the terminal when not
+given).
+
 ## 4.2.4 - 2026-11-01
 
 - **Only errors on the machine's console** (as otp 1.0.210): lines like

@@ -60,7 +60,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.2.4'
+__version__ = '4.2.5'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -5959,6 +5959,8 @@ def rb_view(t):
     out['kind_words'] = RB_KIND_WORDS.get(t.get('kind'), t.get('kind'))
     if t.get('password'):
         out['password'] = secret_shown(rb_secret(t, 'password'), last=True)
+    if t.get('key_pass'):
+        out['key_pass'] = secret_shown(rb_secret(t, 'key_pass'), last=True)
     if t.get('hostkey'):
         out['hostkey_fp'] = ssh_fingerprints(t['hostkey'])
     if t.get('client_cert'):
@@ -9606,7 +9608,7 @@ def _rbackup_do(h):
             rb_set_fields(h.store, t['id'], by, 'an ssh key of their own given',
                           key=seal_secret(private, bind=RB_BIND), pub=public,
                           key_pass=seal_secret(pp, bind=RB_BIND) if pp else None)
-            return {'message': 'taken', 'pub': public}
+            return {'message': 'taken', 'pub': public, 'key_pass': secret_shown(pp) if pp else ''}
         if act == 'key_download':
             t = _rb_target_for(h, b)
             private = rb_secret(t, 'key')
