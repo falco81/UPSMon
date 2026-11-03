@@ -4,6 +4,14 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.3.4 - 2026-11-03
+
+- Certificates and TLS → **Upload takes a .zip** - the one *Download → Both* gives
+  (two PFX, or two PEM with their keys), or one made by hand with PEM, DER or
+  PFX files in it: unpacked by the daemon in memory and taken like the files
+  themselves, so a dual certificate goes out and comes back the same. At most
+  two PFX in all, ten small files, none locked; a wrong PFX password is said so.
+
 ## 4.3.3 - 2026-11-03
 
 **A dual certificate (RSA + its ECDSA twin) by hand** - Settings → Certificates and TLS:

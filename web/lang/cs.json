@@ -10299,10 +10299,6 @@
    "source": "The two in one .zip, each a file of its own in the format chosen, each with its own key.",
    "text": "Oba v jednom .zip, každý jako vlastní soubor ve zvoleném formátu, každý se svým klíčem."
   },
-  "k43306": {
-   "source": "PEM files - the certificate, its key, the chain, the root, in any order or all in one - or one PFX / PKCS#12 file. A dual certificate: both - the RSA one and its ECDSA twin for the same names, each with its key - in PEM, or as two PFX files with the same password.",
-   "text": "Soubory PEM – certifikát, jeho klíč, řetězec, kořen, v libovolném pořadí nebo vše v jednom – nebo jeden soubor PFX / PKCS#12. Duální certifikát: oba – RSA a jeho dvojče ECDSA na stejná jména, každý se svým klíčem – v PEM, nebo jako dva soubory PFX se stejným heslem."
-  },
   "k43307": {
    "source": "two PFX / PKCS#12 files at most - a dual certificate: RSA and ECDSA",
    "text": "nejvýš dva soubory PFX / PKCS#12 – duální certifikát: RSA a ECDSA"
@@ -10310,6 +10306,30 @@
   "k43308": {
    "source": "this certificate has no second one beside it",
    "text": "tento certifikát vedle sebe druhý nemá"
+  },
+  "k43401": {
+   "source": "one .zip at a time",
+   "text": "jen jeden .zip najednou"
+  },
+  "k43418": {
+   "source": "the .zip file cannot be read",
+   "text": "soubor .zip nejde přečíst"
+  },
+  "k43419": {
+   "source": "the .zip is locked with a password: unpack it and send the files",
+   "text": ".zip je zamčený heslem: rozbalte ho a pošlete soubory"
+  },
+  "k43420": {
+   "source": "the .zip holds more than certificates do",
+   "text": ".zip obsahuje víc, než mají certifikáty"
+  },
+  "k43421": {
+   "source": "the .zip holds no certificate (PEM, DER or PFX / PKCS#12)",
+   "text": ".zip neobsahuje žádný certifikát (PEM, DER ani PFX / PKCS#12)"
+  },
+  "k43410": {
+   "source": "A dual certificate is taken whole - the RSA one and its ECDSA twin for the same names, each with its key - in PEM, as two PFX files with the same password, or as the .zip Download → Both gave.",
+   "text": "Duální certifikát se vezme celý – RSA a jeho dvojče ECDSA na stejná jména, každý se svým klíčem – v PEM, jako dva soubory PFX se stejným heslem, nebo jako .zip ze Stáhnout → Oba."
   }
  },
  "patterns": {

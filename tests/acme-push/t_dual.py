@@ -68,4 +68,24 @@ out = tempfile.mkdtemp()
 p = subprocess.run(['python3', '/home/user/UPSMon/upsmon.py', '--cert-export', 'pfx', '--cert-which', 'both', '--out', out + '/c.zip'], env=dict(os.environ, UPSMON_PASSWORD='Export-pass-1'), capture_output=True, text=True, cwd=out)
 z = zipfile.ZipFile(out + '/c.zip')
 check('upsmon --cert-export pfx --cert-which both', p.returncode == 0 and sorted(pfx_kind(z.read(n)) for n in z.namelist()) == ['ec', 'rsa'], p.stdout + p.stderr)
+# 7. the .zip of Download → Both put back by Upload (4.3.4)
+fps = lambda tls: (tls['info']['fingerprint'], tls['alt']['info']['fingerprint'])
+want = fps(api(['web', None])[0]['tls'][me])
+for fmt, pw in (('pfx', 'Export-pass-1'), ('pfx_legacy', 'Export-pass-1'), ('pem_key', ''), ('pem_key', 'Export-pass-1')):
+    x, d = export(fmt, 'both', pw)
+    api(['web', {'action': 'tls_upload', 'target': me, 'cert': cr2 + kr2}])           # something else in between
+    r = api(['web', {'action': 'tls_upload', 'target': me, 'cert': '', 'zip': base64.b64encode(d).decode(), 'password': pw}])[0]
+    check('the .zip of Both (%s%s) put back: the same dual one' % (fmt, ', locked' if pw else ''), 'error' not in r and r['tls'].get('alt') and fps(r['tls']) == want, r)
+x, d = export('pfx', 'both')
+three = io.BytesIO()
+with zipfile.ZipFile(three, 'w') as z3:
+    for n in zipfile.ZipFile(io.BytesIO(d)).namelist(): z3.writestr(n, zipfile.ZipFile(io.BytesIO(d)).read(n))
+    z3.writestr('extra.pfx', zipfile.ZipFile(io.BytesIO(d)).read(zipfile.ZipFile(io.BytesIO(d)).namelist()[0]))
+r = api(['web', {'action': 'tls_upload', 'target': me, 'zip': base64.b64encode(three.getvalue()).decode(), 'password': 'Export-pass-1'}])[0]
+check('a .zip with three PFX: refused', 'error' in r and 'two at most' in r['error'], r)
+r = api(['web', {'action': 'tls_upload', 'target': me, 'zip': base64.b64encode(b'PK\x03\x04garbage').decode()}])[0]
+check('a broken .zip: said so', 'error' in r and '.zip' in r['error'], r)
+x, d = export('pfx', 'both')
+r = api(['web', {'action': 'tls_upload', 'target': me, 'zip': base64.b64encode(d).decode(), 'password': 'wrong-pass-1'}])[0]
+check('a wrong password for the PFX in it: said so', 'error' in r and 'password' in r['error'], r)
 print('%d ok, %d failed' % (R['ok'], R['bad']))

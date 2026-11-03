@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.3.3'
+__version__ = '4.3.4'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -9272,7 +9272,23 @@ def _web_do(h):
                     raise ApiError(400, 'that is far bigger than any certificate file')
             pending = unseal_secret(prof['pending_key'], 'web:tls') if prof.get('pending_key') \
                 else ''
-            got = cert_bundle_dual(b.get('cert'), b.get('key'), b.get('chain'), b.get('root'), pfx,
+            text_in = str(b.get('cert') or '')
+            if b.get('zip'):
+                try:
+                    zraw = base64.b64decode(str(b['zip']), validate=True)
+                except (ValueError, binascii.Error):
+                    raise ApiError(400, 'the .zip file did not arrive whole')
+                if len(zraw) > 1000000:
+                    raise ApiError(400, 'that is far bigger than any certificate file')
+                zpem, zpfx = dual_unzip(zraw)
+                text_in += '\n' + zpem
+                blobs = [x for x in (pfx, pfx2) if x] + zpfx
+                if len(blobs) > 2:
+                    raise ApiError(400, '%d PFX / PKCS#12 files came - two at most: a dual '
+                                   'certificate, RSA and ECDSA' % len(blobs))
+                pfx = blobs[0] if blobs else b''
+                pfx2 = blobs[1] if len(blobs) > 1 else b''
+            got = cert_bundle_dual(text_in, b.get('key'), b.get('chain'), b.get('root'), pfx,
                                    str(b.get('password') or ''), pending, pfx2)
             how = 'uploaded'
         else:
@@ -13185,6 +13201,37 @@ def cert_export_which(prof, fmt, password, with_chain=True, which='main'):
     return {'data': buf.getvalue(), 'suffix': '.zip', 'mime': 'application/zip',
             'words': one['words'] + ', both certificates (RSA and ECDSA) in a .zip',
             'with_key': one['with_key'], 'tag': '-dual'}
+
+
+def dual_unzip(raw):
+    """A .zip sent on Upload (4.3.4) - one Download → Both gave, or one made by
+    hand: its PEM files as text, its PFX / PKCS#12 files as bytes. Only small
+    files of these kinds, a few of them; nothing is written anywhere."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(raw))
+    except zipfile.BadZipFile:
+        raise ValueError('the .zip file cannot be read')
+    pem, pfx, total = [], [], 0
+    entries = [i for i in z.infolist() if not i.is_dir()]
+    if len(entries) > 10:
+        raise ValueError('the .zip holds %d files - a certificate is a few' % len(entries))
+    for i in entries:
+        if i.flag_bits & 0x1:
+            raise ValueError('the .zip is locked with a password: unpack it and send the files')
+        total += i.file_size
+        if i.file_size > 200000 or total > 600000:
+            raise ValueError('the .zip holds more than certificates do')
+        data = z.read(i)
+        name = i.filename.lower()
+        if name.endswith(('.pfx', '.p12')):
+            pfx.append(data)
+        elif b'-----BEGIN ' in data:
+            pem.append(data.decode('utf-8', 'replace'))
+        elif data[:1] == b'\x30' and name.endswith(('.der', '.cer', '.crt')):
+            pem.append(_openssl(['x509', '-inform', 'DER'], data, what=i.filename).decode())
+    if not pem and not pfx:
+        raise ValueError('the .zip holds no certificate (PEM, DER or PFX / PKCS#12)')
+    return '\n'.join(pem), pfx
 
 
 
