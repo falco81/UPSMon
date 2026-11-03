@@ -47,6 +47,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import zipfile
 import tempfile
 import threading
 import time
@@ -60,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.3.2'
+__version__ = '4.3.3'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -9260,10 +9261,19 @@ def _web_do(h):
                     raise ApiError(400, 'the PFX / PKCS#12 file did not arrive whole')
                 if len(pfx) > 200000:
                     raise ApiError(400, 'that is far bigger than any certificate file')
+            # The second PFX of a dual certificate (4.3.3).
+            pfx2 = b''
+            if b.get('pfx2'):
+                try:
+                    pfx2 = base64.b64decode(str(b['pfx2']), validate=True)
+                except (ValueError, binascii.Error):
+                    raise ApiError(400, 'the second PFX / PKCS#12 file did not arrive whole')
+                if len(pfx2) > 200000:
+                    raise ApiError(400, 'that is far bigger than any certificate file')
             pending = unseal_secret(prof['pending_key'], 'web:tls') if prof.get('pending_key') \
                 else ''
-            got = cert_bundle(b.get('cert'), b.get('key'), b.get('chain'), b.get('root'), pfx,
-                              str(b.get('password') or ''), pending)
+            got = cert_bundle_dual(b.get('cert'), b.get('key'), b.get('chain'), b.get('root'), pfx,
+                                   str(b.get('password') or ''), pending, pfx2)
             how = 'uploaded'
         else:
             names = [x.strip() for x in re.split(r'[\s,;]+', str(b.get('names') or '')) if x.strip()]
@@ -9279,6 +9289,11 @@ def _web_do(h):
                     key=seal_secret(got['key'], 'web:tls'), info=info,
                     chain_info=got['chain_info'], root_info=got['root_info'],
                     verify=got['verify'], how=how)
+        # A dual one keeps its twin (4.3.3); one alone leaves none beside it.
+        if got.get('alt'):
+            prof['alt'] = dual_alt_of(got)
+        else:
+            prof.pop('alt', None)
         prof.pop('pending_key', None)
         prof.pop('csr', None)
         prof.setdefault('preset', 'standard')
@@ -9287,8 +9302,9 @@ def _web_do(h):
         # One put in by hand is kept (1.0.170): ACME does not replace it at its
         # next renewal - Automatic certificates → Look after it gives it back.
         acme_care_set(store, target, False, who, 'a certificate was put in by hand')
-        store.add_event('settings', '%s put a certificate in for %s: %s (until %s)' % (
-            who, words, info.get('subject'), stamp(info.get('not_after')) if info.get('not_after') else '?'), 'warn', who=who)
+        store.add_event('settings', '%s put a certificate in for %s: %s%s (until %s)' % (
+            who, words, info.get('subject'), ' and its ECDSA twin' if got.get('alt') else '',
+            stamp(info.get('not_after')) if info.get('not_after') else '?'), 'warn', who=who)
         return {'message': 'the certificate of %s is kept; the node%s put%s it in within a few '
                            'seconds' % (words, 's' if target == 'vip' else '',
                                         '' if target == 'vip' else 's'),
@@ -9333,7 +9349,8 @@ def _web_do(h):
             raise ApiError(404, 'no certificate is kept for %s' % words)
         fmt = str(b.get('format') or 'pem')
         pw = str(b.get('password') or '')
-        got = cert_export(prof, fmt, pw, bool(b.get('with_chain', True)))
+        got = cert_export_which(prof, fmt, pw, bool(b.get('with_chain', True)),
+                                str(b.get('which') or 'main'))
         if got.get('with_key'):
             store.add_event('settings', '%s exported the certificate of %s WITH its private key (%s%s)'
                             % (who, words, got['words'], ', locked' if pw else ', NOT locked'),
@@ -9344,7 +9361,7 @@ def _web_do(h):
         cn = str((prof.get('info') or {}).get('cn') or '')
         base = cn.replace('*', '_') if re.fullmatch(r'[A-Za-z0-9*.-]{1,100}', cn) else (
             'web-address' if target == 'vip' else target)
-        return {'name': '%s%s' % (base, got['suffix']),
+        return {'name': '%s%s%s' % (base, got.get('tag', ''), got['suffix']),
                 'data': base64.b64encode(got['data']).decode('ascii'), 'mime': got['mime'],
                 'with_key': got.get('with_key', False)}
     if act == 'tls_pem':
@@ -13059,6 +13076,118 @@ def cli_upgrade_follow(store, pal):
 
 
 
+# ======== a dual certificate put in and taken out by hand (4.3.3) ========
+# Certificates and TLS: Upload takes the two certificates of a dual one - RSA and
+# its ECDSA twin, for the same names - with their two keys, in PEM or as two
+# PFX files; Download gives the one asked for, or both in a .zip. One
+# certificate with one key goes the way it always went (cert_bundle,
+# cert_export - not changed).
+def _dual_pfx_text(pfx, password):
+    got, last = None, None
+    for extra in ([], ['-legacy']):
+        try:
+            got = _openssl(['pkcs12', '-nodes', '-passin', 'env:UPSMON_PW'] + extra, pfx,
+                           {'UPSMON_PW': password or ''}, what='the PFX / PKCS#12 file')
+            break
+        except ValueError as e:
+            last = e
+    if got is None:
+        raise ValueError('%s - is the password right?' % last)
+    return got.decode('utf-8', 'replace')
+
+
+def _dual_kind(info):
+    return 'ec' if str((info or {}).get('key') or '').startswith('EC') else 'rsa'
+
+
+def _dual_names(info):
+    return sorted(set(str(n).lower() for n in ((info or {}).get('san') or [(info or {}).get('cn')])
+                      if n))
+
+
+def cert_bundle_dual(cert='', key='', chain='', root='', pfx=b'', password='', pending_key='',
+                     pfx2=b''):
+    """As cert_bundle; and where two keys came - a dual certificate - the RSA one
+    with its ECDSA twin as 'alt'."""
+    parts = [str(x or '') for x in (cert, chain, root, key)]
+    for blob in (pfx, pfx2):
+        if blob:
+            parts.append(_dual_pfx_text(blob, password))
+    text = '\n'.join(parts)
+    keys = [m.group(0) for m in PEM_KEY.finditer(text)]
+    if len(keys) <= 1:
+        if not pfx2:
+            return cert_bundle(cert, key, chain, root, pfx, password, pending_key)
+        return cert_bundle(text, '', '', '', b'', password, pending_key)
+    if len(keys) > 2:
+        raise ValueError('%d private keys were sent: a dual certificate is two - one RSA, one ECDSA - '
+                         'each with its key' % len(keys))
+    certs = [m.group(0) for m in PEM_CERT.finditer(text)]
+    pairs = []
+    for k in keys:
+        plain = key_plain(k, password)
+        want = _pub_of_key(plain)
+        leaf = next((c for c in certs if _pub_of_cert(c) == want), None)
+        if not leaf:
+            raise ValueError('one of the two private keys has no certificate of its own among what '
+                             'was sent')
+        pairs.append((leaf, plain))
+    leaves = [p[0] for p in pairs]
+    rest = '\n'.join(c for c in certs if c not in leaves)
+    bundles = [cert_bundle(leaf, plain, rest) for leaf, plain in pairs]
+    kinds = [_dual_kind(b['info']) for b in bundles]
+    if sorted(kinds) != ['ec', 'rsa']:
+        raise ValueError('two %s certificates were sent: a dual certificate is one RSA and one ECDSA '
+                         '- put one of them in at a time' % kinds[0].upper().replace('EC', 'ECDSA'))
+    n0, n1 = _dual_names(bundles[0]['info']), _dual_names(bundles[1]['info'])
+    if n0 != n1:
+        raise ValueError('the RSA and the ECDSA certificate are not for the same names (%s / %s)'
+                         % (', '.join(n0) or '-', ', '.join(n1) or '-'))
+    main = bundles[kinds.index('rsa')]
+    main['alt'] = bundles[kinds.index('ec')]
+    return main
+
+
+def dual_alt_of(got):
+    """The twin of a bundle, as a profile keeps it (tls_alt reads it back)."""
+    a = got['alt']
+    return {'cert': a['cert'], 'chain': a['chain'], 'key': seal_secret(a['key'], 'web:tls'),
+            'info': a['info'], 'for': tls_alt_for(got['cert'])}
+
+
+def cert_export_which(prof, fmt, password, with_chain=True, which='main'):
+    """cert_export of the certificate asked for: 'main', its twin 'alt', or 'both'
+    in a .zip. Adds 'tag' for the file's name."""
+    if which not in ('main', 'alt', 'both'):
+        raise ValueError('which is main, alt or both')
+    alt = tls_alt(prof)
+    if which == 'main' or (which == 'both' and not alt):
+        got = cert_export(prof, fmt, password, with_chain)
+        got['tag'] = ''
+        return got
+    if not alt:
+        raise ValueError('this certificate has no second one beside it')
+    aprof = {'cert': alt['cert'], 'chain': alt.get('chain') or '', 'key': alt.get('key'),
+             'info': alt.get('info') or {}}
+    if which == 'alt':
+        got = cert_export(aprof, fmt, password, with_chain)
+        got['tag'] = '-' + _dual_kind(aprof['info']).replace('ec', 'ecdsa')
+        return got
+    one = cert_export(prof, fmt, password, with_chain)
+    two = cert_export(aprof, fmt, password, with_chain)
+    cn = str((prof.get('info') or {}).get('cn') or 'certificate')
+    base = cn.replace('*', '_') if re.fullmatch(r'[A-Za-z0-9*.-]{1,100}', cn) else 'certificate'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+        for p, g in ((prof, one), (aprof, two)):
+            tag = _dual_kind(p.get('info')).replace('ec', 'ecdsa')
+            z.writestr('%s-%s%s' % (base, tag, g['suffix']), g['data'])
+    return {'data': buf.getvalue(), 'suffix': '.zip', 'mime': 'application/zip',
+            'words': one['words'] + ', both certificates (RSA and ECDSA) in a .zip',
+            'with_key': one['with_key'], 'tag': '-dual'}
+
+
+
 # ======== acme push (4.3.0): the cryptography it needs ========
 # Ed25519 (verify), X25519, HKDF-SHA256 and AES-256-GCM - from the `cryptography`
 # package where the Python upsmon runs on has it, else in plain Python (slow,
@@ -15474,6 +15603,9 @@ def add_cli_arguments(parser):
       help='the certificate into a file: pem, crt, der, pfx, pfx_legacy (3DES), pem_key or key - '
       'the ones with the key ask for a password (or UPSMON_PASSWORD)')
     a('--out', metavar='FILE', help='with --cert-export: the file written')
+    a('--cert-which', choices=('main', 'alt', 'both'), default='main',
+      help='with --cert-export, for a dual certificate: the RSA one (main), its ECDSA twin '
+           '(alt), or both in a .zip')
     a('--acme', action='store_true', help='the automatic certificates (ACME) and how they stand')
     a('--acme-order', nargs='?', const='all', metavar='WHICH', help='order a certificate by ACME now')
     g = parser.add_argument_group('THE DATABASE AND BACKUPS')
@@ -15717,10 +15849,11 @@ def cli_main(args, ups_status=None):
                                                              if not args.cert_export.startswith('pfx') else ''),
                               env='UPSMON_PASSWORD')
         try:
-            got = cert_export(prof, args.cert_export, pw)
+            got = cert_export_which(prof, args.cert_export, pw, True, args.cert_which)
         except ValueError as e:
             raise SystemExit('upsmon: %s' % e)
-        out_ = args.out or (str((prof.get('info') or {}).get('cn') or node_name()).replace('*', '_') + got['suffix'])
+        out_ = args.out or (str((prof.get('info') or {}).get('cn') or node_name()).replace('*', '_')
+                            + got.get('tag', '') + got['suffix'])
         fd = os.open(out_, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600 if keyed else 0o644)
         with os.fdopen(fd, 'wb') as f:
             f.write(got['data'])

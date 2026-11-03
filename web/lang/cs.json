@@ -6367,10 +6367,6 @@
    "source": "once, by hand, in your DNS",
    "text": "jednou, ručně, ve vašem DNS"
   },
-  "os4051": {
-   "source": "one PFX / PKCS#12 file at a time",
-   "text": "jen jeden soubor PFX / PKCS#12 najednou"
-  },
   "os4056": {
    "source": "one server",
    "text": "jeden server"
@@ -10282,6 +10278,38 @@
   "ais1704": {
    "source": "What acme sees here",
    "text": "Co tu acme vidí"
+  },
+  "k43301": {
+   "source": "Which certificate",
+   "text": "Který certifikát"
+  },
+  "k43302": {
+   "source": "The first certificate - the one served by default.",
+   "text": "První certifikát – ten, který se podává standardně."
+  },
+  "k43303": {
+   "source": "Its twin beside it - for the clients that take ECDSA.",
+   "text": "Jeho dvojče vedle něj – pro klienty, kteří umí ECDSA."
+  },
+  "k43304": {
+   "source": "Both",
+   "text": "Oba"
+  },
+  "k43305": {
+   "source": "The two in one .zip, each a file of its own in the format chosen, each with its own key.",
+   "text": "Oba v jednom .zip, každý jako vlastní soubor ve zvoleném formátu, každý se svým klíčem."
+  },
+  "k43306": {
+   "source": "PEM files - the certificate, its key, the chain, the root, in any order or all in one - or one PFX / PKCS#12 file. A dual certificate: both - the RSA one and its ECDSA twin for the same names, each with its key - in PEM, or as two PFX files with the same password.",
+   "text": "Soubory PEM – certifikát, jeho klíč, řetězec, kořen, v libovolném pořadí nebo vše v jednom – nebo jeden soubor PFX / PKCS#12. Duální certifikát: oba – RSA a jeho dvojče ECDSA na stejná jména, každý se svým klíčem – v PEM, nebo jako dva soubory PFX se stejným heslem."
+  },
+  "k43307": {
+   "source": "two PFX / PKCS#12 files at most - a dual certificate: RSA and ECDSA",
+   "text": "nejvýš dva soubory PFX / PKCS#12 – duální certifikát: RSA a ECDSA"
+  },
+  "k43308": {
+   "source": "this certificate has no second one beside it",
+   "text": "tento certifikát vedle sebe druhý nemá"
   }
  },
  "patterns": {
@@ -12944,6 +12972,14 @@
   "aip0167": {
    "source": "{0} · {1} · {2} ago",
    "text": "{0} · {1} · před {2}"
+  },
+  "kp43301": {
+   "source": "{0} private keys were sent: a dual certificate is two - one RSA, one ECDSA - each with its key",
+   "text": "Přišlo {0} privátních klíčů: duální certifikát jsou dva – jeden RSA, jeden ECDSA – každý se svým klíčem"
+  },
+  "kp43302": {
+   "source": "the RSA and the ECDSA certificate are not for the same names ({0} / {1})",
+   "text": "certifikát RSA a ECDSA nejsou na stejná jména ({0} / {1})"
   }
  },
  "rich": {

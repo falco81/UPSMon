@@ -4,6 +4,22 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.3.3 - 2026-11-03
+
+**A dual certificate (RSA + its ECDSA twin) by hand** - Settings → Certificates and TLS:
+- **Upload** takes both: PEM with the two certificates and their two keys (any
+  order, all in one), or two PFX files with the same password. They are paired by
+  their keys; one RSA and one ECDSA for the same names are kept as one dual
+  certificate (RSA first, the ECDSA twin beside it - nginx gets both), else
+  refused with why (two of one kind, other names, more than two keys). One
+  certificate with one key goes exactly as before - and puts the twin of the one
+  before aside.
+- **Download** of a dual one asks *Which certificate*: the RSA one, the ECDSA
+  twin (`-ecdsa` in the name), or **both** - a `.zip` with a file each in the
+  format chosen, each with its own key (a PFX holds one key, so two PFX).
+  Before, only the RSA certificate and its key came out.
+- `upsmon --cert-export FORMAT --cert-which main|alt|both`.
+
 ## 4.3.2 - 2026-11-01
 
 - **Certificates from acme looks and works exactly as in ai 1.0.60**: the state in

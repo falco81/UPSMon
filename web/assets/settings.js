@@ -3896,7 +3896,7 @@ var CERT_PASTE_HINT = '-----BEGIN CERTIFICATE-----\n' +
 function certUpload(target, prof) {
   var got = [];
   modal('A certificate for ' + webTargetWords(target), function (body) {
-    body.appendChild(el('p', 'note', 'PEM files - the certificate, its key, the chain, the root, in any order or all in one - or one PFX / PKCS#12 file. ' +
+    body.appendChild(el('p', 'note', 'PEM files - the certificate, its key, the chain, the root, in any order or all in one - or one PFX / PKCS#12 file. A dual certificate: both - the RSA one and its ECDSA twin for the same names, each with its key - in PEM, or as two PFX files with the same password. ' +
       (prof && prof.pending ? 'A request waits here: the certificate the authority sent back is enough, its key is here.' : 'The key has to come with it.')));
     var drop = el('div', 'drop');
     var inp = el('input'); inp.type = 'file'; inp.multiple = true; inp.hidden = true;
@@ -3934,10 +3934,10 @@ function certUpload(target, prof) {
       {words: 'Put it in', cls: 'primary', icon: 'save', go: function (b) {
         var pem = got.filter(function (x) { return x.pem; }).map(function (x) { return x.pem; }).join('\n') + '\n' + ($('cu-paste').value || '');
         var pfx = got.filter(function (x) { return x.pfx; });
-        if (pfx.length > 1) { toast('one PFX / PKCS#12 file at a time', 'bad'); return; }
+        if (pfx.length > 2) { toast('two PFX / PKCS#12 files at most - a dual certificate: RSA and ECDSA', 'bad'); return; }
         if (!pfx.length && !/-----BEGIN /.test(pem)) { toast('choose the files first, or paste the PEM', 'bad'); return; }
         busy(b, true);
-        api('web', {action: 'tls_upload', target: target, cert: pem, pfx: pfx.length ? pfx[0].pfx : '',
+        api('web', {action: 'tls_upload', target: target, cert: pem, pfx: pfx.length ? pfx[0].pfx : '', pfx2: pfx.length > 1 ? pfx[1].pfx : '',
                     password: ($('cu-pw') || {}).value || ''}).then(function (x) {
           toast(x.message, 'good'); closeModal(); loadWeb();
         }).catch(function (e) { $('cu-said').className = 'said bad'; $('cu-said').textContent = e.message; }).then(function () { busy(b, false); });
@@ -6455,6 +6455,13 @@ function certExport(target, prof) {
   var info = prof.info || {};
   var hasKey = !!prof.has_key;
   var pick = 'pem';
+  /* A dual certificate (4.3.3): the RSA one, its ECDSA twin, or both in a .zip. */
+  var twin = prof.alt && prof.alt.info ? prof.alt.info : null;
+  var which = 'main', whichTiles = {};
+  var WHICH = twin ? [
+    {w: 'main', name: (info.key || 'RSA') , says: 'The first certificate - the one served by default.', tag: ''},
+    {w: 'alt', name: (twin.key || 'ECDSA'), says: 'Its twin beside it - for the clients that take ECDSA.', tag: '-ecdsa'},
+    {w: 'both', name: 'Both', says: 'The two in one .zip, each a file of its own in the format chosen, each with its own key.', tag: '-dual'}] : [];
   var p1 = secretBox('', '8 characters at least', 'mono');
   var p2 = secretBox('', 'the same again', 'mono');
   p1.autocomplete = p2.autocomplete = 'new-password';
@@ -6477,7 +6484,9 @@ function certExport(target, prof) {
       : 'Optional: without a password the private key is written in the clear.';
     clear(nameLine);
     nameLine.appendChild(document.createTextNode('The file: '));
-    nameLine.appendChild(noI18n(el('b', 'mono', base + f.ext)));
+    Object.keys(whichTiles).forEach(function (k) { whichTiles[k].classList.toggle('on', k === which); });
+    var wt = WHICH.filter(function (x) { return x.w === which; })[0];
+    nameLine.appendChild(noI18n(el('b', 'mono', base + (wt ? wt.tag : '') + (which === 'both' ? '.zip' : f.ext))));
     var s = strength(p1.value);
     meter.className = 'cx-meter s' + s;
     meter.title = ['', 'weak', 'fair', 'good', 'strong'][s];
@@ -6490,6 +6499,23 @@ function certExport(target, prof) {
     if (info.not_after) sub.push('good until ' + new Date(info.not_after * 1000).toLocaleDateString(window.OTP_LANG === 'cs' ? 'cs-CZ' : undefined));
     head.appendChild(el('div', 'muted small', sub.join(' · ')));
     body.appendChild(head);
+    if (twin) {
+      body.appendChild(el('h4', 'cx-h', 'Which certificate'));
+      var wg = el('div', 'cx-grid');
+      WHICH.forEach(function (x) {
+        var t = el('button', 'cx-tile');
+        t.type = 'button';
+        var top = el('div', 'cx-top');
+        top.appendChild(noI18n(el('span', 'cx-name', x.name)));
+        if (x.w === 'both') top.appendChild(el('span', 'tag info', '.zip'));
+        t.appendChild(top);
+        t.appendChild(el('div', 'cx-says', x.says));
+        t.onclick = function () { which = x.w; paint(); };
+        whichTiles[x.w] = t;
+        wg.appendChild(t);
+      });
+      body.appendChild(wg);
+    }
     body.appendChild(el('h4', 'cx-h', 'The format'));
     var grid = el('div', 'cx-grid');
     CERT_FORMATS.forEach(function (f) {
@@ -6538,7 +6564,7 @@ function certExport(target, prof) {
           if (pw !== p2.value) { toast('the two passwords are not the same', 'bad'); p2.focus(); return; }
         }
         busy(b, true);
-        api('web', {action: 'tls_export', target: target, format: pick, password: pw}).then(function (x) {
+        api('web', {action: 'tls_export', target: target, format: pick, password: pw, which: which}).then(function (x) {
           var raw = atob(x.data), bytes_ = new Uint8Array(raw.length);
           for (var i = 0; i < raw.length; i++) bytes_[i] = raw.charCodeAt(i);
           var a = el('a');
