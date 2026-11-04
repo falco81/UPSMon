@@ -4,6 +4,18 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.3.5 - 2026-11-04
+
+**Reading what `--set` and `--setting` change**, on the command line:
+- `upsmon --get VAR` - a variable of the UPS: the value alone for one (for a
+  script), `VAR = VALUE` for several (`--get A --get B`), `--json` as JSON. From
+  upsd; where upsd cannot be reached from here, the values the daemon read last -
+  said so on stderr, the value alone still on stdout. A variable the UPS does not
+  have: exit 1, with the names that look like it.
+- `upsmon --setting KEY` (no `=`) - a setting of the pages as it is now, the same
+  ways; a secret as dots and its last two, as on the pages. `KEY=VALUE` changes it
+  as before; both at once is refused.
+
 ## 4.3.4 - 2026-11-03
 
 - Certificates and TLS → **Upload takes a .zip** - the one *Download → Both* gives

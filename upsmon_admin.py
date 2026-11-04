@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.3.4'
+__version__ = '4.3.5'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -15636,8 +15636,9 @@ def add_cli_arguments(parser):
     g = parser.add_argument_group('THE SETTINGS')
     a = g.add_argument
     a('--settings', action='store_true', help='every setting of the pages, and where it comes from')
-    a('--setting', action='append', default=[], metavar='KEY=VALUE',
-      help='change a setting of the pages (KEY=- asks for a secret)')
+    a('--setting', action='append', default=[], metavar='KEY[=VALUE]',
+      help='KEY=VALUE changes a setting of the pages (KEY=- asks for a secret); KEY alone '
+           'shows what it is now (a secret as dots and its last two)')
     a('--search', default='', help='with --settings / --audit: only those with these words')
     a('--audit', action='store_true', help='the events of the settings pages: sign-ins, accounts, certificates')
     g = parser.add_argument_group('CERTIFICATES AND TLS')
@@ -15858,6 +15859,28 @@ def cli_main(args, ups_status=None):
             print('  %-24s %-34s %s' % (s['key'], json.dumps(s['value'], ensure_ascii=False)[:34],
                                        pal.dim(s['source_says'])))
         return 0
+    # --setting KEY (4.3.5): what it is now - as --get is to --set for the UPS.
+    if args.setting and not any('=' in one for one in args.setting):
+        rows = {r['key']: r for r in engine().settings_state(True)}
+        got = {}
+        for k in args.setting:
+            k = k.strip()
+            if k not in rows:
+                near = [x for x in rows if k.lower() in x.lower()][:6]
+                raise SystemExit('upsmon: there is no setting %s%s' % (
+                    k, (' - perhaps ' + ', '.join(near)) if near else ' (upsmon --settings lists them)'))
+            got[k] = rows[k]['value']
+        if as_json:
+            out(got)
+        elif len(got) == 1:
+            v = list(got.values())[0]
+            print(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False))
+        else:
+            for k, v in got.items():
+                print('%s = %s' % (k, v if isinstance(v, str) else json.dumps(v, ensure_ascii=False)))
+        return 0
+    if args.setting and not all('=' in one for one in args.setting):
+        raise SystemExit('upsmon: --setting KEY=VALUE changes a setting, --setting KEY shows it - not both at once')
     if args.setting:
         want = {}
         for one in args.setting:
@@ -16388,6 +16411,8 @@ def cli_main(args, ups_status=None):
 
 HELP_EXAMPLES = [
     ('upsmon --status', 'the UPS now, every variable'),
+    ('upsmon --get battery.charge', 'one variable, the value alone'),
+    ('upsmon --set battery.charge.low=20', 'change a writable one'),
     ('upsmon --check', 'is the whole system healthy'),
     ('upsmon --console', 'everything by its menus'),
     ('upsmon --history 7d', 'recorded samples as a table'),
@@ -16396,6 +16421,7 @@ HELP_EXAMPLES = [
     ('upsmon --users', 'the accounts of Settings'),
     ('upsmon --add-user novak --role fulladmin', ''),
     ('upsmon --setting acme=1 --setting acme_email=it@example.cz', ''),
+    ('upsmon --setting acme_email', 'what a setting of the pages is now'),
     ('upsmon --acme-order', 'a certificate from Let\'s Encrypt now'),
     ('upsmon --upgrade-online', 'the newest version, checked and put in'),
     ('upsmon shelly plug info', 'the plug, by role'),

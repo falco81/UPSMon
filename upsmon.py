@@ -34,7 +34,7 @@ this file; the daemon starts it in threads of its own.
 """
 
 # Bumped with every change; upsmon_admin.py carries the same number.
-__version__ = '4.3.4'
+__version__ = '4.3.5'
 
 import argparse
 import getpass
@@ -4172,6 +4172,51 @@ def cmd_status(args, pal):
     return 0
 
 
+def cmd_get(args, pal):
+    """--get VAR (4.3.5): what --set changes, read - one value alone (for a
+    script), several as VAR = VALUE, or JSON. From upsd; where upsd cannot be
+    reached from here, what the running daemon saw last."""
+    variables, said = None, ''
+    try:
+        client, name = connect_ups()
+        try:
+            variables = client.list_vars(name)
+        finally:
+            client.close()
+    except (NUTError, OSError) as e:
+        said = str(e)
+        status, snap = api_call('/api/status', timeout=4.0)
+        if status == 200 and isinstance(snap, dict) and isinstance(snap.get('vars'), dict):
+            variables = snap['vars']
+            # Said on stderr, so a script reading the value still gets only it.
+            print(pal.warn('upsd is not reachable from here (%s): the values the daemon read %s'
+                           % (said, 'last, before it lost upsd' if snap.get('online') is False
+                              else 'at its last poll')), file=sys.stderr)
+    if variables is None:
+        print(pal.bad('ERROR: ') + (said or 'neither upsd nor the daemon answered'), file=sys.stderr)
+        return 2
+    got, missing = {}, []
+    for var in args.get_vars:
+        var = var.strip()
+        if var in variables:
+            got[var] = variables[var]
+        else:
+            missing.append(var)
+    if args.json:
+        print(json.dumps(dict(got, **({'_missing': missing} if missing else {})), indent=2))
+    elif len(args.get_vars) == 1 and got:
+        print(list(got.values())[0])
+    else:
+        for var, value in got.items():
+            print('%s = %s' % (pal.key(var), pal.value(value)))
+    for var in missing:
+        near = [v for v in sorted(variables) if var.lower() in v.lower()][:6]
+        print(pal.bad('ERROR: ') + 'the UPS has no variable %s%s' % (
+            var, (' - perhaps ' + ', '.join(near)) if near else ' (upsmon --status lists them)'),
+            file=sys.stderr)
+    return 1 if missing else 0
+
+
 def cmd_list_rw(args, pal):
     try:
         client, name = connect_ups()
@@ -5903,6 +5948,9 @@ an environment variable with a UPSMON_ prefix (UPSMON_NUT_HOST=10.0.0.5).
                          help='collect one sample into the database and exit')
     actions.add_argument('--list-rw', action='store_true',
                          help='list writable variables and instant commands')
+    actions.add_argument('--get', action='append', default=[], dest='get_vars',
+                         metavar='VAR', help='print a variable of the UPS (several: --get A --get B; '
+                                             'with --json as JSON)')
     actions.add_argument('--set', action='append', default=[], dest='set_vars',
                          metavar='VAR=VALUE', help='change a writable variable')
     actions.add_argument('--exec', action='append', default=[], dest='exec_cmds',
@@ -6031,6 +6079,8 @@ def main(argv=None):
             return cmd_status(args, pal)
         if args.list_rw:
             return cmd_list_rw(args, pal)
+        if args.get_vars:
+            return cmd_get(args, pal)
         if args.set_vars or args.exec_cmds:
             return cmd_control(args, pal)
         if args.oneshot:
