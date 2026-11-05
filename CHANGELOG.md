@@ -4,6 +4,17 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.4.4 - 2026-11-05
+
+- **The performance meter's graphs slide smoothly.** Each graph (in the header and
+  in the panel) is one SVG animation that moves the line one step to the left over
+  the 3 s until the next reading - nothing is redrawn by a timer, the page only
+  draws again when a reading comes. Drawn again in the middle (the panel opened)
+  it goes on from where it was. Nothing moves before the two minutes are full (the
+  line grows to the right), nor with "reduce motion" set in the system.
+- Nothing more is read or written for it: still one request every 3 s while the
+  page is open and shown, none once it is closed or hidden.
+
 ## 4.4.3 - 2026-11-05
 
 Fixes in the performance meter:

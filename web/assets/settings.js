@@ -7028,13 +7028,39 @@ function hloadRate(n) {
 /* Four looks to choose from (1.0.72): pills with a bar, one plain line,
    small graphs of the last two minutes, rings. */
 var HLOAD_KEEP = 40;
+/* The graphs slide (upsmon 4.4.4): one SVG animation per graph moves the line
+   by one step over the 3 s until the next reading - nothing is redrawn by a
+   timer. Drawn again in the middle (the panel opened), it goes on from where
+   it is (a negative begin). Only the live graphs, only once two minutes are
+   full (before that the line grows to the right and nothing moves), not with
+   reduced motion. */
+var HLOAD_STEP_S = 3;
+function hlSlideKey(vals) {
+  var h = HLOAD.hist;
+  if (!h || !HLOAD.pushAt || vals.length !== HLOAD_KEEP) return null;
+  var k = ['cpu', 'mem', 'disk', 'net'].filter(function (x) { return h[x] === vals; })[0];
+  if (!k || !HLOAD.drop || HLOAD.drop[k] === undefined) return null;
+  try { if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return null; } catch (e) { }
+  return (Date.now() - HLOAD.pushAt) / 1000 < HLOAD_STEP_S ? k : null;
+}
+/* the points of a graph, with the one that just went out on the left while it slides */
+function hlSlidePts(vals, w, y) {
+  var step = w / (HLOAD_KEEP - 1), k = hlSlideKey(vals);
+  var pts = vals.map(function (v, i) { return (i * step).toFixed(1) + ',' + y(v); });
+  if (!k) return {pts: pts, open: '', close: '', first: '0'};
+  var gone = (Date.now() - HLOAD.pushAt) / 1000;
+  pts.unshift((-step).toFixed(1) + ',' + y(HLOAD.drop[k]));
+  return {pts: pts, first: (-step).toFixed(1), close: '</g>',
+          open: '<g class="hl-slide"><animateTransform attributeName="transform" type="translate" from="' + step.toFixed(2) + ' 0" to="0 0" dur="'
+                + HLOAD_STEP_S + 's" begin="' + (-gone).toFixed(2) + 's" fill="freeze"/>'};
+}
 function hloadSpark(vals, max, cls) {
   var w = 56, h = 18, n = vals.length;
   var svg = '<svg class="hl-spark ' + (cls || '') + '" viewBox="0 0 ' + w + ' ' + h + '" width="' + w + '" height="' + h + '" preserveAspectRatio="none" aria-hidden="true">';
   if (n > 1) {
     var top = Math.max(max || 0, 1);
-    var pts = vals.map(function (v, i) { return (i * w / (HLOAD_KEEP - 1)).toFixed(1) + ',' + (h - 1 - (h - 2) * Math.min(1, (v || 0) / top)).toFixed(1); });
-    svg += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>';
+    var sl = hlSlidePts(vals, w, function (v) { return (h - 1 - (h - 2) * Math.min(1, (v || 0) / top)).toFixed(1); });
+    svg += sl.open + '<polyline points="' + sl.pts.join(' ') + '" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>' + sl.close;
   }
   return svg + '</svg>';
 }
@@ -7067,8 +7093,12 @@ function hloadDraw(d, into, asLook) {
   else {
     HLOAD.last = d;
     hist = HLOAD.hist || (HLOAD.hist = {cpu: [], mem: [], disk: [], net: []});
-    var push = function (k, v) { hist[k].push(v || 0); if (hist[k].length > HLOAD_KEEP) hist[k].shift(); };
-    if (d.cpu !== undefined && !HLOAD.noPush) { push('cpu', d.cpu); push('mem', mp); push('disk', (d.disk_rd || 0) + (d.disk_wr || 0)); push('net', (d.net_rx || 0) + (d.net_tx || 0)); hloadKeep(); }
+    var push = function (k, v) {
+      hist[k].push(v || 0);
+      HLOAD.drop = HLOAD.drop || {};
+      if (hist[k].length > HLOAD_KEEP) HLOAD.drop[k] = hist[k].shift(); else delete HLOAD.drop[k];
+    };
+    if (d.cpu !== undefined && !HLOAD.noPush) { HLOAD.pushAt = Date.now(); push('cpu', d.cpu); push('mem', mp); push('disk', (d.disk_rd || 0) + (d.disk_wr || 0)); push('net', (d.net_rx || 0) + (d.net_tx || 0)); hloadKeep(); }
   }
   var look = asLook || HLOAD.look || 'graphs';
   host.className = 'hload look-' + look + (preview ? ' hl-preview' : '');
@@ -7303,10 +7333,10 @@ function hpArea(k, h, grid) {
   var svg = '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '" preserveAspectRatio="none" aria-hidden="true">';
   if (grid) [0.25, 0.5, 0.75].forEach(function (g) { svg += '<line x1="0" x2="' + w + '" y1="' + h * g + '" y2="' + h * g + '" class="hp-grid" vector-effect="non-scaling-stroke"/>'; });
   if (vals.length > 1) {
-    var pts = vals.map(function (v, i) { return (i * w / (HLOAD_KEEP - 1)).toFixed(1) + ',' + (h - 1 - (h - 3) * Math.min(1, (v || 0) / top)).toFixed(1); });
+    var sl = hlSlidePts(vals, w, function (v) { return (h - 1 - (h - 3) * Math.min(1, (v || 0) / top)).toFixed(1); });
     var last = ((vals.length - 1) * w / (HLOAD_KEEP - 1)).toFixed(1);
-    svg += '<polygon points="0,' + h + ' ' + pts.join(' ') + ' ' + last + ',' + h + '" fill="currentColor" opacity=".16"/>';
-    svg += '<polyline points="' + pts.join(' ') + '" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>';
+    svg += sl.open + '<polygon points="' + sl.first + ',' + h + ' ' + sl.pts.join(' ') + ' ' + last + ',' + h + '" fill="currentColor" opacity=".16"/>';
+    svg += '<polyline points="' + sl.pts.join(' ') + '" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>' + sl.close;
   }
   box.innerHTML = svg + '</svg>';
   return box;

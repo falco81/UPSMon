@@ -3581,3 +3581,6 @@ body{padding-right:max(16px,env(safe-area-inset-right))}
 
 /* nothing at 0 %: a round cap drew a dot there */
 .hl-ring-fg[stroke-dasharray^="0.0 "],.hp-ring-fg[stroke-dasharray^="0.0 "]{stroke:transparent}
+
+/* the graphs slide: what moves out of the box is not drawn */
+.hl-spark,.hp-area svg{overflow:hidden}

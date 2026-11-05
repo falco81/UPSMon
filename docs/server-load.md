@@ -326,3 +326,11 @@ použije číslo `cpuN` jako dřív.
 Přepínač **O aplikaci → Vytížení serveru v záhlaví** (`load_meter`, výchozí vypnuto) vypne měřič
 úplně: stránky nemají v záhlaví nic a na nic se neptají, `/api/load` odmítne (403) dřív, než by
 cokoli přečetl, a daemon sám nic z `/proc` ani `/sys` pro měřič nečte.
+
+## Plynulý posun grafů (4.4.4)
+
+Posun je **jedna SVG animace na graf** (`<animateTransform>` v `<g class="hl-slide">`): čára se za 3 s
+do dalšího čtení posune o jeden krok doleva, bod, který právě odešel, je vlevo dokreslen. Nic se
+nepřekresluje časovačem – kreslí se jen, když přijde čtení. Nakreslený znovu uprostřed (otevřený
+panel) pokračuje odtamtud (záporný `begin`). Dokud nejsou plné dvě minuty, čára roste doprava a nic se
+nehýbe; s `prefers-reduced-motion: reduce` také ne. Nic dalšího se nečte ani nezapisuje.
