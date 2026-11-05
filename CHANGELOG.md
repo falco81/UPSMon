@@ -4,6 +4,14 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.4.2 - 2026-11-05
+
+- **Sign in with a passkey shows from every computer, not only from the server
+  itself.** For a visitor from elsewhere the sign-in page keeps only a few words of
+  what the daemon says (so it tells strangers nothing), and whether passkeys are on
+  was not among them: the button was never drawn. It is kept now. (4.4.1's tests
+  ran from the server itself, where nothing is taken away.)
+
 ## 4.4.1 - 2026-11-05
 
 - **Sign in with a passkey is offered as soon as passkeys are switched on** - it was

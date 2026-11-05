@@ -324,8 +324,10 @@ if (!$me && !ups_local()) {
        that is not fine has already turned this into "not answering" above.
        (1.0.19: only the language was kept, and the page then read the
        missing database as one that will not open.) */
+    /* Whether passkeys are on is kept too (4.4.2): without it the button of a
+       passkey was missing for everybody but the server itself. */
     $health = ['lang' => (string) ($health['lang'] ?? 'cs'), 'database' => ['ok' => true],
-               'users' => 1];
+               'users' => 1, 'passkeys' => !empty($health['passkeys'])];
 }
 $initial = $me ? (ups_get('/api/status', 8.0) ?: null) : null;
 $host    = (string) ($_SERVER['HTTP_HOST'] ?? php_uname('n'));
