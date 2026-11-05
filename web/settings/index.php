@@ -472,7 +472,11 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
         location.reload();
       }).catch(function (e) {
         pkGo.disabled = false;
-        if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return;
+        if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) {
+          said.className = 'said';
+          said.textContent = 'No passkey was used. None yet on this device? Sign in with the password once, then Your account → Add a passkey of this device.';
+          return;
+        }
         said.className = 'said bad';
         said.textContent = String((e && e.message) || e);
       });

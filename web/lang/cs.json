@@ -10686,6 +10686,22 @@
   "hl056": {
    "source": "CPU, memory, the disks and the network of this server, live, in the head of these pages - pointed at (or tapped), each in detail: the cores, the sensors, the disks, the cards, the processes taking most. For the full administrators only; read from /proc only while a page shows it. Each one chooses its look in Your account. Seen once the page is loaded again.",
    "text": "CPU, paměť, disky a síť tohoto serveru živě v záhlaví těchto stránek – po najetí (nebo klepnutí) každé podrobně: jádra, čidla, disky, karty, procesy, které berou nejvíc. Jen pro plné administrátory; čte se z /proc jen tehdy, když ho stránka ukazuje. Vzhled si každý vybere ve Vašem účtu. Projeví se po novém načtení stránky."
+  },
+  "k44101": {
+   "source": "No passkey was used. None yet on this device? Sign in with the password once, then Your account → Add a passkey of this device.",
+   "text": "Žádná passkey nebyla použita. Na tomto zařízení ještě žádnou nemáte? Přihlaste se jednou heslem a pak Váš účet → Přidat passkey tohoto zařízení."
+  },
+  "k44110": {
+   "source": "No passkey was used.",
+   "text": "Žádná passkey nebyla použita."
+  },
+  "k44111": {
+   "source": "None yet on this device?",
+   "text": "Na tomto zařízení ještě žádnou nemáte?"
+  },
+  "k44112": {
+   "source": "Sign in with the password once, then Your account → Add a passkey of this device.",
+   "text": "Přihlaste se jednou heslem a pak Váš účet → Přidat passkey tohoto zařízení."
   }
  },
  "patterns": {

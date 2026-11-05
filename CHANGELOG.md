@@ -4,6 +4,15 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.4.1 - 2026-11-05
+
+- **Sign in with a passkey is offered as soon as passkeys are switched on** - it was
+  shown only once some account had added one, so right after switching it on the
+  sign-in page had no button and it looked as if the switch had not worked.
+- The button pressed with no passkey on the device (or the window closed) says what
+  to do: sign in with the password once, then Your account → *Add a passkey of
+  this device*.
+
 ## 4.4.0 - 2026-11-05
 
 **Sign in with Face ID, Touch ID, Windows Hello (passkeys, WebAuthn)** - as ai has it

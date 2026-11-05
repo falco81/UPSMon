@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.4.0'
+__version__ = '4.4.1'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -8561,8 +8561,9 @@ def _health(h):
     out = {'ok': True, 'users': users, 'database': {'ok': db_ok},
            'lang': CONFIG.get('ui_lang') or 'cs', 'node': node_name(),
            'maintenance': maint,
-           'passkeys': bool(CONFIG.get('passkeys')) and bool(h.store.get_meta('passkeys') not in
-                                                             (None, '', '[]'))}
+           # Offered as soon as it is switched on (4.4.1): with none added yet the
+           # button was missing, and that looked like the switch had not worked.
+           'passkeys': bool(CONFIG.get('passkeys'))}
     return out
 
 
