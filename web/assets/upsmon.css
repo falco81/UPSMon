@@ -3578,3 +3578,6 @@ body{padding-right:max(16px,env(safe-area-inset-right))}
 .hl-sw .hl-none{margin:auto;align-self:center;padding-top:40px}
 .hl-panel .hp-core-bot{font-size:11px;white-space:nowrap;gap:4px}
 .hl-panel .hp-core-top{white-space:nowrap}
+
+/* nothing at 0 %: a round cap drew a dot there */
+.hl-ring-fg[stroke-dasharray^="0.0 "],.hp-ring-fg[stroke-dasharray^="0.0 "]{stroke:transparent}

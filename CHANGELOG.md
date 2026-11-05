@@ -4,6 +4,29 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.4.3 - 2026-11-05
+
+Fixes in the performance meter:
+
+- **Free space only from the kernel's own filesystems.** The disks panel asked
+  `statvfs` of every mount but the pseudo ones, and let network shares through on
+  purpose: an NFS or CIFS server that is not answering made it hang, and FUSE
+  mounts (ntfs-3g, mergerfs, sshfs) answer through a program of their own. Only
+  ext2/3/4, xfs, btrfs, zfs, f2fs, exfat, ntfs3, jfs, reiserfs, nilfs2 and
+  bcachefs are asked now.
+- **No bar at 0 %.** Bars were drawn at least 1 % wide (2 % in the pills) and a
+  ring's round end drew a dot, so an idle core, disk or filesystem showed a
+  sliver beside "0 %". Nothing is drawn below 0.5 % now, in every look and style.
+- **The process bars are the real share** - of one core (or of the busiest past
+  100 %) and of the memory in use - not of the busiest process, which gave a
+  process at "0 %" a third of the bar.
+- **Every core has its temperature.** The sensor's "Core N" is the physical core.
+  It was matched to the logical CPU of the same number, so with hyperthreading,
+  gaps in the core numbers or two packages half the rows had none. The topology
+  in sysfs says which core each CPU is.
+- Switched off (Settings -> About, the default) the meter reads nothing: no
+  header, no requests from the pages, and the API refuses before it reads.
+
 ## 4.4.2 - 2026-11-05
 
 - **Sign in with a passkey shows from every computer, not only from the server

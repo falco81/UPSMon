@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.4.2'
+__version__ = '4.4.3'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -14651,10 +14651,16 @@ def _read_first(path, default=''):
         return default
 
 
+# Free space is asked only of the kernel's own filesystems, which answer from
+# memory - never FUSE, a network share (it may hang the daemon) nor FAT.
+LOAD_FS_KINDS = ('ext2', 'ext3', 'ext4', 'xfs', 'btrfs', 'zfs', 'f2fs', 'exfat', 'ntfs3', 'jfs',
+                 'reiserfs', 'nilfs2', 'bcachefs')
+
+
 def load_temps():
     """What the sensors say: {'cpu': [(label, °C)], 'cores': {core n: °C}, 'disks': {name: °C}, 'other': [...]}.
     hwmon first (coretemp, k10temp, zenpower, nvme, drivetemp, acpitz...), then the thermal zones."""
-    out = {'cpu': [], 'cores': {}, 'disks': {}, 'other': []}
+    out = {'cpu': [], 'cores': {}, 'pkg_cores': {}, 'disks': {}, 'other': []}
     base = os.path.join(LOAD_SYS, 'class/hwmon')
     try:
         mons = sorted(os.listdir(base))
@@ -14680,6 +14686,9 @@ def load_temps():
             if chip in ('coretemp', 'k10temp', 'zenpower', 'cpu_thermal', 'soc_thermal', 'k8temp', 'via_cputemp'):
                 if core:
                     out['cores'][int(core.group(1))] = round(t, 1)
+                    # the package too (coretemp.P): each one has its own Core 0, 1...
+                    pkg = re.search(r'\.(\d+)$', os.path.realpath(os.path.join(d, 'device')))
+                    out['pkg_cores']['%s:%s' % (pkg.group(1) if pkg else '0', core.group(1))] = round(t, 1)
                 else:
                     out['cpu'].append([label, round(t, 1)])
             elif chip in ('nvme', 'drivetemp'):
@@ -14798,8 +14807,21 @@ def load_detail():
                 if allc > pa:
                     busy = round(max(0.0, min(1.0, 1 - (idle - pi) / float(allc - pa))) * 100, 1)
             mhz = _read_first(os.path.join(LOAD_SYS, 'devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq' % n))
+            # the temperature is the physical core's (coretemp 'Core N'): a logical
+            # CPU finds its core through the topology - with hyperthreading, gaps
+            # in the core numbers or more packages cpuN is not Core N
+            topo = os.path.join(LOAD_SYS, 'devices/system/cpu/cpu%d/topology' % n)
+            cid = _read_first(os.path.join(topo, 'core_id'))
+            pid = _read_first(os.path.join(topo, 'physical_package_id'), '0')
+            temp = None
+            if cid.isdigit():
+                temp = temps['pkg_cores'].get('%s:%s' % (pid if pid.isdigit() else '0', cid))
+                if temp is None:
+                    temp = temps['cores'].get(int(cid))
+            else:
+                temp = temps['cores'].get(n)
             cores.append({'n': n, 'busy': busy, 'mhz': round(int(mhz) / 1000) if mhz.isdigit() else None,
-                          'temp': temps['cores'].get(n)})
+                          'temp': temp})
         if cores and not any(c['mhz'] for c in cores):
             try:
                 with open('/proc/cpuinfo') as f:
@@ -14839,7 +14861,9 @@ def load_detail():
                                 'fusectl', 'configfs', 'hugetlbfs', 'binfmt_misc', 'efivarfs', 'nsfs', 'ramfs',
                                 'rpc_pipefs', 'selinuxfs', 'fuse.lxcfs', 'iso9660') or dev in seen:
                         continue
-                    if not dev.startswith('/') and kind not in ('nfs', 'nfs4', 'cifs', 'smb3', 'zfs', 'btrfs'):
+                    if kind not in LOAD_FS_KINDS:
+                        continue
+                    if not dev.startswith('/') and kind not in ('zfs', 'btrfs'):
                         continue
                     seen.add(dev)
                     try:

@@ -148,7 +148,7 @@ prohlížeč (každé 3 s, jen když je stránka vidět)           server
 | Disky čtení/zápis | `/proc/diskstats`, pole 6 a 10 (sektory × 512) | **jen celé disky** (`/sys/block`), bez oddílů (počítaly by se dvakrát), bez `loop`, `ram`, `zram`, `sr`, `dm-` |
 | Vytížení disku % | `/proc/diskstats`, pole 13 (ms strávené I/O) | `Δms / (Δt × 10)` |
 | Velikost / model disku | `/sys/block/X/size` (× 512), `/sys/block/X/device/model` | |
-| Souborové systémy | `/proc/mounts` + `os.statvfs()` | bez pseudo-FS (proc, sysfs, tmpfs, overlay, squashfs, …), každé zařízení jednou |
+| Souborové systémy | `/proc/mounts` + `os.statvfs()` | jen souborové systémy jádra (`LOAD_FS_KINDS`: ext2/3/4, xfs, btrfs, zfs, f2fs, exfat, ntfs3, jfs, reiserfs, nilfs2, bcachefs) – nikdy FUSE, síťová sdílení (NFS/CIFS na nedostupném serveru visí) ani FAT; každé zařízení jednou |
 | Síť | `/proc/net/dev`, bajty rx (pole 1) a tx (pole 9) | **jen karty**: bez `lo`, `veth`, `docker`, `br-`, `virbr`, `podman`, `cni`, `flannel`, `tun`, `tap`, `vnet`, `ifb`, `dummy`, `lxc`, `kube`, `cali`, `vxlan`, `genev` a bez karet podřízených bondu (počítá se bond) |
 | Stav / rychlost karty | `/sys/class/net/X/operstate`, `…/speed` (Mb/s) | |
 | Procesy | `/proc/PID/stat`: utime+stime (pole 14+15) / `SC_CLK_TCK`, rss (pole 24) × `SC_PAGE_SIZE` | CPU % = Δčasu / Δt × 100 (víc jader = i přes 100 %) |
@@ -313,3 +313,16 @@ a `.mono`, které ai má obecně.
    - [ ] na stroji s čidly jsou teploty (jádra, NVMe, SATA s `drivetemp`), na VM hláška;
    - [ ] všech 5 + 5 voleb ve Vašem účtu, `off` u obou;
    - [ ] úzká okna (1300/1100/700 px) a iPad na šířku i na výšku.
+
+## Teploty jader a topologie (4.4.3)
+
+`coretemp` dává teplotu **fyzického jádra** (`Core N`, u více pouzder `coretemp.P`). Logický procesor
+`cpuN` si najde své jádro podle `devices/system/cpu/cpuN/topology/core_id` a `physical_package_id`,
+takže teplotu mají i druhá vlákna při hyperthreadingu a jádra s nesouvislými čísly. Bez topologie se
+použije číslo `cpuN` jako dřív.
+
+## Vypnuto znamená nic (4.4.3)
+
+Přepínač **O aplikaci → Vytížení serveru v záhlaví** (`load_meter`, výchozí vypnuto) vypne měřič
+úplně: stránky nemají v záhlaví nic a na nic se neptají, `/api/load` odmítne (403) dřív, než by
+cokoli přečetl, a daemon sám nic z `/proc` ani `/sys` pro měřič nečte.
