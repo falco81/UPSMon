@@ -271,8 +271,14 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
 <title><?= h($model) ?> — UPS status</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml" id="favicon">
 <link rel="alternate icon" href="favicon.ico" sizes="any">
-<link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta name="theme-color" content="#161b22">
+<link rel="apple-touch-icon" href="/assets/icon-180.png">
+<!-- On an iPad and an iPhone (4.4.0): Add to Home Screen gives an icon and a window of its own. -->
+<link rel="manifest" href="/assets/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="upsmon">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="theme-color" content="#0d1117">
 <script>window.OTP_LANGS = <?= json_encode($langList, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>; window.OTP_LANG = <?= json_encode($lang) ?>;<?php
   if ($langPack !== null) {
       echo ' window.OTP_LANG_PACK = ' . json_encode($langPack, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_UNESCAPED_SLASHES) . ';';

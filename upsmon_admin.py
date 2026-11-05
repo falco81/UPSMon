@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.3.5'
+__version__ = '4.4.0'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -104,6 +104,8 @@ DEFAULTS = {'site_name': '',
  'proxy_no': 'localhost, 127.0.0.1, ::1',
  'proxy_upgrade': 0,
  'acme_push': 0,
+ 'passkeys': 0,
+ 'load_meter': 0,
  'acme_push_other_names': 0,
  'proxy_os': 0,
  'proxy_acme': 0,
@@ -155,6 +157,8 @@ NAMES = {'site_name': 'What to call this installation',
  'proxy_no': 'Straight, not through the proxy',
  'proxy_upgrade': 'New versions of upsmon',
  'acme_push': 'Take certificates from acme',
+ 'passkeys': 'Sign in with a passkey (Face ID, Touch ID, Windows Hello)',
+ 'load_meter': 'The load of the server in the header',
  'acme_push_other_names': 'Take certificates of other names',
  'proxy_os': 'System updates (dnf, apt)',
  'proxy_acme': 'Automatic certificates: the CA',
@@ -217,6 +221,14 @@ SAYS = {'site_name': 'The name at the top of the administration pages. Empty: th
  'proxy_password': 'Kept sealed, like the other passwords.',
  'proxy_no': 'Names and addresses reached without it, separated by commas: '
              '<code>.example.cz</code> is every name under it, <code>10.0.0.0/8</code> a net.',
+ 'load_meter': 'CPU, memory, the disks and the network of this server, live, in the head of these pages - '
+               'pointed at (or tapped), each in detail: the cores, the sensors, the disks, the cards, the '
+               'processes taking most. For the full administrators only; read from /proc only while a page '
+               'shows it. Each one chooses its look in Your account. Seen once the page is loaded again.',
+ 'passkeys': 'Each account may add passkeys in Your account (signed in with its password). The sign-in page then '
+             'offers Sign in with a passkey: no name, no password - a face, a finger or the PIN of the device. '
+             'Only on the pages opened by a name with a certificate the browser trusts. Off: no passkey is '
+             'offered or taken.',
  'acme_push': 'On: a paired acme may put this server’s certificate in and renew it (acme push). It is kept '
               'like one uploaded here, and Automatic certificates leave it alone. Off: acme’s requests '
               'are refused; the certificate in place and the pairings stay.',
@@ -296,6 +308,8 @@ TUNABLE = {'ui_lang': ('cs', 'en'),
  'proxy': (0, 1),
  'proxy_upgrade': (0, 1),
  'acme_push': (0, 1),
+ 'passkeys': (0, 1),
+ 'load_meter': (0, 1),
  'acme_push_other_names': (0, 1),
  'proxy_os': (0, 1),
  'proxy_acme': (0, 1),
@@ -424,7 +438,7 @@ DB_KEYS = ()
 
 # Which settings sit on which page of Settings, in order.
 PANES = {
-    'people': ['session_hours', 'session_idle_min', 'login_tries', 'login_wait_min'],
+    'people': ['session_hours', 'session_idle_min', 'login_tries', 'login_wait_min', 'passkeys'],
     'acme': ['acme', 'acme_email', 'acme_ca', 'acme_url', 'acme_ca_pem',
              'acme_node_name', 'acme_days', 'acme_key', 'acme_account_key', 'acme_challenge', 'acme_dns',
              'acme_dns_server', 'acme_dns_zone', 'acme_dns_tsig_name', 'acme_dns_tsig_alg',
@@ -435,7 +449,7 @@ PANES = {
     # Settings → Proxy (4.2.1), as OTP has it - the SMS gateway aside.
     'proxy': ['proxy', 'proxy_url', 'proxy_user', 'proxy_password', 'proxy_no',
               'proxy_upgrade', 'proxy_os', 'proxy_acme', 'proxy_acme_dns'],
-    'about': ['site_name', 'ui_lang', 'admin_port', 'debug', 'debug_api'],
+    'about': ['site_name', 'ui_lang', 'load_meter', 'admin_port', 'debug', 'debug_api'],
 }
 HIDDEN_KEYS = ('acme_for', 'acme_push', 'acme_push_other_names')
 
@@ -8546,7 +8560,9 @@ def _health(h):
         HEALTH_SEEN['db'] = (time.time(), (users, db_ok, maint))
     out = {'ok': True, 'users': users, 'database': {'ok': db_ok},
            'lang': CONFIG.get('ui_lang') or 'cs', 'node': node_name(),
-           'maintenance': maint}
+           'maintenance': maint,
+           'passkeys': bool(CONFIG.get('passkeys')) and bool(h.store.get_meta('passkeys') not in
+                                                             (None, '', '[]'))}
     return out
 
 
@@ -8748,6 +8764,7 @@ def _whoami(h):
             'who': {'name': acc['name'], 'role': acc['role'], 'source': acc.get('source'),
                     'display': acc.get('display') or '', 'must_change': bool(
                         acc.get('must_change')), 'prefs': prefs,
+                    'load_meter': bool(CONFIG.get('load_meter')) and acc['role'] == 'fulladmin',
                     'cols': h.store.user_cols(acc['name']),
                     'cols_edit': cols_editing(h.headers.get('X-Upsmon-Session') or '')}}
 
@@ -8797,6 +8814,15 @@ def _prefs(h):
         if str(b['lang']) not in ('cs', 'en'):
             raise ApiError(400, 'no such language here')
         prefs['lang'] = str(b['lang'])
+    for k, allowed in (('hload', ('graphs', 'pills', 'line', 'rings', 'off')),
+                       ('hpanel', ('tiles', 'table', 'map', 'wide', 'off'))):
+        if k in b:
+            if b[k] is None:
+                prefs.pop(k, None)
+            elif str(b[k]) in allowed:
+                prefs[k] = str(b[k])
+            else:
+                raise ApiError(400, '%s is one of %s' % (k, ', '.join(allowed)))
     h.store.set_account(acc['name'], prefs=json.dumps(prefs))
     return {'prefs': prefs}
 
@@ -14144,6 +14170,780 @@ def _push_do(h):
     raise ApiError(400, 'no such thing to do')
 
 
+
+# ======== signing in with a passkey - Face ID, Touch ID, Windows Hello (4.4.0) ========
+# WebAuthn, as ai has it (ipad-and-passkeys README, chapter 1). Off until a full
+# administrator switches Settings → Accounts → passkeys on; until then nothing is
+# offered or taken, and an account without a passkey signs in exactly as before.
+# The server keeps only the public half of each key. upsmon has no second step of
+# signing in, so a passkey is the whole sign-in (ai's passkey_is_2fa is not needed).
+PK_CHALLENGES = {}
+PK_LOCK = threading.Lock()
+PK_CHALLENGE_S = 300
+PK_MOST_PER_ACCOUNT = 20
+PK_IP_RE = re.compile(r'^(\d{1,3}(\.\d{1,3}){3}|\[?[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*\]?)\Z')
+
+
+def _pk_b64u(raw):
+    return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+
+
+def _pk_unb64u(text):
+    text = str(text or '')
+    if not re.fullmatch(r'[A-Za-z0-9_-]*', text):
+        raise ApiError(400, 'not base64url')
+    try:
+        return base64.urlsafe_b64decode(text + '=' * (-len(text) % 4))
+    except (ValueError, binascii.Error):
+        raise ApiError(400, 'not base64url')
+
+
+def _pk_cbor(data, at=0):
+    """One CBOR item (RFC 8949) at `at`: (value, the next offset). What WebAuthn
+    sends: maps, arrays, integers, bytes, text, true / false / null."""
+    if at >= len(data):
+        raise ValueError('CBOR cut short')
+    head = data[at]
+    major, info = head >> 5, head & 0x1f
+    at += 1
+    if info < 24:
+        n = info
+    elif info in (24, 25, 26, 27):
+        size = 1 << (info - 24)
+        if at + size > len(data):
+            raise ValueError('CBOR cut short')
+        n = int.from_bytes(data[at:at + size], 'big')
+        at += size
+    else:
+        raise ValueError('CBOR of a length WebAuthn does not use')
+    if major == 0:
+        return n, at
+    if major == 1:
+        return -1 - n, at
+    if major in (2, 3):
+        if at + n > len(data):
+            raise ValueError('CBOR cut short')
+        raw = data[at:at + n]
+        return (raw if major == 2 else raw.decode('utf-8')), at + n
+    if major == 4:
+        out = []
+        for _ in range(n):
+            v, at = _pk_cbor(data, at)
+            out.append(v)
+        return out, at
+    if major == 5:
+        out = {}
+        for _ in range(n):
+            k, at = _pk_cbor(data, at)
+            v, at = _pk_cbor(data, at)
+            out[k] = v
+        return out, at
+    if major == 7 and info in (20, 21, 22):
+        return {20: False, 21: True, 22: None}[info], at
+    raise ValueError('CBOR of a kind WebAuthn does not use')
+
+
+def _pk_der_len(n):
+    if n < 0x80:
+        return bytes([n])
+    b = n.to_bytes((n.bit_length() + 7) // 8, 'big')
+    return bytes([0x80 | len(b)]) + b
+
+
+def _pk_der_int(raw):
+    raw = raw.lstrip(b'\x00') or b'\x00'
+    if raw[0] & 0x80:
+        raw = b'\x00' + raw
+    return b'\x02' + _pk_der_len(len(raw)) + raw
+
+
+def pk_cose_to_pem(cose):
+    """A COSE public key as PEM (SubjectPublicKeyInfo), and its alg."""
+    if not isinstance(cose, dict):
+        raise ValueError('the key is not a COSE map')
+    kty, alg = cose.get(1), cose.get(3)
+    if kty == 2 and alg == -7 and cose.get(-1) == 1:
+        x, y = cose.get(-2), cose.get(-3)
+        if not (isinstance(x, bytes) and isinstance(y, bytes) and len(x) == 32 and len(y) == 32):
+            raise ValueError('an ES256 key of a wrong size')
+        der = bytes.fromhex('3059301306072a8648ce3d020106082a8648ce3d030107034200') + b'\x04' + x + y
+    elif kty == 3 and alg == -257:
+        n, e = cose.get(-1), cose.get(-2)
+        if not (isinstance(n, bytes) and isinstance(e, bytes)) or len(n.lstrip(b'\x00')) * 8 < 2048:
+            raise ValueError('an RS256 key under 2048 bits')
+        seq = _pk_der_int(n) + _pk_der_int(e)
+        rsakey = b'\x30' + _pk_der_len(len(seq)) + seq
+        bits = b'\x03' + _pk_der_len(len(rsakey) + 1) + b'\x00' + rsakey
+        body = bytes.fromhex('300d06092a864886f70d0101010500') + bits
+        der = b'\x30' + _pk_der_len(len(body)) + body
+    elif kty == 1 and alg == -8 and cose.get(-1) == 6:
+        x = cose.get(-2)
+        if not isinstance(x, bytes) or len(x) != 32:
+            raise ValueError('an Ed25519 key of a wrong size')
+        der = bytes.fromhex('302a300506032b6570032100') + x
+    else:
+        raise ValueError('a key of a kind this server does not take (ES256, RS256 or EdDSA)')
+    b64 = base64.b64encode(der).decode('ascii')
+    pem = '-----BEGIN PUBLIC KEY-----\n' + '\n'.join(b64[i:i + 64] for i in range(0, len(b64), 64)) \
+        + '\n-----END PUBLIC KEY-----\n'
+    return pem, alg
+
+
+def pk_verify(pem, alg, data, sig):
+    """The signature of a passkey over `data`."""
+    if alg == -8:
+        m = re.search(r'-----BEGIN PUBLIC KEY-----(.+?)-----END', pem, re.S)
+        der = base64.b64decode(re.sub(r'\s+', '', m.group(1))) if m else b''
+        return push_ed25519_verify(der[-32:], data, sig)
+    with tempfile.TemporaryDirectory(prefix='upsmon-pk-') as d:
+        kf, sf = os.path.join(d, 'k.pem'), os.path.join(d, 's.bin')
+        with open(kf, 'w') as f:
+            f.write(pem)
+        with open(sf, 'wb') as f:
+            f.write(sig)
+        got = subprocess.run(['openssl', 'dgst', '-sha256', '-verify', kf, '-signature', sf],
+                             input=data, capture_output=True, timeout=20)
+        return got.returncode == 0 and b'Verified OK' in got.stdout
+
+
+def pk_all(store):
+    got = _meta_json(store, 'passkeys')
+    return got if isinstance(got, list) else []
+
+
+def _pk_save(store, rows):
+    store.set_meta('passkeys', json.dumps(rows))
+
+
+def pk_view(row):
+    return {k: v for k, v in row.items() if k != 'pem'}
+
+
+def pk_host(h):
+    """The name the pages were opened by - the RP ID. Never an address."""
+    host = str(h.headers.get('X-Upsmon-Host') or '').strip().lower()
+    host = re.sub(r':\d{1,5}\Z', '', host) if not host.startswith('[') else host
+    if not host or PK_IP_RE.match(host) or not re.fullmatch(r'[a-z0-9.-]{1,253}', host):
+        raise ApiError(400, 'a passkey is added and used on the pages opened by a name over HTTPS '
+                            '(https://name/), not by an address')
+    return host
+
+
+def _pk_origin_ok(origin, host):
+    """https://NAME[:port]; on this machine itself http://localhost too (as
+    browsers take it - a secure context)."""
+    u = urllib.parse.urlsplit(str(origin or ''))
+    if (u.hostname or '').lower() != host:
+        return False
+    return u.scheme == 'https' or (u.scheme == 'http' and host == 'localhost')
+
+
+def _pk_on():
+    if not CONFIG.get('passkeys'):
+        raise ApiError(403, 'passkeys are switched off on this server')
+
+
+def _pk_challenge(kind, user, host):
+    raw = os.urandom(32)
+    now = time.time()
+    with PK_LOCK:
+        for k in [k for k, v in PK_CHALLENGES.items() if now - v['at'] > PK_CHALLENGE_S]:
+            PK_CHALLENGES.pop(k, None)
+        if len(PK_CHALLENGES) > 2000:
+            PK_CHALLENGES.clear()
+        PK_CHALLENGES[_pk_b64u(raw)] = {'kind': kind, 'user': user, 'host': host, 'at': now}
+    return _pk_b64u(raw)
+
+
+def _pk_client(raw_cdj, want_type, kind, host, user=None):
+    """clientDataJSON checked: its type, the one-time challenge of this kind, for
+    this name (and this account), at most 5 minutes old, the origin."""
+    try:
+        cd = json.loads(raw_cdj.decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        raise ApiError(400, 'clientDataJSON is not JSON')
+    if not isinstance(cd, dict) or cd.get('type') != want_type:
+        raise ApiError(400, 'clientDataJSON is not of %s' % want_type)
+    with PK_LOCK:
+        ch = PK_CHALLENGES.pop(str(cd.get('challenge') or ''), None)
+    if not ch or ch['kind'] != kind or time.time() - ch['at'] > PK_CHALLENGE_S:
+        raise ApiError(400, 'the challenge is not one waiting here (it ran out, or was used) - try again')
+    if ch['host'] != host or (user is not None and ch['user'] != user):
+        raise ApiError(400, 'the challenge was given for another name or account')
+    if not _pk_origin_ok(cd.get('origin'), host):
+        raise ApiError(400, 'the passkey was used on another page (%s)' % str(cd.get('origin'))[:100])
+    return cd
+
+
+def _pk_auth_data(ad, host, attested=False):
+    if len(ad) < 37:
+        raise ApiError(400, 'authenticatorData cut short')
+    if ad[:32] != hashlib.sha256(host.encode()).digest():
+        raise ApiError(400, 'the passkey is not for %s' % host)
+    flags = ad[32]
+    if not flags & 0x01:
+        raise ApiError(400, 'nobody was present (user presence)')
+    if not flags & 0x04:
+        raise ApiError(400, 'the device did not check who you are (face, finger or PIN) - a passkey '
+                            'here needs it')
+    if attested and not flags & 0x40:
+        raise ApiError(400, 'the device sent no key')
+    return flags, int.from_bytes(ad[33:37], 'big')
+
+
+@route('POST', '/api/auth/passkey/register')
+def _pk_register(h):
+    s = h.me('readonly')
+    _pk_on()
+    host = pk_host(h)
+    b = h.body()
+    name = s['name']
+    mine = [p for p in pk_all(h.store) if p.get('user') == name]
+    if b.get('step') == 'begin':
+        if len(mine) >= PK_MOST_PER_ACCOUNT:
+            raise ApiError(400, 'this account has %d passkeys - forget one first' % len(mine))
+        return {'publicKey': {
+            'challenge': _pk_challenge('register', name, host),
+            'rp': {'id': host, 'name': 'upsmon · %s' % host},
+            'user': {'id': _pk_b64u(hashlib.sha256(('upsmon-user:' + name).encode()).digest()[:16]),
+                     'name': name, 'displayName': (s.get('account') or {}).get('display') or name},
+            'pubKeyCredParams': [{'type': 'public-key', 'alg': -7}, {'type': 'public-key', 'alg': -8},
+                                 {'type': 'public-key', 'alg': -257}],
+            'authenticatorSelection': {'residentKey': 'required', 'requireResidentKey': True,
+                                       'userVerification': 'required'},
+            'excludeCredentials': [{'type': 'public-key', 'id': p['id']} for p in mine
+                                   if p.get('host') == host],
+            'attestation': 'none', 'timeout': PK_CHALLENGE_S * 1000}}
+    if b.get('step') != 'finish':
+        raise ApiError(400, 'step is begin or finish')
+    _pk_client(_pk_unb64u(b.get('clientDataJSON')), 'webauthn.create', 'register', host, name)
+    try:
+        att, _ = _pk_cbor(_pk_unb64u(b.get('attestationObject')))
+        ad = att.get('authData') if isinstance(att, dict) else None
+        if not isinstance(ad, bytes):
+            raise ValueError('no authData')
+        flags, count = _pk_auth_data(ad, host, attested=True)
+        if len(ad) < 55:
+            raise ValueError('authData cut short')
+        n = int.from_bytes(ad[53:55], 'big')
+        cid = ad[55:55 + n]
+        if len(cid) != n or not n or n > 1023:
+            raise ValueError('a credential id of a wrong length')
+        cose, _ = _pk_cbor(ad, 55 + n)
+        pem, alg = pk_cose_to_pem(cose)
+    except ValueError as e:
+        raise ApiError(400, 'the device sent what this server cannot read: %s' % e)
+    rows = pk_all(h.store)
+    if any(p['id'] == _pk_b64u(cid) for p in rows):
+        raise ApiError(400, 'this passkey is here already')
+    label = re.sub(r'[\x00-\x1f]', '', str(b.get('name') or 'a passkey'))[:80] or 'a passkey'
+    rows.append({'id': _pk_b64u(cid), 'user': name, 'name': label, 'pem': pem, 'alg': alg,
+                 'count': count, 'created': time.time(), 'last_used': 0, 'host': host,
+                 'backed_up': bool(flags & 0x10)})
+    _pk_save(h.store, rows)
+    h.store.add_event('accounts', '%s added a passkey (%s) for %s' % (name, label, host), 'warn',
+                      who=name)
+    return {'message': 'the passkey is added - sign in with it next time',
+            'passkeys': [pk_view(p) for p in rows if p['user'] == name]}
+
+
+@route('POST', '/api/auth/passkey/begin')
+def _pk_begin(h):
+    _pk_on()
+    host = pk_host(h)
+    return {'publicKey': {'challenge': _pk_challenge('login', '', host), 'rpId': host,
+                          'userVerification': 'required', 'allowCredentials': [],
+                          'timeout': PK_CHALLENGE_S * 1000}}
+
+
+@route('POST', '/api/auth/passkey/login')
+def _pk_login(h):
+    _pk_on()
+    host = pk_host(h)
+    b = h.body()
+    cid = str(b.get('id') or '')[:1400]
+    key = h.throttle('admin', int(CONFIG.get('login_tries') or 5),
+                     int(CONFIG.get('login_wait_min') or 15), name='passkey:' + cid[:64],
+                     what='wrong passkeys')
+    try:
+        raw_cdj = _pk_unb64u(b.get('clientDataJSON'))
+        _pk_client(raw_cdj, 'webauthn.get', 'login', host)
+        rows = pk_all(h.store)
+        p = next((x for x in rows if x.get('id') == cid), None)
+        if not p:
+            h.store.add_event('sign-ins', 'an unknown passkey tried to sign in from %s'
+                              % h.client_ip(), 'warn')
+            raise ApiError(401, 'this passkey is not known here (forgotten, or of another server)')
+        if p.get('host') != host:
+            raise ApiError(401, 'this passkey is for %s, not for %s' % (p.get('host'), host))
+        ad = _pk_unb64u(b.get('authenticatorData'))
+        _flags, count = _pk_auth_data(ad, host)
+        sig = _pk_unb64u(b.get('signature'))
+        if not pk_verify(p['pem'], p.get('alg', -7), ad + hashlib.sha256(raw_cdj).digest(), sig):
+            h.store.add_event('sign-ins', 'a passkey of %s (%s) signed wrong, from %s'
+                              % (p['user'], p.get('name'), h.client_ip()), 'bad')
+            raise ApiError(401, 'the signature of the passkey is not right')
+        if p.get('count') and count and count <= p['count']:
+            h.store.add_event('sign-ins', 'the counter of a passkey of %s (%s) went back - it may '
+                              'have been copied; from %s' % (p['user'], p.get('name'), h.client_ip()),
+                              'bad')
+            raise ApiError(401, 'the counter of the passkey went back - it may have been copied')
+        acc = h.store.account(p['user'])
+        if not acc or acc.get('disabled'):
+            h.store.add_event('sign-ins', 'a passkey of %s, %s, tried to sign in from %s' % (
+                p['user'], 'switched off' if acc else 'no longer there', h.client_ip()), 'warn')
+            raise ApiError(401, 'that account may not sign in')
+    except ApiError:
+        h.failed(key)
+        raise
+    token = h.store.session_new('admin', acc['name'], acc['role'], h.client_ip(),
+                                CONFIG.get('session_hours') or 12, data={'passkey': cid})
+    with PK_LOCK:
+        rows = pk_all(h.store)
+        for x in rows:
+            if x.get('id') == cid:
+                x['count'] = count
+                x['last_used'] = time.time()
+        _pk_save(h.store, rows)
+    h.store.set_account(acc['name'], last_in=time.time(), last_from=h.client_ip())
+    h.store.add_event('sign-ins', '%s signed in from %s with a passkey (%s)'
+                      % (acc['name'], h.client_ip(), p.get('name')), who=acc['name'])
+    return {'token': token, 'who': {'name': acc['name'], 'role': acc['role']},
+            'must_change': bool(acc.get('must_change')), 'mfa': ''}
+
+
+@route('GET', '/api/auth/passkeys')
+def _pk_list(h):
+    s = h.me('readonly')
+    rows = pk_all(h.store)
+    admin = s['role'] == 'fulladmin'
+    if admin and h.arg('all'):
+        pick = rows
+    elif admin and h.arg('name'):
+        pick = [p for p in rows if p.get('user') == h.arg('name')]
+    else:
+        pick = [p for p in rows if p.get('user') == s['name']]
+    try:
+        here = pk_host(h)
+    except ApiError:
+        here = ''
+    return {'passkeys': [pk_view(p) for p in pick], 'on': bool(CONFIG.get('passkeys')),
+            'here': here}
+
+
+@route('POST', '/api/auth/passkeys')
+def _pk_change(h):
+    s = h.me('readonly')
+    b = h.body()
+    rows = pk_all(h.store)
+    p = next((x for x in rows if x.get('id') == str(b.get('id') or '')), None)
+    if not p:
+        raise ApiError(404, 'there is no such passkey')
+    if p.get('user') != s['name'] and s['role'] != 'fulladmin':
+        raise ApiError(403, 'only an administrator may change the passkey of another account')
+    do = str(b.get('do') or '')
+    if do == 'rename':
+        p['name'] = re.sub(r'[\x00-\x1f]', '', str(b.get('name') or ''))[:80] or p['name']
+        _pk_save(h.store, rows)
+        msg = 'renamed'
+    elif do == 'delete':
+        _pk_save(h.store, [x for x in rows if x is not p])
+        h.store.add_event('accounts', '%s took the passkey %s of %s away' % (
+            s['name'], p.get('name'), p.get('user')), 'warn', who=s['name'])
+        msg = 'the passkey is gone - it signs nobody in here any more'
+    else:
+        raise ApiError(400, 'do is rename or delete')
+    mine = [x for x in pk_all(h.store) if x.get('user') == p.get('user')]
+    return {'message': msg, 'passkeys': [pk_view(x) for x in mine]}
+
+
+
+# ======== the load of the server in the header of Settings (4.4.0, from ai 1.0.72-1.0.76) ========
+# server-load package: CPU, memory, the disks, the network - read from /proc and
+# /sys only when a page asks (every 3 s while it is shown), nothing in the
+# background. Off until Settings → About → The load of the server in the
+# header is switched on; a full administrator only.
+# ---- how busy the server is, for the header (1.0.72) -------------------------
+# CPU, memory, the disks read and written, the network in and out - worked
+# out only when a page asks (every 3 s while it is shown), from the kernel's
+# counters in /proc: no thread of its own, nothing kept but the last
+# counters. Pages asking within the same second share one reading.
+LOAD_LOCK = threading.Lock()
+LOAD_LAST = {'at': 0.0, 'raw': None, 'out': None}
+
+
+def _load_raw():
+    raw = {'at': time.time()}
+    try:
+        with open('/proc/stat') as f:
+            parts = f.readline().split()[1:]
+        v = [int(x) for x in parts[:8]] + [0] * (8 - len(parts[:8]))
+        raw['cpu_idle'] = v[3] + v[4]
+        raw['cpu_all'] = sum(v)
+    except (OSError, ValueError):
+        pass
+    try:
+        mem = {}
+        with open('/proc/meminfo') as f:
+            for line in f:
+                k, _s, rest = line.partition(':')
+                mem[k] = int(rest.split()[0]) * 1024
+        raw['mem_total'] = mem.get('MemTotal', 0)
+        raw['mem_used'] = mem.get('MemTotal', 0) - mem.get('MemAvailable', mem.get('MemFree', 0))
+        raw['swap_used'] = mem.get('SwapTotal', 0) - mem.get('SwapFree', 0)
+    except (OSError, ValueError, IndexError):
+        pass
+    try:
+        rd = wr = 0
+        whole = set(os.listdir('/sys/block'))
+        with open('/proc/diskstats') as f:
+            for line in f:
+                x = line.split()
+                # whole disks only (a partition is in its disk's numbers already),
+                # no loop devices, no RAM disks, no device-mapper twice over
+                if len(x) < 10 or x[2] not in whole or x[2].startswith(('loop', 'ram', 'dm-', 'zram', 'sr')):
+                    continue
+                rd += int(x[5]) * 512
+                wr += int(x[9]) * 512
+        raw['disk_rd'], raw['disk_wr'] = rd, wr
+    except (OSError, ValueError):
+        pass
+    try:
+        rx = tx = 0
+        with open('/proc/net/dev') as f:
+            for line in f.readlines()[2:]:
+                name, _s, rest = line.partition(':')
+                name = name.strip()
+                # the cards, not the loopback nor the bridges and pairs of containers
+                if not load_nic_counted(name):
+                    continue
+                x = rest.split()
+                rx += int(x[0])
+                tx += int(x[8])
+        raw['net_rx'], raw['net_tx'] = rx, tx
+    except (OSError, ValueError, IndexError):
+        pass
+    return raw
+
+
+LOAD_SYS = '/sys'                # the tests point it at a sysfs of their own
+LOAD_DETAIL = {'at': 0.0, 'raw': None, 'out': None}
+
+
+def load_nic_counted(name):
+    """A network card counted: not the loopback, not the bridges and pairs of
+    containers, not a card that is a slave of a bond (the bond is counted)."""
+    if name == 'lo' or name.startswith(('veth', 'docker', 'br-', 'virbr', 'podman', 'cni', 'flannel', 'tun', 'tap',
+                                       'vnet', 'ifb', 'dummy', 'lxc', 'kube', 'cali', 'vxlan', 'genev')):
+        return False
+    master = os.path.join(LOAD_SYS, 'class/net', name, 'master')
+    if os.path.islink(master) and os.path.isdir(os.path.join(os.path.realpath(master), 'bonding')):
+        return False
+    return True
+
+
+def _read_first(path, default=''):
+    try:
+        with open(path) as f:
+            return f.read().strip()
+    except OSError:
+        return default
+
+
+def load_temps():
+    """What the sensors say: {'cpu': [(label, °C)], 'cores': {core n: °C}, 'disks': {name: °C}, 'other': [...]}.
+    hwmon first (coretemp, k10temp, zenpower, nvme, drivetemp, acpitz...), then the thermal zones."""
+    out = {'cpu': [], 'cores': {}, 'disks': {}, 'other': []}
+    base = os.path.join(LOAD_SYS, 'class/hwmon')
+    try:
+        mons = sorted(os.listdir(base))
+    except OSError:
+        mons = []
+    for m in mons:
+        d = os.path.join(base, m)
+        chip = _read_first(os.path.join(d, 'name'))
+        try:
+            files = sorted(f for f in os.listdir(d) if re.match(r'^temp\d+_input$', f))
+        except OSError:
+            continue
+        for f in files:
+            n = f.split('_')[0]
+            try:
+                t = int(_read_first(os.path.join(d, f), 'x')) / 1000.0
+            except ValueError:
+                continue
+            if t <= -40 or t > 150:
+                continue
+            label = _read_first(os.path.join(d, n + '_label')) or chip
+            core = re.match(r'^Core (\d+)$', label)
+            if chip in ('coretemp', 'k10temp', 'zenpower', 'cpu_thermal', 'soc_thermal', 'k8temp', 'via_cputemp'):
+                if core:
+                    out['cores'][int(core.group(1))] = round(t, 1)
+                else:
+                    out['cpu'].append([label, round(t, 1)])
+            elif chip in ('nvme', 'drivetemp'):
+                dev = ''
+                try:
+                    dev = os.path.basename(os.path.realpath(os.path.join(d, 'device')))
+                except OSError:
+                    pass
+                if chip == 'nvme':
+                    try:
+                        nv = [x for x in os.listdir(os.path.join(d, 'device')) if re.match(r'^nvme\d+n\d+$', x)]
+                        dev = nv[0] if nv else dev
+                    except OSError:
+                        pass
+                elif chip == 'drivetemp':
+                    try:
+                        blk = os.listdir(os.path.join(d, 'device', 'block'))
+                        dev = blk[0] if blk else dev
+                    except OSError:
+                        pass
+                if label.lower() in ('composite', chip, '') or dev not in out['disks']:
+                    out['disks'][dev or chip] = round(t, 1)
+            else:
+                out['other'].append([chip + (' ' + label if label != chip else ''), round(t, 1)])
+    if not out['cpu'] and not out['cores']:
+        tz = os.path.join(LOAD_SYS, 'class/thermal')
+        try:
+            zones = sorted(z for z in os.listdir(tz) if z.startswith('thermal_zone'))
+        except OSError:
+            zones = []
+        for z in zones:
+            kind = _read_first(os.path.join(tz, z, 'type'))
+            try:
+                t = int(_read_first(os.path.join(tz, z, 'temp'), 'x')) / 1000.0
+            except ValueError:
+                continue
+            if -40 < t < 150:
+                (out['cpu'] if re.search(r'cpu|x86_pkg|soc|core', kind, re.I) else out['other']).append(
+                    [kind, round(t, 1)])
+    return out
+
+
+def _load_detail_raw():
+    raw = {'at': time.time(), 'cores': {}, 'disks': {}, 'nics': {}, 'procs': {}}
+    try:
+        with open('/proc/stat') as f:
+            for line in f:
+                m = re.match(r'^cpu(\d+)\s+(.*)$', line)
+                if m:
+                    v = [int(x) for x in m.group(2).split()[:8]]
+                    raw['cores'][int(m.group(1))] = (v[3] + v[4], sum(v))
+    except (OSError, ValueError):
+        pass
+    try:
+        whole = set(os.listdir(os.path.join(LOAD_SYS, 'block')))
+        with open('/proc/diskstats') as f:
+            for line in f:
+                x = line.split()
+                if len(x) < 13 or x[2] not in whole or x[2].startswith(('loop', 'ram', 'zram', 'sr')):
+                    continue
+                raw['disks'][x[2]] = (int(x[5]) * 512, int(x[9]) * 512, int(x[12]))
+    except (OSError, ValueError):
+        pass
+    try:
+        with open('/proc/net/dev') as f:
+            for line in f.readlines()[2:]:
+                name, _s, rest = line.partition(':')
+                name = name.strip()
+                if load_nic_counted(name):
+                    x = rest.split()
+                    raw['nics'][name] = (int(x[0]), int(x[8]))
+    except (OSError, ValueError, IndexError):
+        pass
+    tick = os.sysconf('SC_CLK_TCK') if hasattr(os, 'sysconf') else 100
+    page = os.sysconf('SC_PAGE_SIZE') if hasattr(os, 'sysconf') else 4096
+    try:
+        pids = [p for p in os.listdir('/proc') if p.isdigit()]
+    except OSError:
+        pids = []
+    for pid in pids:
+        try:
+            with open('/proc/%s/stat' % pid) as f:
+                st = f.read()
+            name = st[st.index('(') + 1:st.rindex(')')]
+            rest = st[st.rindex(')') + 2:].split()
+            raw['procs'][int(pid)] = (name[:40], (int(rest[11]) + int(rest[12])) / float(tick), int(rest[21]) * page)
+        except (OSError, ValueError, IndexError):
+            continue
+    return raw
+
+
+def load_detail():
+    """What the header's panels show when opened: each core, its frequency and
+    temperature, the disks one by one and the filesystems, the cards one by one,
+    the processes taking most - read only while a panel is open."""
+    with LOAD_LOCK:
+        now = time.time()
+        if LOAD_DETAIL['out'] and now - LOAD_DETAIL['at'] < 1.0:
+            return LOAD_DETAIL['out']
+        raw = _load_detail_raw()
+        was = LOAD_DETAIL['raw'] or {}
+        if not was or now - was.get('at', 0) > 30:
+            # the first look (or one long after the last): two readings a
+            # moment apart, so the panel opens with numbers, not dots
+            was = raw
+            time.sleep(0.3)
+            raw = _load_detail_raw()
+        dt = max(0.2, raw['at'] - was.get('at', raw['at'] - 1)) if was else None
+        temps = load_temps()
+        cores = []
+        for n in sorted(raw['cores']):
+            idle, allc = raw['cores'][n]
+            busy = None
+            if dt and n in was.get('cores', {}):
+                pi, pa = was['cores'][n]
+                if allc > pa:
+                    busy = round(max(0.0, min(1.0, 1 - (idle - pi) / float(allc - pa))) * 100, 1)
+            mhz = _read_first(os.path.join(LOAD_SYS, 'devices/system/cpu/cpu%d/cpufreq/scaling_cur_freq' % n))
+            cores.append({'n': n, 'busy': busy, 'mhz': round(int(mhz) / 1000) if mhz.isdigit() else None,
+                          'temp': temps['cores'].get(n)})
+        if cores and not any(c['mhz'] for c in cores):
+            try:
+                with open('/proc/cpuinfo') as f:
+                    mh = [float(x.split(':')[1]) for x in f if x.startswith('cpu MHz')]
+                for c, m in zip(cores, mh):
+                    c['mhz'] = round(m)
+            except (OSError, ValueError, IndexError):
+                pass
+        model = ''
+        try:
+            with open('/proc/cpuinfo') as f:
+                for line in f:
+                    if line.startswith(('model name', 'Hardware', 'Model')):
+                        model = line.split(':', 1)[1].strip()
+                        break
+        except OSError:
+            pass
+        disks = []
+        for name, (rd, wr, ms) in sorted(raw['disks'].items()):
+            one = {'name': name, 'temp': temps['disks'].get(name),
+                   'size': int(_read_first(os.path.join(LOAD_SYS, 'block', name, 'size'), '0') or 0) * 512,
+                   'model': _read_first(os.path.join(LOAD_SYS, 'block', name, 'device/model'))}
+            if dt and name in was.get('disks', {}):
+                prd, pwr, pms = was['disks'][name]
+                one['rd'] = max(0, round((rd - prd) / dt))
+                one['wr'] = max(0, round((wr - pwr) / dt))
+                one['util'] = round(max(0.0, min(100.0, (ms - pms) / (dt * 10.0))), 1)
+            disks.append(one)
+        fss = []
+        seen = set()
+        try:
+            with open('/proc/mounts') as f:
+                for line in f:
+                    dev, mnt, kind = line.split()[:3]
+                    if kind in ('proc', 'sysfs', 'tmpfs', 'devtmpfs', 'devpts', 'cgroup', 'cgroup2', 'overlay',
+                                'squashfs', 'mqueue', 'debugfs', 'tracefs', 'securityfs', 'pstore', 'bpf', 'autofs',
+                                'fusectl', 'configfs', 'hugetlbfs', 'binfmt_misc', 'efivarfs', 'nsfs', 'ramfs',
+                                'rpc_pipefs', 'selinuxfs', 'fuse.lxcfs', 'iso9660') or dev in seen:
+                        continue
+                    if not dev.startswith('/') and kind not in ('nfs', 'nfs4', 'cifs', 'smb3', 'zfs', 'btrfs'):
+                        continue
+                    seen.add(dev)
+                    try:
+                        sv = os.statvfs(mnt)
+                    except OSError:
+                        continue
+                    total = sv.f_blocks * sv.f_frsize
+                    if not total:
+                        continue
+                    free = sv.f_bavail * sv.f_frsize
+                    fss.append({'mount': mnt, 'dev': dev, 'kind': kind, 'total': total, 'used': total - sv.f_bfree * sv.f_frsize,
+                                'free': free})
+        except OSError:
+            pass
+        nics = []
+        for name, (rx, tx) in sorted(raw['nics'].items()):
+            sp = _read_first(os.path.join(LOAD_SYS, 'class/net', name, 'speed'))
+            one = {'name': name, 'state': _read_first(os.path.join(LOAD_SYS, 'class/net', name, 'operstate')),
+                   'speed': int(sp) if sp.lstrip('-').isdigit() and int(sp) > 0 else None, 'rx_all': rx, 'tx_all': tx}
+            if dt and name in was.get('nics', {}):
+                one['rx'] = max(0, round((rx - was['nics'][name][0]) / dt))
+                one['tx'] = max(0, round((tx - was['nics'][name][1]) / dt))
+            nics.append(one)
+        procs = []
+        for pid, (name, cpu_s, rss) in raw['procs'].items():
+            p = {'pid': pid, 'name': name, 'rss': rss}
+            if dt and pid in was.get('procs', {}):
+                p['cpu'] = round(max(0.0, (cpu_s - was['procs'][pid][1]) / dt) * 100, 1)
+            procs.append(p)
+        mem = {}
+        try:
+            with open('/proc/meminfo') as f:
+                for line in f:
+                    k, _s, rest = line.partition(':')
+                    mem[k] = int(rest.split()[0]) * 1024
+        except (OSError, ValueError, IndexError):
+            pass
+        up = 0.0
+        try:
+            up = float(_read_first('/proc/uptime', '0').split()[0])
+        except ValueError:
+            pass
+        out = {'cores': cores, 'model': model, 'temps': temps, 'disks': disks, 'filesystems': fss, 'nics': nics,
+               'top_cpu': sorted([p for p in procs if p.get('cpu')], key=lambda p: -p['cpu'])[:6],
+               'top_mem': sorted(procs, key=lambda p: -p['rss'])[:6], 'uptime': up,
+               'mem': {k: mem.get(v) for k, v in (('total', 'MemTotal'), ('available', 'MemAvailable'),
+                                                  ('cached', 'Cached'), ('buffers', 'Buffers'),
+                                                  ('swap_total', 'SwapTotal'), ('swap_free', 'SwapFree'),
+                                                  ('shared', 'Shmem'))},
+               'procs': len(procs)}
+        LOAD_DETAIL.update(at=now, raw=raw, out=out)
+        return out
+
+
+def server_load():
+    """{cpu %, mem used/total, disk read/write B/s, net in/out B/s, load}."""
+    with LOAD_LOCK:
+        now = time.time()
+        if LOAD_LAST['out'] and now - LOAD_LAST['at'] < 1.0:
+            return LOAD_LAST['out']
+        raw = _load_raw()
+        was = LOAD_LAST['raw']
+        out = {'at': now, 'cores': os.cpu_count() or 1, 'mem_total': raw.get('mem_total'),
+               'mem_used': raw.get('mem_used'), 'swap_used': raw.get('swap_used')}
+        try:
+            out['load'] = [round(x, 2) for x in os.getloadavg()]
+        except OSError:
+            out['load'] = None
+        if was:
+            dt = max(0.2, raw['at'] - was['at'])
+
+            def rate(k):
+                if k in raw and k in was and raw[k] >= was[k]:
+                    return round((raw[k] - was[k]) / dt)
+                return None
+            if raw.get('cpu_all') and was.get('cpu_all') and raw['cpu_all'] > was['cpu_all']:
+                busy = 1 - (raw['cpu_idle'] - was['cpu_idle']) / float(raw['cpu_all'] - was['cpu_all'])
+                out['cpu'] = round(max(0.0, min(1.0, busy)) * 100, 1)
+            for k in ('disk_rd', 'disk_wr', 'net_rx', 'net_tx'):
+                out[k] = rate(k)
+            out['over_s'] = round(dt, 1)
+        LOAD_LAST.update(at=now, raw=raw, out=out)
+        return out
+
+
+def api_load(detail=False):
+    """GET /api/load (administrators only): the summary; with ?detail=1 also the details.
+    In ai this is a route of the daemon: @route('GET', '/api/load', admin=True)."""
+    out = dict(server_load())
+    if detail:
+        out['detail'] = load_detail()
+    return out
+
+
+
+
+
+@route('GET', '/api/load')
+def _load(h):
+    h.me('fulladmin')
+    if not CONFIG.get('load_meter'):
+        raise ApiError(403, 'the load of the server is not shown here (Settings → About)')
+    return api_load(detail=bool(h.arg('detail')))
+
+
 # ---------------------------------------------------------------------------
 # The database: SQLite, /var/lib/upsmon/upsmon.db
 # ---------------------------------------------------------------------------
@@ -15547,7 +16347,7 @@ class Engine(object):
         for name, fn in (('web', lambda: web_tick(self.store)), ('acme', lambda: acme_tick(self)),
                          ('online', lambda: online_tick(self)), ('upgrade', lambda: upgrade_tick(self)),
                          ('console', lambda: console_login_tick(self)),
-                         ('lockouts', lambda: lockouts_publish(self)),
+                         ('lockouts', lambda: lockouts_tick(self)),
                          ('time', lambda: ntp_tick(self)), ('power', lambda: power_tick(self)),
                          ('updates', lambda: osup_tick(self)), ('schedule', lambda: osup_sched_tick(self)),
                          ('backups', lambda: rb_tick(self)), ('copies', lambda: daily_copy_tick(self.store))):
@@ -15640,6 +16440,10 @@ def add_cli_arguments(parser):
       help='KEY=VALUE changes a setting of the pages (KEY=- asks for a secret); KEY alone '
            'shows what it is now (a secret as dots and its last two)')
     a('--search', default='', help='with --settings / --audit: only those with these words')
+    a('--passkeys', nargs='?', const='*', metavar='NAME',
+      help='the passkeys (Face ID, Touch ID) of every account, or of NAME')
+    a('--passkey-forget', metavar='ID|all', help='take a passkey away (its id, as --passkeys shows '
+                                                 'it), or every one (--yes)')
     a('--audit', action='store_true', help='the events of the settings pages: sign-ins, accounts, certificates')
     g = parser.add_argument_group('CERTIFICATES AND TLS')
     a = g.add_argument
@@ -15709,7 +16513,7 @@ CLI_FLAGS = ('users', 'add_user', 'passwd', 'set_role', 'del_user', 'disable_use
              'upgrade_cancel', 'downgrade_check', 'downgrade', 'maintenance', 'console',
              'console_at_login', 'console_status', 'lockouts', 'lockouts_clear', 'backup',
              'copies', 'restore', 'restore_bundle', 'rbackup_now', 'rbackup_status', 'db_check',
-             'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export', 'proxy_test')
+             'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export', 'proxy_test', 'passkeys', 'passkey_forget')
 
 
 def cli_wanted(args):
@@ -15728,6 +16532,38 @@ def cli_main(args, ups_status=None):
     def out(data):
         print(json.dumps(data, indent=2, default=str, ensure_ascii=False))
 
+    if args.passkeys or args.passkey_forget:
+        store = cli_store()
+        rows = pk_all(store)
+        if args.passkey_forget:
+            if args.passkey_forget == 'all':
+                if not args.yes:
+                    print('it would take every passkey (%d) away; again with --yes' % len(rows))
+                    return 0
+                gone, rows = rows, []
+            else:
+                gone = [p for p in rows if p['id'] == args.passkey_forget or p['id'].startswith(args.passkey_forget)]
+                if len(gone) != 1:
+                    raise SystemExit('upsmon: %s passkey has that id' % ('no' if not gone else 'more than one'))
+                rows = [p for p in rows if p is not gone[0]]
+            store.set_meta('passkeys', json.dumps(rows))
+            if args.passkey_forget == 'all':
+                store.add_event('accounts', 'the command line took every passkey away (%d)' % len(gone),
+                                'warn', who=who)
+            for p in gone if args.passkey_forget != 'all' else []:
+                store.add_event('accounts', 'the command line took the passkey %s of %s away'
+                                % (p.get('name'), p.get('user')), 'warn', who=who)
+            print(pal.ok_line('%d passkey(s) taken away' % len(gone)))
+            return 0
+        pick = rows if args.passkeys == '*' else [p for p in rows if p.get('user') == args.passkeys]
+        if as_json:
+            out({'on': bool(CONFIG.get('passkeys')), 'passkeys': [pk_view(p) for p in pick]})
+            return 0
+        print('passkeys: %s' % ('ON' if CONFIG.get('passkeys') else 'off (upsmon --setting passkeys=1)'))
+        print(table([(p['id'][:22], p.get('user'), p.get('name'), p.get('host'), stamp(p.get('created')),
+                      stamp(p['last_used']) if p.get('last_used') else 'never') for p in pick],
+                    ['id', 'account', 'passkey', 'for', 'added', 'last used']))
+        return 0
     if args.proxy_test is not None:
         try:
             got = proxy_try(args.proxy_test)

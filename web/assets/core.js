@@ -1164,7 +1164,7 @@ function api(what, body, wait) {
     throw err;
   }).then(function (r) {
     clearTimeout(timer);
-    if (r.status === 401 && !/^(login|portal-login)/.test(what)) {
+    if (r.status === 401 && !/^(login|portal-login|passkey-login|passkey-begin)/.test(what)) {
       /* Asked again before the page is left (1.0.73): behind the VIP address
          a node that is restarting, or that has just got the address, may say
          401 for a moment - and reloading then broke the page in the middle
@@ -2428,3 +2428,26 @@ function mfaWay(body, d, kind) {
   body.appendChild(drow);
   body.appendChild(sent);
 }
+
+/* base64url <-> ArrayBuffer, for WebAuthn (passkeys, upsmon 4.4.0). */
+function pkBytes(s) {
+  s = String(s || '').replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  var bin = atob(s), out = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out.buffer;
+}
+function pkText(buf) {
+  var b = new Uint8Array(buf), bin = '';
+  for (var i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+/* On a touch screen (4.4.0): what a mouse opens by pointing opens with a tap;
+   a tap anywhere else closes it. A mouse or a trackpad on an iPad works as on a PC. */
+document.addEventListener('touchstart', function (e) {
+  if (window.matchMedia && window.matchMedia('(hover: hover)').matches) return;
+  var t = e.target;
+  if (t && t.closest && t.closest('[data-explains], .sethelp, #sethelp')) return;
+  try { if (typeof hideHelp === 'function') hideHelp(); } catch (x) { }
+}, {passive: true});

@@ -995,6 +995,10 @@
    "source": "Destinations",
    "text": "Úložiště"
   },
+  "os0686": {
+   "source": "Device",
+   "text": "Zařízení"
+  },
   "os0694": {
    "source": "Directory",
    "text": "Adresář"
@@ -1899,6 +1903,10 @@
    "source": "Last signed in",
    "text": "Naposledy přihlášen"
   },
+  "os1269": {
+   "source": "Last used",
+   "text": "Naposledy použit"
+  },
   "os1273": {
    "source": "Leap status",
    "text": "Leap status"
@@ -2122,6 +2130,10 @@
   "os1407": {
    "source": "Mode",
    "text": "Režim"
+  },
+  "os1408": {
+   "source": "Model",
+   "text": "Model"
   },
   "os1411": {
    "source": "Monday",
@@ -2615,6 +2627,10 @@
    "source": "PHP (command line)",
    "text": "PHP (příkazová řádka)"
   },
+  "os1706": {
+   "source": "PIN",
+   "text": "PIN"
+  },
   "os1717": {
    "source": "Passive mode",
    "text": "Pasivní režim"
@@ -2630,6 +2646,14 @@
   "os1721": {
    "source": "Password at the proxy",
    "text": "Heslo pro proxy"
+  },
+  "os1723": {
+   "source": "Passwords",
+   "text": "Hesla"
+  },
+  "os1734": {
+   "source": "Phone",
+   "text": "Telefon"
   },
   "os1738": {
    "source": "Pin this certificate",
@@ -2678,6 +2702,10 @@
   "os1766": {
    "source": "Press this again later and it does the other half of the job: if the account already gets in, nothing is made and no administrator is wanted — it opens the database and puts its tables right. Leave the two boxes empty for that.",
    "text": "Stiskněte to později znovu a udělá druhou polovinu práce: pokud se účet už přihlásí, nic se nevytváří a administrátor není potřeba – otevře databázi a dá do pořádku její tabulky. K tomu nechte obě pole prázdná."
+  },
+  "os1767": {
+   "source": "Preview",
+   "text": "Náhled"
   },
   "os1772": {
    "source": "Processors",
@@ -5515,6 +5543,10 @@
    "source": "disabled",
    "text": "vypnuto"
   },
+  "os3569": {
+   "source": "disks",
+   "text": "disky"
+  },
   "os3570": {
    "source": "dnf (or apt) updates every package. RADIUS goes on answering meanwhile; a restart it needs is offered at the end.",
    "text": "dnf (nebo apt) aktualizuje všechny balíčky. RADIUS mezitím dál odpovídá; potřebný restart se nabídne na konci."
@@ -6367,6 +6399,10 @@
    "source": "once, by hand, in your DNS",
    "text": "jednou, ručně, ve vašem DNS"
   },
+  "os4054": {
+   "source": "one plain line",
+   "text": "jeden řádek bez formátování"
+  },
   "os4056": {
    "source": "one server",
    "text": "jeden server"
@@ -6538,6 +6574,10 @@
   "os4151": {
    "source": "read only",
    "text": "jen pro čtení"
+  },
+  "os4152": {
+   "source": "reading…",
+   "text": "načítám…"
   },
   "os4154": {
    "source": "realms",
@@ -7550,6 +7590,10 @@
   "os4835": {
    "source": "weeks",
    "text": "týdnů"
+  },
+  "os4836": {
+   "source": "went back",
+   "text": "vráceno"
   },
   "os4837": {
    "source": "went everywhere",
@@ -10330,6 +10374,318 @@
   "k43410": {
    "source": "A dual certificate is taken whole - the RSA one and its ECDSA twin for the same names, each with its key - in PEM, as two PFX files with the same password, or as the .zip Download → Both gave.",
    "text": "Duální certifikát se vezme celý – RSA a jeho dvojče ECDSA na stejná jména, každý se svým klíčem – v PEM, jako dva soubory PFX se stejným heslem, nebo jako .zip ze Stáhnout → Oba."
+  },
+  "k44001": {
+   "source": "Sign in with a passkey (Face ID, Touch ID, Windows Hello)",
+   "text": "Přihlášení přes passkey (Face ID, Touch ID, Windows Hello)"
+  },
+  "k44002": {
+   "source": "Each account may add passkeys in Your account (signed in with its password). The sign-in page then offers Sign in with a passkey: no name, no password - a face, a finger or the PIN of the device. Only on the pages opened by a name with a certificate the browser trusts. Off: no passkey is offered or taken.",
+   "text": "Každý účet si může ve Vašem účtu přidat passkeys (musí být přihlášený heslem). Přihlašovací stránka pak nabídne Přihlásit přes passkey: bez jména a hesla, obličejem, prstem nebo PINem zařízení. Jen na stránkách otevřených přes jméno s certifikátem, kterému prohlížeč věří. Vypnuto: žádná passkey se nenabídne ani nepřijme."
+  },
+  "k44003": {
+   "source": "or",
+   "text": "nebo"
+  },
+  "k44004": {
+   "source": "Sign in with a passkey (Face ID, Touch ID)",
+   "text": "Přihlásit přes passkey (Face ID, Touch ID)"
+  },
+  "k44005": {
+   "source": "Passkeys - Face ID, Touch ID",
+   "text": "Passkeys – Face ID, Touch ID"
+  },
+  "k44006": {
+   "source": "A passkey signs you in with a face, a finger or the PIN of this device - no name, no password to type. It is kept on the device (on an iPad and an iPhone in the iCloud Keychain, so on your other Apple devices too); the server has only its public half.",
+   "text": "Passkey vás přihlásí obličejem, prstem nebo PINem tohoto zařízení – bez psaní jména a hesla. Je uložená v zařízení (na iPadu a iPhonu v Klíčence na iCloudu, takže i na vašich dalších zařízeních Apple); server má jen její veřejnou část."
+  },
+  "k44007": {
+   "source": "Add a passkey of this device",
+   "text": "Přidat passkey tohoto zařízení"
+  },
+  "k44008": {
+   "source": "Passkeys are switched off on this server (Settings → Accounts).",
+   "text": "Passkeys jsou na tomto serveru vypnuté (Nastavení → Účty)."
+  },
+  "k44009": {
+   "source": "A passkey is added on the pages opened by a name over HTTPS (https://name/), not by an address.",
+   "text": "Passkey se přidává na stránkách otevřených přes jméno přes HTTPS (https://jméno/), ne přes adresu."
+  },
+  "k44010": {
+   "source": "No passkey yet.",
+   "text": "Zatím žádná passkey."
+  },
+  "k44011": {
+   "source": "Passkey",
+   "text": "Passkey"
+  },
+  "k44012": {
+   "source": "Added",
+   "text": "Přidáno"
+  },
+  "k44013": {
+   "source": "synced",
+   "text": "synchronizovaná"
+  },
+  "k44014": {
+   "source": "Take it away",
+   "text": "Odebrat"
+  },
+  "k44015": {
+   "source": "Take this passkey away?",
+   "text": "Odebrat tuto passkey?"
+  },
+  "k44016": {
+   "source": "It signs nobody in here any more. It stays on the device until it is taken away there (Settings → Passwords).",
+   "text": "Už nikoho nepřihlásí. V zařízení zůstane, dokud ji tam neodeberete (Nastavení → Hesla)."
+  },
+  "k44017": {
+   "source": "this device has a passkey for this account already",
+   "text": "toto zařízení už passkey pro tento účet má"
+  },
+  "k44018": {
+   "source": "The passkeys this account signs in with. Taken away here, one signs nobody in - for a lost iPad, say. Only the account itself can add one, from Your account.",
+   "text": "Passkeys, kterými se tento účet přihlašuje. Odebraná tady už nikoho nepřihlásí – třeba u ztraceného iPadu. Přidat ji může jen účet sám, ve Vašem účtu."
+  },
+  "k44019": {
+   "source": "the passkey is added - sign in with it next time",
+   "text": "passkey je přidaná – příště se s ní přihlaste"
+  },
+  "k44020": {
+   "source": "the passkey is gone - it signs nobody in here any more",
+   "text": "passkey je pryč – už tady nikoho nepřihlásí"
+  },
+  "k44021": {
+   "source": "passkeys are switched off on this server",
+   "text": "passkeys jsou na tomto serveru vypnuté"
+  },
+  "k44022": {
+   "source": "a passkey is added and used on the pages opened by a name over HTTPS (https://name/), not by an address",
+   "text": "passkey se přidává a používá na stránkách otevřených přes jméno přes HTTPS (https://jméno/), ne přes adresu"
+  },
+  "k44023": {
+   "source": "this passkey is not known here (forgotten, or of another server)",
+   "text": "tato passkey tu není známá (odebraná, nebo z jiného serveru)"
+  },
+  "k44024": {
+   "source": "the signature of the passkey is not right",
+   "text": "podpis passkey nesedí"
+  },
+  "k44025": {
+   "source": "the counter of the passkey went back - it may have been copied",
+   "text": "čítač passkey šel zpět – mohla být zkopírovaná"
+  },
+  "k44026": {
+   "source": "that account may not sign in",
+   "text": "tento účet se nesmí přihlásit"
+  },
+  "k44027": {
+   "source": "the device did not check who you are (face, finger or PIN) - a passkey here needs it",
+   "text": "zařízení neověřilo, kdo jste (obličej, prst nebo PIN) – passkey tady to potřebuje"
+  },
+  "k44028": {
+   "source": "the challenge is not one waiting here (it ran out, or was used) - try again",
+   "text": "výzva tu nečeká (vypršela nebo už byla použita) – zkuste to znovu"
+  },
+  "hl001": {
+   "source": "Memory",
+   "text": "Paměť"
+  },
+  "hl002": {
+   "source": "Disk",
+   "text": "Disk"
+  },
+  "hl003": {
+   "source": "Swap",
+   "text": "Swap"
+  },
+  "hl005": {
+   "source": "Now",
+   "text": "Teď"
+  },
+  "hl006": {
+   "source": "none",
+   "text": "žádný"
+  },
+  "hl007": {
+   "source": "kept",
+   "text": "ponecháno"
+  },
+  "hl008": {
+   "source": "Net",
+   "text": "Síť"
+  },
+  "hl009": {
+   "source": "pills with a bar",
+   "text": "štítky s pruhem"
+  },
+  "hl011": {
+   "source": "with a graph of the last two minutes",
+   "text": "s grafem posledních dvou minut"
+  },
+  "hl012": {
+   "source": "with rings",
+   "text": "s kroužky"
+  },
+  "hl013": {
+   "source": "not shown",
+   "text": "nezobrazovat"
+  },
+  "hl014": {
+   "source": "The load of the server in the header (CPU, RAM, the disks, the network)",
+   "text": "Vytížení serveru v záhlaví (CPU, RAM, disky, síť)"
+  },
+  "hl015": {
+   "source": "Memory in use (without what the kernel keeps as cache and gives back)",
+   "text": "Použitá paměť (bez toho, co jádro drží jako cache a vrací zpět)"
+  },
+  "hl016": {
+   "source": "The disks: read ↓ and written ↑, every disk together",
+   "text": "Disky: čtení ↓ a zápis ↑, všechny disky dohromady"
+  },
+  "hl017": {
+   "source": "The network cards: down ↓ (in) and up ↑ (out), every card together - not the loopback nor the bridges of containers",
+   "text": "Síťové karty: příjem ↓ a odesílání ↑, všechny karty dohromady – bez loopbacku a mostů kontejnerů"
+  },
+  "hl018": {
+   "source": "The processor",
+   "text": "Procesor"
+  },
+  "hl019": {
+   "source": "The disks",
+   "text": "Disky"
+  },
+  "hl020": {
+   "source": "The network",
+   "text": "Síť"
+  },
+  "hl021": {
+   "source": "the last two minutes",
+   "text": "poslední dvě minuty"
+  },
+  "hl022": {
+   "source": "load",
+   "text": "load"
+  },
+  "hl023": {
+   "source": "Up for",
+   "text": "Běží"
+  },
+  "hl024": {
+   "source": "processes",
+   "text": "procesů"
+  },
+  "hl025": {
+   "source": "Each core",
+   "text": "Jednotlivá jádra"
+  },
+  "hl026": {
+   "source": "No temperature: this machine has no sensors the kernel reads (a virtual machine has none).",
+   "text": "Bez teploty: tento stroj nemá čidla, která jádro čte (virtuální stroj je nemá)."
+  },
+  "hl027": {
+   "source": "Taking most of the processor",
+   "text": "Nejvíc vytěžují procesor"
+  },
+  "hl028": {
+   "source": "nothing busy just now",
+   "text": "teď nic nezatěžuje"
+  },
+  "hl030": {
+   "source": "Free for programs",
+   "text": "Volné pro programy"
+  },
+  "hl031": {
+   "source": "Cache (given back when needed)",
+   "text": "Cache (vrací se, když je potřeba)"
+  },
+  "hl032": {
+   "source": "Shared",
+   "text": "Sdílená"
+  },
+  "hl033": {
+   "source": "Altogether",
+   "text": "Celkem"
+  },
+  "hl034": {
+   "source": "Taking most memory",
+   "text": "Nejvíc paměti zabírají"
+  },
+  "hl035": {
+   "source": "Each disk",
+   "text": "Jednotlivé disky"
+  },
+  "hl036": {
+   "source": "busy",
+   "text": "vytížení"
+  },
+  "hl037": {
+   "source": "Filesystems",
+   "text": "Souborové systémy"
+  },
+  "hl038": {
+   "source": "Each card",
+   "text": "Jednotlivé karty"
+  },
+  "hl039": {
+   "source": "no card",
+   "text": "žádná karta"
+  },
+  "hl040": {
+   "source": "Other sensors",
+   "text": "Další čidla"
+  },
+  "hl041": {
+   "source": "tiles - a card for each core",
+   "text": "dlaždice – karta pro každé jádro"
+  },
+  "hl042": {
+   "source": "a table - a row for each core (as htop)",
+   "text": "tabulka – řádek pro každé jádro (jako htop)"
+  },
+  "hl043": {
+   "source": "a map of the cores with rings",
+   "text": "mapa jader s kroužky"
+  },
+  "hl044": {
+   "source": "one wide panel with everything at once",
+   "text": "jeden široký panel se vším najednou"
+  },
+  "hl045": {
+   "source": "no details - only a short tip",
+   "text": "bez podrobností – jen krátký popisek"
+  },
+  "hl046": {
+   "source": "Its details, when a number is pointed at (or tapped)",
+   "text": "Jeho podrobnosti při najetí na číslo (nebo klepnutí)"
+  },
+  "hl047": {
+   "source": "Map of the cores (colour = how busy, number = temperature)",
+   "text": "Mapa jader (barva = vytížení, číslo = teplota)"
+  },
+  "hl048": {
+   "source": "disk",
+   "text": "disk"
+  },
+  "hl050": {
+   "source": "written",
+   "text": "zápis"
+  },
+  "hl051": {
+   "source": "nothing in the header",
+   "text": "v záhlaví nic"
+  },
+  "hl054": {
+   "source": "The load of the server in the header",
+   "text": "Vytížení serveru v záhlaví"
+  },
+  "hl055": {
+   "source": "The load of the server",
+   "text": "Vytížení serveru"
+  },
+  "hl056": {
+   "source": "CPU, memory, the disks and the network of this server, live, in the head of these pages - pointed at (or tapped), each in detail: the cores, the sensors, the disks, the cards, the processes taking most. For the full administrators only; read from /proc only while a page shows it. Each one chooses its look in Your account. Seen once the page is loaded again.",
+   "text": "CPU, paměť, disky a síť tohoto serveru živě v záhlaví těchto stránek – po najetí (nebo klepnutí) každé podrobně: jádra, čidla, disky, karty, procesy, které berou nejvíc. Jen pro plné administrátory; čte se z /proc jen tehdy, když ho stránka ukazuje. Vzhled si každý vybere ve Vašem účtu. Projeví se po novém načtení stránky."
   }
  },
  "patterns": {
@@ -11241,6 +11597,10 @@
    "source": "keepalived: {0} on {1}, VRRP id {2}, with {3}",
    "text": "keepalived: {0} na {1}, VRRP id {2}, s uzlem {3}"
   },
+  "op0540": {
+   "source": "last used {0}",
+   "text": "naposledy použit {0}"
+  },
   "op0541": {
    "source": "last {0}",
    "text": "naposledy {0}"
@@ -11745,6 +12105,14 @@
    "source": "the name {0} has letters with accents or of another language ({1}) - only letters without accents are taken (Settings - The tokens - Czech and Slovak letters in names, Letters of other languages in names)",
    "text": "jméno {0} obsahuje znaky s diakritikou nebo jiného jazyka ({1}) – berou se jen písmena bez diakritiky (Nastavení – Tokeny – České a slovenské znaky ve jménech, Písmena jiných jazyků ve jménech)"
   },
+  "op0862": {
+   "source": "the network of {0} is changed",
+   "text": "síť nodu {0} je změněná"
+  },
+  "op0863": {
+   "source": "the network of {0} is changed: {1}",
+   "text": "síť nodu {0} je změněná: {1}"
+  },
   "op0867": {
    "source": "the one with {0}",
    "text": "to s adresou {0}"
@@ -12176,6 +12544,10 @@
   "op1182": {
    "source": "{0} has not been heard from for {1} s - bring it back, or forget it (Settings - High availability)",
    "text": "{0} se neozval {1} s – vraťte ho, nebo ho zapomeňte (Nastavení → Vysoká dostupnost)"
+  },
+  "op1184": {
+   "source": "{0} here already",
+   "text": "{0} už tu je"
   },
   "op1192": {
    "source": "{0} in all",
@@ -13000,6 +13372,38 @@
   "kp43302": {
    "source": "the RSA and the ECDSA certificate are not for the same names ({0} / {1})",
    "text": "certifikát RSA a ECDSA nejsou na stejná jména ({0} / {1})"
+  },
+  "kp44029": {
+   "source": "The passkeys of {0} - Face ID, Touch ID",
+   "text": "Passkeys účtu {0} – Face ID, Touch ID"
+  },
+  "kp44030": {
+   "source": "Passkeys of {0}",
+   "text": "Passkeys účtu {0}"
+  },
+  "kp44031": {
+   "source": "this account has {0} passkeys - forget one first",
+   "text": "tento účet má {0} passkeys – nejdřív jednu odeberte"
+  },
+  "kp44032": {
+   "source": "the passkey was used on another page ({0})",
+   "text": "passkey byla použita na jiné stránce ({0})"
+  },
+  "kp44033": {
+   "source": "this passkey is for {0}, not for {1}",
+   "text": "tato passkey je pro {0}, ne pro {1}"
+  },
+  "kp44034": {
+   "source": "the passkey is not for {0}",
+   "text": "passkey není pro {0}"
+  },
+  "hl052": {
+   "source": "The processor, busy over the last {0} s, all {1} core(s) together · load {2}",
+   "text": "Procesor, vytížení za posledních {0} s, všech {1} jader dohromady · load {2}"
+  },
+  "hl053": {
+   "source": "The processor, busy over the last {0} s, all {1} core(s) together",
+   "text": "Procesor, vytížení za posledních {0} s, všech {1} jader dohromady"
   }
  },
  "rich": {

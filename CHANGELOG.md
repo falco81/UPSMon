@@ -4,6 +4,55 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.4.0 - 2026-11-05
+
+**Sign in with Face ID, Touch ID, Windows Hello (passkeys, WebAuthn)** - as ai has it
+(`docs/ipad-and-passkeys.md`, chapter 1); **off by default**:
+- Settings → Accounts → *Sign in with a passkey*: on, each account adds its own in
+  **Your account → Passkeys - Face ID, Touch ID** (*Add a passkey of this device*);
+  the sign-in page then offers **Sign in with a passkey** - no name, no password.
+  Shown only where it can work: switched on, a passkey there, a browser that
+  can (HTTPS and a name, not an address).
+- The server keeps only the public half (ES256, RS256, EdDSA); a challenge is once,
+  5 minutes, bound to its kind, the account and the name; the origin, the name
+  (rpIdHash), user presence **and verification** (face, finger, PIN), the
+  signature and the counter checked; at most 20 on an account; tries counted as
+  wrong passwords are; the account must be there and on. Every addition, removal,
+  sign-in and refusal is an event.
+- A full administrator sees and takes away anybody's from the row of the account
+  (a lost iPad); `upsmon --passkeys [NAME]`, `upsmon --passkey-forget ID|all`.
+- upsmon has no second step of signing in, so a passkey is the whole sign-in
+  (ai's *passkey is the second step* is not needed here).
+- Tested: 30 checks of the server (`tests/passkeys/t_passkeys.py`) and the whole
+  round in Chromium with a virtual authenticator (`tests/passkeys/e2e.js`, 11 of 11).
+
+**iPad** (chapter 2 and 4):
+- *Add to Home Screen*: an icon of its own (the battery, 180/192/512 px, RGB on the
+  app's colour, square - iOS rounds it), `manifest.json` (standalone, any
+  orientation), the dashboard and Settings in a window without Safari's bars.
+- The safe areas of the screen on both sides; lists scrolled by a finger, a modal
+  not passing its scroll to the page; buttons and fields a finger can hit
+  (`pointer: coarse`); what a mouse opens by pointing opens with a tap and closes
+  with a tap elsewhere (`hover: hover` decides: an iPad with a trackpad works as a PC).
+- Looked at on an iPad Pro 11" across and upright: nothing wider than the screen.
+  (The terminal and its full screen of the document are ai's own: upsmon has none.)
+
+**The load of the server in the header (performance meter)** - from ai's
+server-load package (`docs/server-load.md`); **off by default**:
+- Settings → About → *The load of the server in the header*: CPU, memory, the disks,
+  the network in the head of Settings, every 3 s while the page is shown; pointed at
+  (or tapped): the cores, their speed and temperature, the sensors, each disk, the
+  filesystems, the cards, the processes taking most. Four looks and five styles of
+  the details, each account picking its own in Your account (kept with the account).
+- A full administrator only; read from /proc and /sys only when a page asks, the
+  details only while a panel is open; nothing in the background.
+- **The graphs stay across a reload**: F5 draws what was there at once and goes on
+  from it (this tab, the last two minutes; the time away drawn as a gap).
+- Tested: `tests/server-load/` (off, on, details only while open, the pickers, F5).
+
+**Fixed**: `upsmon --lockouts-clear` did nothing - the service never read what it
+asked (it published the list and did not look for the ask). It does now.
+
 ## 4.3.5 - 2026-11-04
 
 **Reading what `--set` and `--setting` change**, on the command line:

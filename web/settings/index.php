@@ -62,14 +62,24 @@ if (isset($_GET['api'])) {
     if ($post) {
         ups_guard_post();
     }
-    if ($what === 'login' && $post) {
+    if (($what === 'login' || $what === 'passkey-login') && $post) {
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
         $sent = sent_body();
-        [$status, $body] = ups_call('/api/auth/login', 'POST', [
-            'name'     => (string) ($sent['name'] ?? ''),
-            'password' => (string) ($sent['password'] ?? ''),
-        ], 30.0);
+        /* A passkey (4.4.0): what the browser's WebAuthn gave, as it came; the
+           daemon checks it, and the sign-in is made here the same way. */
+        [$status, $body] = $what === 'login'
+            ? ups_call('/api/auth/login', 'POST', [
+                'name'     => (string) ($sent['name'] ?? ''),
+                'password' => (string) ($sent['password'] ?? ''),
+            ], 30.0)
+            : ups_call('/api/auth/passkey/login', 'POST', [
+                'id'                => substr((string) ($sent['id'] ?? ''), 0, 1400),
+                'clientDataJSON'    => substr((string) ($sent['clientDataJSON'] ?? ''), 0, 8000),
+                'authenticatorData' => substr((string) ($sent['authenticatorData'] ?? ''), 0, 8000),
+                'signature'         => substr((string) ($sent['signature'] ?? ''), 0, 2000),
+                'userHandle'        => substr((string) ($sent['userHandle'] ?? ''), 0, 200),
+            ], 30.0);
         if ($status === 0) {
             http_response_code(503);
             echo json_encode(['ok' => false, 'error' =>
@@ -253,7 +263,7 @@ if (isset($_GET['api'])) {
         'whoami' => '/api/auth/whoami', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys', 'load' => '/api/load',
         'rbackup' => '/api/rbackup',
     ];
     $writes = [
@@ -262,8 +272,9 @@ if (isset($_GET['api'])) {
         'columns' => '/api/auth/columns', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys',
         'rbackup' => '/api/rbackup',
+        'passkey-register' => '/api/auth/passkey/register', 'passkey-begin' => '/api/auth/passkey/begin',
     ];
     if ($post) {
         if (!isset($writes[$what])) {
@@ -376,6 +387,16 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
         d="M18 9l3 3-3 3"/></svg><span>Sign in</span></button>
       <div class="said" id="in-said"></div>
     </form>
+    <?php if (!empty($health['passkeys']) && $mfa === ''): ?>
+    <!-- Sign in with a passkey (4.4.0): shown by the script only where the browser can. -->
+    <div class="pk-or" id="pk-or" hidden>
+      <span class="muted small">or</span>
+      <button class="btn cmd" type="button" id="pk-go"><svg viewBox="0 0 24 24" width="17" height="17"
+        fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true"><circle cx="8" cy="9" r="4"/><path d="M2 21v-1a6 6 0 0 1 9-5.2"/><path
+        d="M15.5 13.5a3 3 0 1 1 3 3v4.5l-1.5 1-1.5-1v-1l1-1-1-1v-1.5"/></svg><span>Sign in with a passkey (Face ID, Touch ID)</span></button>
+    </div>
+    <?php endif; ?>
     <div style="margin-top:14px;display:flex;justify-content:space-between;align-items:center">
       <span class="muted small">upsmon <?= h(UPS_VERSION) ?></span>
       <span class="langpick" id="langpick"></span>
@@ -425,6 +446,38 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
       $('in-pass').focus();
     });
   });
+  /* A passkey (4.4.0): WebAuthn straight from the click - one fetch of the
+     challenge between, as Safari wants it. Cancelled by the person: nothing said. */
+  var pkOr = $('pk-or');
+  if (pkOr && window.PublicKeyCredential && navigator.credentials && window.isSecureContext
+      && !/^[0-9.]+$|^\[/.test(location.hostname)) {
+    pkOr.hidden = false;
+    var pkGo = $('pk-go');
+    pkGo.onclick = function () {
+      said.className = 'said';
+      said.textContent = '';
+      pkGo.disabled = true;
+      api('passkey-begin', {}).then(function (d) {
+        var o = d.publicKey;
+        o.challenge = pkBytes(o.challenge);
+        return navigator.credentials.get({publicKey: o});
+      }).then(function (cr) {
+        return api('passkey-login', {id: cr.id, clientDataJSON: pkText(cr.response.clientDataJSON),
+          authenticatorData: pkText(cr.response.authenticatorData), signature: pkText(cr.response.signature),
+          userHandle: cr.response.userHandle ? pkText(cr.response.userHandle) : ''});
+      }).then(function (d) {
+        if (d && d.mfa) { form.hidden = true; pkOr.hidden = true; mfaStep(); return; }
+        said.className = 'said good';
+        said.textContent = 'Welcome back.';
+        location.reload();
+      }).catch(function (e) {
+        pkGo.disabled = false;
+        if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return;
+        said.className = 'said bad';
+        said.textContent = String((e && e.message) || e);
+      });
+    };
+  }
   if ($('mfa-box').dataset.stage) mfaStep(); else $('in-name').focus();
 }());
 </script>
@@ -435,6 +488,10 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
 <header>
   <h1 data-no-i18n><?= h($site ?: 'upsmon') ?> <span class="host"><?= h($host) ?></span></h1>
   <span id="state-pill" class="pill unknown"><span class="dot"></span><span>…</span></span>
+  <?php if (!empty($me['load_meter'])): ?>
+  <!-- The load of the server (4.4.0): a full administrator, and only when switched on. -->
+  <div class="hload" id="hload" hidden aria-live="off"></div>
+  <?php endif; ?>
   <div class="spacer"></div>
   <div class="btnrow">
     <button type="button" class="btn small mebtn" id="me-btn" data-icon="person"

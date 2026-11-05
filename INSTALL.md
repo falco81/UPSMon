@@ -83,6 +83,18 @@ not changed.
 
 ---
 
+## Face ID / Touch ID, the iPad, the load of the server (4.4)
+
+- **Passkeys**: Settings → Accounts → *Sign in with a passkey* on; then each person in
+  Your account → *Add a passkey of this device*. Only on the pages opened by their
+  name over HTTPS with a certificate the device trusts (not by an address). On an
+  iPad: iCloud Keychain on (Settings → [name] → iCloud → Passwords and Keychain).
+- **iPad**: Safari → Share → *Add to Home Screen* - upsmon opens in a window of its
+  own. It keeps its own sign-in, apart from Safari's: sign in there once (a passkey
+  makes it one tap).
+- **The load of the server**: Settings → About → *The load of the server in the
+  header* on (full administrators see it); its look in Your account.
+
 ## Certificates from acme (acme push, 4.3)
 
 Your acme - the certificate manager - can put this server's certificate in and
