@@ -55,7 +55,24 @@ const gone = f => { try { fs.unlinkSync(f); } catch (e) { } };
   const dn = await p.evaluate(() => api('notices').then(d => d.done.find(n => n.id === 't-danger')));
   check('Done: kept as done with the name', dn && dn.state === 'done' && dn.closed_by === 'admin', dn);
   check('… no band, no count', (await p.$$('#nt-list .nt-band')).length === 0 && !(await p.$('#ctl-nav .nt-badge')), null);
-  check('… "Done lately" lists both', await p.evaluate(() => /Done lately/.test($('nt-list').textContent) && /Run the step/.test($('nt-list').textContent) && /done by itself/.test($('nt-list').textContent)), null);
+  check('… "Done lately" lists both', await p.evaluate(() => /Done lately/.test($('nt-list').textContent) && /Run the step/.test($('nt-list').textContent) && /went by itself/.test($('nt-list').textContent)), null);
+  check('nothing pending: the green strip', await p.evaluate(() => !!$('nt-list').querySelector('.nt-none') && /Nothing is to be done by hand/.test($('nt-list').textContent)), null);
+  /* Clear (4.5.1): in the heading of Done lately, only what it shows, never what is pending */
+  fs.writeFileSync(ND + '/t-pending.json', JSON.stringify({id: 't-pending', level: 'warn', title: 'Still to do', text: String(Date.now())}));
+  await p.evaluate(() => api('notices', {do: 'check'}).then(ntDraw));
+  await p.waitForTimeout(500);
+  const clr = await p.evaluate(() => { const b = $('nt-list').querySelector('.nt-done-head .nt-done-clear'); return b && {t: b.textContent.trim(), in: !!b.closest('.nt-done-head')}; });
+  check('Clear: in the heading of Done lately', clr && clr.t === 'Clear' && clr.in, clr);
+  if (process.env.SHOT2) await (await p.$('#nt-card')).screenshot({ path: process.env.SHOT2 });
+  await p.evaluate(() => $('nt-list').querySelector('.nt-done-clear').click());
+  await p.waitForTimeout(1200);
+  const ac = await p.evaluate(() => api('notices').then(d => ({open: d.open.map(n => n.id), done: d.done.length})));
+  check('Clear: Done lately empty, the pending one stays', ac.done === 0 && ac.open.includes('t-pending'), ac);
+  check('… the table and Clear gone from the page', await p.evaluate(() => !$('nt-list').querySelector('.nt-done-head') && !/Done lately/.test($('nt-list').textContent)), null);
+  check('… said in the events', await p.evaluate(() => api('events&limit=20').then(d => JSON.stringify(d).indexOf('\\"done lately\\" cleared by admin (2)') >= 0 || JSON.stringify(d).indexOf('done lately') >= 0).catch(() => 'n/a')), null);
+  if (process.env.SHOT3) await (await p.$('#nt-card')).screenshot({ path: process.env.SHOT3 });
+  gone(ND + '/t-pending.json');
+  await p.evaluate(() => api('notices', {do: 'check'}).then(ntDraw));
   /* the dashboard: how bad, never what */
   fs.writeFileSync(ND + '/t-danger2.json', JSON.stringify({id: 't-danger2', level: 'danger', title: 'A secret thing', text: String(Date.now())}));
   await p.evaluate(() => api('notices', {do: 'check'}));
@@ -74,6 +91,10 @@ const gone = f => { try { fs.unlinkSync(f); } catch (e) { } };
   await q.waitForSelector('#ctl-nav');
   const ro = await q.evaluate(() => api('notices', {do: 'done', id: 't-danger2'}).then(() => 'went', e => e.status));
   check('read-only: Done refused', ro === 403, ro);
+  const rog = await q.evaluate(() => api('notices').then(() => 'given', e => e.status));
+  check('read-only: not even given them (403)', rog === 403, rog);
+  const roc = await q.evaluate(() => api('notices', {do: 'clear_done'}).then(() => 'went', e => e.status));
+  check('read-only: Clear refused', roc === 403, roc);
   await c2.close();
   await p.evaluate(() => api('users', {action: 'delete', name: 'ntro'}).catch(() => 0));
   /* before an upgrade: a package that asks to be read first */

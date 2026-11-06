@@ -4,6 +4,19 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.5.1 - 2026-11-06
+
+- **To be done by hand: Clear for "Done lately"** (as ZIGMon 5.44.3 has it). A
+  Clear button at the right of the heading empties exactly the rows the pane
+  shows - a row come meanwhile stays - and never touches what is still to be
+  done; it is said in the events. The table, and its Clear, is drawn only when
+  it has rows. `upsmon --notices-clear-done` on the command line empties all of it.
+- Nothing pending: a green strip, "Nothing is to be done by hand".
+- "Done lately" keeps the last 20, shows the 10 newest; "went by itself" for
+  one whose check holds. A done one cleared away (or past the 20) is not raised
+  again while root's file still asks the same.
+- `/api/notices` is for a full administrator only, reading too.
+
 ## 4.5.0 - 2026-11-06
 
 - **What is to be done by hand - one way for all of it.** A step a new version

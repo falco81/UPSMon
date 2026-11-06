@@ -10834,6 +10834,18 @@
   "n45900": {
    "source": "Kept here, counted beside Upgrades in the menu, said on the dashboard and in the console until it is done.",
    "text": "Drží se tady, jejich počet je u položky Aktualizace v menu a hlásí je i dashboard a konzole, dokud nejsou hotové."
+  },
+  "n45950": {
+   "source": "Clear",
+   "text": "Vymazat"
+  },
+  "n45951": {
+   "source": "Empty this list - what is still to be done stays",
+   "text": "Vyprázdnit tento seznam – co je ještě potřeba udělat, zůstane"
+  },
+  "n45952": {
+   "source": "went by itself",
+   "text": "vyřešilo se samo"
   }
  },
  "patterns": {
@@ -13608,6 +13620,10 @@
   "np45014": {
    "source": "This band goes by itself once upsmon {0} or newer runs.",
    "text": "Tento pás zmizí sám, až poběží upsmon {0} nebo novější."
+  },
+  "np45900": {
+   "source": "done lately cleared ({0})",
+   "text": "nedávno hotové vymazáno ({0})"
   }
  },
  "rich": {

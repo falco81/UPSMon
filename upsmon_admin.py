@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.5.0'
+__version__ = '4.5.1'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -15117,11 +15117,40 @@ def _nt_all(store):
         return {}
 
 
+NOTICE_DONE_KEEP = 20
+
+
+def _nt_seen(store):
+    """What was done and is no longer listed (cleared, or past the last 20):
+    {id: digest} - so that the same one, still asked by root's file, is not
+    raised again."""
+    try:
+        got = json.loads(store.get_meta('notices:seen') or '{}')
+        return got if isinstance(got, dict) else {}
+    except ValueError:
+        return {}
+
+
+def _nt_forget(store, gone):
+    """The done ones taken out of the list, kept only as what was done."""
+    if not gone:
+        return
+    seen = _nt_seen(store)
+    for n in gone:
+        if n.get('digest'):
+            seen.pop(n['id'], None)
+            seen[n['id']] = n['digest']
+    while len(seen) > 300:
+        seen.pop(next(iter(seen)))
+    store.set_meta('notices:seen', json.dumps(seen))
+
+
 def _nt_save(store, rows):
-    # the done ones: the last 50 kept, for the history
+    # the done ones: the last 20 kept, for "Done lately" (4.5.1: as ZIGMon)
     done = sorted((n for n in rows.values() if n.get('state') != 'open'),
                   key=lambda n: n.get('closed_at') or 0, reverse=True)
-    for n in done[50:]:
+    _nt_forget(store, done[NOTICE_DONE_KEEP:])
+    for n in done[NOTICE_DONE_KEEP:]:
         rows.pop(n['id'], None)
     store.set_meta('notices', json.dumps(rows, ensure_ascii=False))
 
@@ -15142,6 +15171,9 @@ def notice_raise(store, raw, source='daemon', why=''):
         if was and was.get('digest') == dig:
             # the same one again: an open one stays as it is, a done one stays
             # done (root's file still there after somebody did it, say)
+            return False
+        if not was and _nt_seen(store).get(n['id']) == dig:
+            # done, and cleared from "Done lately" since: still done
             return False
         n = dict(n, state='open', raised_at=time.time(), digest=dig)
         rows[n['id']] = n
@@ -15167,6 +15199,32 @@ def notice_close(store, nid, state, by='', why=''):
         {'done': '%s did it' % (by or 'somebody'), 'resolved': 'done by itself',
          'taken back': 'taken back by root'}.get(state, state), n['title']), 'info', who=by or None)
     return n
+
+
+def notices_done_clear(store, items=None, who=''):
+    """"Done lately" emptied (4.5.1): exactly the rows the page shows - [id,
+    closed_at] each - or all of it when none are named (the command line).
+    What is still to be done is never touched."""
+    want = None
+    if items is not None:
+        want = set()
+        for one in list(items)[:200]:
+            if isinstance(one, (list, tuple)) and len(one) == 2:
+                try:
+                    want.add((str(one[0])[:80], int(float(one[1]))))
+                except (TypeError, ValueError):
+                    continue
+    with NOTICE_LOCK:
+        rows = _nt_all(store)
+        gone = [n for n in rows.values() if n.get('state') != 'open'
+                and (want is None or (n['id'], int(n.get('closed_at') or 0)) in want)]
+        _nt_forget(store, gone)
+        for n in gone:
+            rows.pop(n['id'], None)
+        store.set_meta('notices', json.dumps(rows, ensure_ascii=False))
+    store.add_event('to do by hand', '"done lately" cleared by %s (%d)' % (who or 'the command line', len(gone)),
+                    'info', who=who or None)
+    return len(gone)
 
 
 def _nt_unit(name, what):
@@ -15263,7 +15321,7 @@ def notices_view(store, lang=''):
     opened = sorted((n for n in rows if n.get('state') == 'open'),
                     key=lambda n: (rank.get(n.get('level'), 3), -(n.get('raised_at') or 0)))
     done = sorted((n for n in rows if n.get('state') != 'open'),
-                  key=lambda n: -(n.get('closed_at') or 0))[:20]
+                  key=lambda n: -(n.get('closed_at') or 0))[:10]
     return {'open': opened, 'done': done}
 
 
@@ -15302,7 +15360,8 @@ def notices_gate(store, ack):
 
 @route('GET', '/api/notices')
 def _notices(h):
-    s = h.me('readonly')
+    # a full administrator only (4.5.1): nobody else is given what they are
+    s = h.me('fulladmin')
     notices_tick(h.store)
     return dict(notices_view(h.store), may_change=s['role'] == 'fulladmin')
 
@@ -15321,7 +15380,11 @@ def _notices_do(h):
         except ValueError as e:
             raise ApiError(404, str(e))
         return dict(notices_view(h.store), may_change=True, message='kept as done: %s' % n['title'])
-    raise ApiError(400, 'do is check or done')
+    if do == 'clear_done':
+        items = b.get('items') if isinstance(b.get('items'), list) else None
+        gone = notices_done_clear(h.store, items, s['name'])
+        return dict(notices_view(h.store), may_change=True, message='done lately cleared (%d)' % gone)
+    raise ApiError(400, 'do is check, done or clear_done')
 
 
 def cli_lang():
@@ -16917,6 +16980,8 @@ def add_cli_arguments(parser):
       help='what is to be done by hand - a step an upgrade needs, what the installer left to you')
     a('--notice-done', metavar='ID', help='that one is done (as Done on the pages)')
     a('--notices-check', action='store_true', help='the notices looked at again now (their checks, notices.d)')
+    a('--notices-clear-done', action='store_true',
+      help='"done lately" emptied (Clear on the pages) - what is still to be done stays')
     a('--proxy-test', nargs='?', const='', metavar='URL',
       help='an address asked the way upsmon asks the web - through the proxy as saved, or '
            'straight - each step shown (empty: where the new versions are looked for)')
@@ -16937,7 +17002,7 @@ CLI_FLAGS = ('users', 'add_user', 'passwd', 'set_role', 'del_user', 'disable_use
              'console_at_login', 'console_status', 'lockouts', 'lockouts_clear', 'backup',
              'copies', 'restore', 'restore_bundle', 'rbackup_now', 'rbackup_status', 'db_check',
              'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export', 'proxy_test', 'passkeys', 'passkey_forget',
-             'notices', 'notice_done', 'notices_check')
+             'notices', 'notice_done', 'notices_check', 'notices_clear_done')
 
 
 def cli_wanted(args):
@@ -17506,7 +17571,11 @@ def cli_main(args, ups_status=None):
                       (n.get('row') or {}).get('state') or '-', (n.get('row') or {}).get('said') or '')
                      for n in v['nodes']], ['server', 'started', 'restart', 'said'], [22, 20, 12, 60]))
         return 0
-    if args.notices or args.notice_done or args.notices_check:
+    if args.notices or args.notice_done or args.notices_check or args.notices_clear_done:
+        if args.notices_clear_done:
+            gone = notices_done_clear(store, None, who)
+            print(pal.ok_line('done lately cleared (%d) - what is still to be done stays' % gone))
+            return 0
         if args.notice_done:
             try:
                 n = notice_close(store, args.notice_done, 'done', who)

@@ -109,5 +109,43 @@ try:
     check('the gate: through with ack', True)
 except ua.ApiError as e:
     check('the gate: through with ack', False, str(e))
+# -- Clear "Done lately" (4.5.1) --------------------------------------------------------
+store.set_meta('notices', '{}')
+for i in range(3):
+    ua.notice_raise(store, {'id': 'k%d' % i, 'level': 'warn', 'title': 'K%d' % i}, 'daemon')
+ua.notice_raise(store, {'id': 'still', 'level': 'danger', 'title': 'Still open'}, 'daemon')
+for i in range(3):
+    ua.notice_close(store, 'k%d' % i, 'done', 'tester')
+done = ua.notices_view(store)['done']
+shown = [[n['id'], int(n['closed_at'])] for n in done if n['id'] in ('k0', 'k1')]
+gone = ua.notices_done_clear(store, shown, 'tester')
+v = ua.notices_view(store)
+check('Clear with a list: only those (2)', gone == 2 and [n['id'] for n in v['done']] == ['k2'], (gone, v['done']))
+check('Clear never touches what is still to be done', [n['id'] for n in v['open']] == ['still'], v['open'])
+check('… a row not in the list stays', any(n['id'] == 'k2' for n in v['done']))
+check('a list naming the wrong moment: nothing', ua.notices_done_clear(store, [['k2', 1]], 'tester') == 0)
+gone = ua.notices_done_clear(store, None, '')
+check('Clear without a list: all of it', gone == 1 and ua.notices_view(store)['done'] == [], gone)
+check('… still open: still there', [n['id'] for n in ua.notices_view(store)['open']] == ['still'])
+# root's file still there after it was done and cleared: not raised again
+with open(os.path.join(nd, 'r9.json'), 'w') as f:
+    json.dump({'id': 'r9', 'level': 'warn', 'title': 'Root again'}, f)
+ua.notices_tick(store, force=True)
+ua.notice_close(store, 'r9', 'done', 'tester')
+ua.notices_done_clear(store, None, 'tester')
+ua.notices_tick(store, force=True)
+check('done, cleared, root\'s file still there: not raised again', not any(n['id'] == 'r9' for n in ua.notices_view(store)['open']))
+with open(os.path.join(nd, 'r9.json'), 'w') as f:
+    json.dump({'id': 'r9', 'level': 'warn', 'title': 'Root again', 'text': 'something new'}, f)
+ua.notices_tick(store, force=True)
+check('… saying something else: raised again', any(n['id'] == 'r9' for n in ua.notices_view(store)['open']))
+# at most 20 kept, 10 shown
+store.set_meta('notices', '{}')
+for i in range(25):
+    ua.notice_raise(store, {'id': 'm%d' % i, 'level': 'info', 'title': 'M'}, 'daemon')
+    ua.notice_close(store, 'm%d' % i, 'done', 'tester')
+rows = ua._nt_all(store)
+check('"Done lately": 20 kept, 10 shown', len(rows) == 20 and len(ua.notices_view(store)['done']) == 10, (len(rows), len(ua.notices_view(store)['done'])))
+check('… the ones past 20 still done (not raised again)', ua.notice_raise(store, {'id': 'm0', 'level': 'info', 'title': 'M'}, 'daemon') is False)
 print('%d ok, %d failed' % (ok, bad))
 sys.exit(1 if bad else 0)

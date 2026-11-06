@@ -10,11 +10,11 @@ Jeden systém pro všechno, co upsmon nedokáže udělat sám a musí to udělat
 
 | Kde | Co tam je |
 |---|---|
-| **Nastavení → Aktualizace** | První karta „Je potřeba udělat ručně“. Každé upozornění je pás jako v isemonu: barva podle závažnosti, text, příkazy s tlačítkem Kopírovat, **Hotovo** (plný administrátor) a **Zkontrolovat znovu** (má-li kontrolu). Pod pásy je „Nedávno hotové“: kdo, jak a kdy. |
+| **Nastavení → Aktualizace** | První karta „Je potřeba udělat ručně“. Každé upozornění je pás jako v isemonu: barva podle závažnosti, text, příkazy s tlačítkem Kopírovat, **Hotovo** (plný administrátor) a **Zkontrolovat znovu** (má-li kontrolu). Pod pásy je „Nedávno hotové“: kdo, jak a kdy, s tlačítkem **Vymazat** v nadpisu (4.5.1). Bez čekajících úkolů je tu zelený pás „Ručně není potřeba nic udělat“. |
 | **Menu Nastavení** | U položky Aktualizace je číslo s počtem otevřených upozornění, v barvě nejhoršího z nich. Je vidět i ve sbaleném menu. Nahoře nad stránkami se nic nového nezobrazuje; stávající hlášení (výpadek, PHP, problémy) zůstávají, jak byla. |
 | **Dashboard** (veřejný) | Pás „Na tomto serveru je potřeba něco udělat ručně“ s odkazem do Nastavení. Jen pro úrovně `warn` a `danger`. Neříká **co**, to je jen pro přihlášené. `/api/status` a `/api/health` nesou jen `{"open": N, "level": "danger"}`. |
 | **Konzole** | Nahoře řádek `TO DO BY HAND: …` (nejvýš 3, pak „… and N more“). |
-| **CLI** | `upsmon --notices` vypíše všechna otevřená upozornění s příkazy (návratový kód 2, když něco je). `upsmon --notice-done ID` označí upozornění jako hotové, `upsmon --notices-check` znovu vyhodnotí kontroly. `--json` pro skripty. |
+| **CLI** | `upsmon --notices` vypíše všechna otevřená upozornění s příkazy (návratový kód 2, když něco je). `upsmon --notice-done ID` označí upozornění jako hotové, `upsmon --notices-check` znovu vyhodnotí kontroly, `upsmon --notices-clear-done` vyprázdní „Nedávno hotové“. `--json` pro skripty. |
 | **install.sh --upgrade** | Před instalací vypíše upozornění nové verze typu `before`. Je-li mezi nimi `confirm`, zeptá se „Read it, and go on?“ (`--yes` ho přeskočí). Po instalaci vypíše upozornění typu `after` jako **TO BE DONE BY HAND**. |
 | **Události** | Kategorie „to do by hand“: vznik, kdo udělal, vyřešilo se samo, staženo rootem. |
 
@@ -105,3 +105,12 @@ Kontroly se vyhodnocují každou minutu, při otevření stránky a tlačítkem 
 - `python3 tests/notices/t_engine.py`: jádro (čtení, verze, balíček, hotovo, kontroly, root, pojistka)
 - `bash tests/notices/t_install.sh`: funkce instalátoru
 - `node tests/notices/t_ui.js`: stránky na testovací instanci (jako root vedle ní)
+
+## Nedávno hotové a Vymazat (4.5.1)
+
+- Drží se posledních 20 hotových úkolů, panel ukazuje 10 nejnovějších. Způsob vyřešení je **done** (člověk), **went by itself** (kontrola platí) nebo **taken back** (root vzal soubor zpět).
+- **Vymazat** v nadpisu „Nedávno hotové“ smaže přesně ty řádky, které panel ukazuje (posílá `[id, closed_at]`). Řádek, který mezitím přibyl, zůstane. Bez seznamu (CLI) se smaže všechno.
+- Na čekající úkoly Vymazat **nikdy** nesahá.
+- Hotový úkol od roota, jehož soubor zůstal, se po vymazání znovu neotevře, dokud se jeho obsah nezmění. To samé platí pro úkoly, které vypadly za hranici 20.
+- Do událostí se zapíše `"done lately" cleared by admin (N)`.
+- `/api/notices` smí jen plný administrátor (403 pro ostatní, a to i pro čtení).

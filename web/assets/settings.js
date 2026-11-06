@@ -7966,14 +7966,36 @@ function ntDraw(d) {
   var list = $('nt-list');
   if (list) {
     clear(list);
-    if (!(d.open || []).length) list.appendChild(el('p', 'note good', 'Nothing is to be done by hand.'));
+    if (!(d.open || []).length) {
+      /* nothing pending: the green strip (4.5.1, as ZIGMon) */
+      var none = el('div', 'nt-none');
+      none.innerHTML = iconMarkup('check', 16);
+      none.appendChild(el('span', '', 'Nothing is to be done by hand.'));
+      list.appendChild(none);
+    }
     (d.open || []).forEach(function (n) { list.appendChild(ntOne(n, {live: true, when: n.raised_at ? fmtTime(n.raised_at) : ''})); });
-    if ((d.done || []).length) {
-      list.appendChild(el('h3', 'nt-donehead', 'Done lately'));
-      list.appendChild(listTable(['What', 'How', 'Who', 'When'], d.done.slice(0, 10), function (n) {
+    /* Done lately, with Clear at the right of its heading - drawn only when it
+       has rows: an empty one would have nothing to clear */
+    var past = (d.done || []).slice(0, 10);
+    if (past.length) {
+      var head = el('div', 'nt-done-head');
+      head.appendChild(el('h3', 'nt-donehead', 'Done lately'));
+      if (d.may_change) {
+        var clr = cmdButton('Clear', 'trash', 'small nt-done-clear');
+        clr.title = 'Empty this list - what is still to be done stays';
+        clr.onclick = function () {
+          /* exactly what this list shows: a row come meanwhile stays */
+          busy(clr, true);
+          api('notices', {do: 'clear_done', items: past.map(function (n) { return [n.id, Math.floor(n.closed_at || 0)]; })})
+            .then(function (r) { ntDraw(r); toast(r.message, 'good'); }).catch(oops).then(function () { busy(clr, false); });
+        };
+        head.appendChild(clr);
+      }
+      list.appendChild(head);
+      list.appendChild(listTable(['What', 'How', 'Who', 'When'], past, function (n) {
         var tr = el('tr');
         tr.appendChild(noI18n(el('td', '', ntWords(n)[0])));
-        tr.appendChild(el('td', 'muted', {done: 'done', resolved: 'done by itself', 'taken back': 'taken back'}[n.state] || n.state));
+        tr.appendChild(el('td', 'muted', {done: 'done', resolved: 'went by itself', 'taken back': 'taken back'}[n.state] || n.state));
         tr.appendChild(noI18n(el('td', '', n.closed_by || '–')));
         tr.appendChild(stampCell(n.closed_at));
         return tr;
