@@ -10396,7 +10396,7 @@
    "text": "Passkeys – Face ID, Touch ID"
   },
   "k44006": {
-   "source": "A passkey signs you in with a face, a finger or the PIN of this device - no name, no password to type. It is kept on the device (on an iPad and an iPhone in the iCloud Keychain, so on your other Apple devices too); the server has only its public half.",
+   "source": "A passkey signs you in with the face, a finger or the PIN of this device - no name and no password to type. It is kept in the device (on an iPad and an iPhone in the iCloud Keychain, so on your other Apple devices too); the server has only its public half.",
    "text": "Passkey vás přihlásí obličejem, prstem nebo PINem tohoto zařízení – bez psaní jména a hesla. Je uložená v zařízení (na iPadu a iPhonu v Klíčence na iCloudu, takže i na vašich dalších zařízeních Apple); server má jen její veřejnou část."
   },
   "k44007": {
@@ -10702,6 +10702,22 @@
   "k44112": {
    "source": "Sign in with the password once, then Your account → Add a passkey of this device.",
    "text": "Přihlaste se jednou heslem a pak Váš účet → Přidat passkey tohoto zařízení."
+  },
+  "k44500": {
+   "source": "Change its name",
+   "text": "Změnit její název"
+  },
+  "k44501": {
+   "source": "The name of the passkey",
+   "text": "Název passkey"
+  },
+  "k44502": {
+   "source": "synced to the other devices (iCloud Keychain)",
+   "text": "synchronizovaná na další zařízení (Klíčenka na iCloudu)"
+  },
+  "k44503": {
+   "source": "renamed",
+   "text": "přejmenováno"
   }
  },
  "patterns": {

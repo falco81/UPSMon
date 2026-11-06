@@ -4,6 +4,15 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.4.5 - 2026-11-06
+
+- **Your account -> Passkeys looks as in the other apps.** Each row has a pencil
+  and a bin, icons only. The pencil turns the name into a box with the name
+  selected: Enter, the pencil again or a click elsewhere keeps it, Esc puts it
+  back, an emptied box keeps the old name. The "synced" tag is gone from the
+  name (it is said when pointing at it). The same table shows for a full
+  administrator from the row of another account.
+
 ## 4.4.4 - 2026-11-05
 
 - **The performance meter's graphs slide smoothly.** Each graph (in the header and

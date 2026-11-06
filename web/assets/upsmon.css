@@ -3416,6 +3416,12 @@ body{padding-right:max(16px,env(safe-area-inset-right))}
   .sw{padding:3px 0}
   select,input[type=text],input[type=password],input[type=number]{min-height:36px}
 }
+/* Your account → Passkeys (4.4.5): the name changed in its own row */
+.pk-list td.pk-name{min-width:190px}
+.pk-list input.pk-name-in{width:190px;max-width:100%;min-width:0;font:inherit;padding:6px 12px;border-radius:8px;border:1px solid var(--accent,#58a6ff);
+  background:var(--panel2,#161b22);color:var(--tx,#e6edf3);outline:none;box-shadow:0 0 0 3px rgba(88,166,255,.18)}
+.pk-list td.rowtools{white-space:nowrap;text-align:right}
+.pk-list td.rowtools .iconbtn+.iconbtn{margin-left:6px}
 
 /* ---- upsmon 4.4.0: the load of the server in the header (ai) ---- */
 /* How busy the server is, in the header (from ai 1.0.72-1.0.76). Uses the colour tokens of :root (below). */

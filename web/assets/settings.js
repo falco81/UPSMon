@@ -6925,20 +6925,50 @@ function pkTable(host, rows, then) {
   if (!rows.length) { host.appendChild(el('p', 'muted small', 'No passkey yet.')); return; }
   host.appendChild(listTable(['Passkey', 'For', 'Added', 'Last used', {words: '', cls: 'act'}], rows, function (p) {
     var tr = el('tr');
-    var n = el('td');
-    n.appendChild(noI18n(el('span', '', p.name || '–')));
-    if (p.backed_up) { n.appendChild(document.createTextNode(' ')); n.appendChild(el('span', 'tag dim', 'synced')); }
+    var n = el('td', 'pk-name');
+    var shown = noI18n(el('span', '', p.name || '–'));
+    if (p.backed_up) shown.title = 'synced to the other devices (iCloud Keychain)';
+    n.appendChild(shown);
     tr.appendChild(n);
     tr.appendChild(noI18n(el('td', 'mono small', p.host || '')));
     tr.appendChild(stampCell(p.created));
     tr.appendChild(p.last_used ? stampCell(p.last_used) : el('td', 'muted', 'never'));
     var act = el('td', 'rowtools');
-    var x = cmdButton('Take it away', 'trash', 'small danger');
+    /* the name changed in its own row (4.4.5): the pencil makes it a box with
+       the name selected - Enter or leaving it keeps it, Esc puts it back */
+    var ed = iconButton('edit', 'Change its name');
+    var box = null;
+    var stop = function (keep) {
+      if (!box) return;
+      var v = box.value.trim(), was = p.name || '';
+      var b = box; box = null;
+      clear(n); n.appendChild(shown);
+      if (!keep || !v || v === was) return;
+      shown.textContent = v;
+      api('passkeys', {do: 'rename', id: p.id, name: v}).then(function (d) { toast(d.message, 'good'); then(d.passkeys || []); })
+        .catch(function (e) { shown.textContent = was || '–'; oops(e); });
+    };
+    ed.onmousedown = function (e) { if (box) e.preventDefault(); };   /* the pencil again: kept, not a blur first */
+    ed.onclick = function () {
+      if (box) { stop(true); return; }
+      box = noI18n(el('input', 'pk-name-in'));
+      box.type = 'text'; box.maxLength = 80; box.value = p.name || '';
+      box.setAttribute('aria-label', 'The name of the passkey');
+      box.onkeydown = function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); stop(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); stop(false); }
+      };
+      box.onblur = function () { stop(true); };
+      clear(n); n.appendChild(box);
+      box.focus(); box.select();
+    };
+    var x = iconButton('trash', 'Take it away');
     x.onclick = function () {
       confirmThen('Take this passkey away?', 'It signs nobody in here any more. It stays on the device until it is taken away there (Settings → Passwords).', 'Take it away', function () {
         api('passkeys', {do: 'delete', id: p.id}).then(function (d) { toast(d.message, 'good'); then(d.passkeys || []); }).catch(oops);
       }, true);
     };
+    act.appendChild(ed);
     act.appendChild(x);
     tr.appendChild(act);
     return tr;
@@ -6967,7 +6997,7 @@ function pkAdd(button, then) {
 function pkMeSection(body) {
   var sec = el('div', 'me-sec');
   sec.appendChild(el('h3', '', 'Passkeys - Face ID, Touch ID'));
-  sec.appendChild(el('p', 'note', 'A passkey signs you in with a face, a finger or the PIN of this device - no name, no password to type. It is kept on the device (on an iPad and an iPhone in the iCloud Keychain, so on your other Apple devices too); the server has only its public half.'));
+  sec.appendChild(el('p', 'note', 'A passkey signs you in with the face, a finger or the PIN of this device - no name and no password to type. It is kept in the device (on an iPad and an iPhone in the iCloud Keychain, so on your other Apple devices too); the server has only its public half.'));
   var list = el('div', 'pk-list');
   sec.appendChild(list);
   var row = el('div', 'btnrow');
