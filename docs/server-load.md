@@ -334,3 +334,13 @@ do dalšího čtení posune o jeden krok doleva, bod, který právě odešel, je
 nepřekresluje časovačem – kreslí se jen, když přijde čtení. Nakreslený znovu uprostřed (otevřený
 panel) pokračuje odtamtud (záporný `begin`). Dokud nejsou plné dvě minuty, čára roste doprava a nic se
 nehýbe; s `prefers-reduced-motion: reduce` také ne. Nic dalšího se nečte ani nezapisuje.
+
+## Zprava doleva, plynule a společně (4.4.6)
+
+Nejnovější bod je vždy u pravého okraje, od prvních čtení. Posun je CSS animace skupiny `g.hl-slide`
+(`@keyframes hl-slide`, krok v `--hs`), dlouhá jako odstup posledních dvou čtení (1,5–6 s), takže
+krok navazuje na krok. Všechny grafy mají stejný čas (`HLOAD.pushAt`), hýbou se společně. SVG animace
+(`animateTransform`) ze 4.4.4 na živé stránce v některých prohlížečích neběžela.
+
+Poslední stav je v `localStorage` (`upsmon-hload`): po návratu na stránku se čísla i grafy ukážou hned,
+čas mimo stránku je mezera, další čtení je jen obnoví. Odhlášení ho smaže.

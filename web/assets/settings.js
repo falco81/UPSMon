@@ -7058,31 +7058,45 @@ function hloadRate(n) {
 /* Four looks to choose from (1.0.72): pills with a bar, one plain line,
    small graphs of the last two minutes, rings. */
 var HLOAD_KEEP = 40;
-/* The graphs slide (upsmon 4.4.4): one SVG animation per graph moves the line
-   by one step over the 3 s until the next reading - nothing is redrawn by a
-   timer. Drawn again in the middle (the panel opened), it goes on from where
-   it is (a negative begin). Only the live graphs, only once two minutes are
-   full (before that the line grows to the right and nothing moves), not with
-   reduced motion. */
+/* The graphs flow from the right to the left (upsmon 4.4.4, 4.4.6): the newest
+   reading is always at the right edge, and one SVG animation per graph moves
+   the line one step to the left over the time until the next reading - as long
+   as the readings have been coming apart lately, so that one step runs into
+   the next without a stop. Nothing is redrawn by a timer; drawn again in the
+   middle (the panel opened) it goes on from where it is (a negative begin).
+   From the very first readings, not only once two minutes are full. Only the
+   live graphs, not with reduced motion. */
 var HLOAD_STEP_S = 3;
+function hlEvery() {
+  /* the time between the last two readings: what one step takes */
+  var e = HLOAD.every || HLOAD_STEP_S;
+  return Math.max(1.5, Math.min(6, e));
+}
 function hlSlideKey(vals) {
   var h = HLOAD.hist;
-  if (!h || !HLOAD.pushAt || vals.length !== HLOAD_KEEP) return null;
+  if (!h || !HLOAD.pushAt || vals.length < 2) return null;
   var k = ['cpu', 'mem', 'disk', 'net'].filter(function (x) { return h[x] === vals; })[0];
-  if (!k || !HLOAD.drop || HLOAD.drop[k] === undefined) return null;
+  if (!k) return null;
   try { if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return null; } catch (e) { }
-  return (Date.now() - HLOAD.pushAt) / 1000 < HLOAD_STEP_S ? k : null;
+  return (Date.now() - HLOAD.pushAt) / 1000 < hlEvery() ? k : null;
 }
-/* the points of a graph, with the one that just went out on the left while it slides */
+/* the points of a graph, the newest at the right edge; while it slides with the
+   one that just went out on the left */
 function hlSlidePts(vals, w, y) {
-  var step = w / (HLOAD_KEEP - 1), k = hlSlideKey(vals);
-  var pts = vals.map(function (v, i) { return (i * step).toFixed(1) + ',' + y(v); });
-  if (!k) return {pts: pts, open: '', close: '', first: '0'};
+  var step = w / (HLOAD_KEEP - 1), n = vals.length, k = hlSlideKey(vals);
+  var pts = vals.map(function (v, i) { return (w - (n - 1 - i) * step).toFixed(1) + ',' + y(v); });
+  var first = (w - (n - 1) * step).toFixed(1);
+  if (!k) return {pts: pts, open: '', close: '', first: first};
   var gone = (Date.now() - HLOAD.pushAt) / 1000;
-  pts.unshift((-step).toFixed(1) + ',' + y(HLOAD.drop[k]));
-  return {pts: pts, first: (-step).toFixed(1), close: '</g>',
-          open: '<g class="hl-slide"><animateTransform attributeName="transform" type="translate" from="' + step.toFixed(2) + ' 0" to="0 0" dur="'
-                + HLOAD_STEP_S + 's" begin="' + (-gone).toFixed(2) + 's" fill="freeze"/>'};
+  if (HLOAD.drop && HLOAD.drop[k] !== undefined) {
+    first = (w - n * step).toFixed(1);
+    pts.unshift(first + ',' + y(HLOAD.drop[k]));
+  }
+  return {pts: pts, first: first, close: '</g>',
+          /* a CSS animation of the group (4.4.6): it runs in every browser at
+             once, and every graph has the same clock, so they move together */
+          open: '<g class="hl-slide" style="--hs:' + step.toFixed(2) + 'px;animation-duration:' + hlEvery().toFixed(2)
+                + 's;animation-delay:' + (-gone).toFixed(2) + 's">'};
 }
 function hloadSpark(vals, max, cls) {
   var w = 56, h = 18, n = vals.length;
@@ -7128,7 +7142,7 @@ function hloadDraw(d, into, asLook) {
       HLOAD.drop = HLOAD.drop || {};
       if (hist[k].length > HLOAD_KEEP) HLOAD.drop[k] = hist[k].shift(); else delete HLOAD.drop[k];
     };
-    if (d.cpu !== undefined && !HLOAD.noPush) { HLOAD.pushAt = Date.now(); push('cpu', d.cpu); push('mem', mp); push('disk', (d.disk_rd || 0) + (d.disk_wr || 0)); push('net', (d.net_rx || 0) + (d.net_tx || 0)); hloadKeep(); }
+    if (d.cpu !== undefined && !HLOAD.noPush) { var now = Date.now(); if (HLOAD.pushAt && now - HLOAD.pushAt < 8000) HLOAD.every = (now - HLOAD.pushAt) / 1000; HLOAD.pushAt = now; push('cpu', d.cpu); push('mem', mp); push('disk', (d.disk_rd || 0) + (d.disk_wr || 0)); push('net', (d.net_rx || 0) + (d.net_tx || 0)); hloadKeep(); }
   }
   var look = asLook || HLOAD.look || 'graphs';
   host.className = 'hload look-' + look + (preview ? ' hl-preview' : '');
@@ -7364,7 +7378,7 @@ function hpArea(k, h, grid) {
   if (grid) [0.25, 0.5, 0.75].forEach(function (g) { svg += '<line x1="0" x2="' + w + '" y1="' + h * g + '" y2="' + h * g + '" class="hp-grid" vector-effect="non-scaling-stroke"/>'; });
   if (vals.length > 1) {
     var sl = hlSlidePts(vals, w, function (v) { return (h - 1 - (h - 3) * Math.min(1, (v || 0) / top)).toFixed(1); });
-    var last = ((vals.length - 1) * w / (HLOAD_KEEP - 1)).toFixed(1);
+    var last = w.toFixed(1);
     svg += sl.open + '<polygon points="' + sl.first + ',' + h + ' ' + sl.pts.join(' ') + ' ' + last + ',' + h + '" fill="currentColor" opacity=".16"/>';
     svg += '<polyline points="' + sl.pts.join(' ') + '" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>' + sl.close;
   }
@@ -7742,21 +7756,26 @@ function hloadTick(now) {
     hloadDraw(d);
   }).catch(function () { }).then(function () { HLOAD.busy = false; });
 }
-/* The graphs kept across a reload (upsmon 4.4.0): F5 draws what was there at
-   once and goes on from it, rather than starting again empty. This tab only
-   (sessionStorage), at most the last two minutes; the time the page was away
-   is drawn as a gap. */
+/* The graphs kept (upsmon 4.4.0, 4.4.6): coming back to the page - F5, from
+   the dashboard, the next day - draws the last state at once, the numbers and
+   the graphs, and the next reading only brings it up to date. Kept in this
+   browser (localStorage), at most the last two minutes of graph; the time the
+   page was away is drawn as a gap. */
 var HLOAD_STORE = 'upsmon-hload';
+function hloadStore() {
+  try { return window.localStorage; } catch (e) { return null; }
+}
 function hloadKeep() {
-  try { sessionStorage.setItem(HLOAD_STORE, JSON.stringify({at: Date.now(), hist: HLOAD.hist, last: HLOAD.last})); } catch (e) { }
+  var st = hloadStore();
+  try { if (st) st.setItem(HLOAD_STORE, JSON.stringify({at: Date.now(), hist: HLOAD.hist, last: HLOAD.last})); } catch (e) { }
 }
 function hloadRestore() {
-  var k = null;
-  try { k = JSON.parse(sessionStorage.getItem(HLOAD_STORE) || 'null'); } catch (e) { k = null; }
+  var k = null, st = hloadStore();
+  try { k = JSON.parse((st && st.getItem(HLOAD_STORE)) || 'null'); } catch (e) { k = null; }
+  if (!k) { try { k = JSON.parse(sessionStorage.getItem(HLOAD_STORE) || 'null'); } catch (e) { k = null; } }
   if (!k || !k.hist || !k.last || !(k.at > 0)) return;
-  var away = (Date.now() - k.at) / 1000;
-  if (away < 0 || away > 3 * HLOAD_KEEP) return;
-  var gap = Math.floor(away / 3);
+  var away = Math.max(0, (Date.now() - k.at) / 1000);
+  var gap = Math.min(HLOAD_KEEP, Math.floor(away / HLOAD_STEP_S));
   ['cpu', 'mem', 'disk', 'net'].forEach(function (x) {
     var v = (k.hist[x] || []).slice();
     for (var i = 0; i < gap; i++) v.push(0);
@@ -7804,6 +7823,17 @@ function hloadPickers(lsec) {
   }));
   lsec.appendChild(g3);
 }
+/* signed out: what was kept of the load goes too (4.4.6) */
+(function () {
+  var so = $('signout');
+  if (!so || !so.onclick) return;
+  var was = so.onclick;
+  so.onclick = function () {
+    var st = hloadStore();
+    try { if (st) st.removeItem(HLOAD_STORE); sessionStorage.removeItem(HLOAD_STORE); } catch (e) { }
+    return was.apply(this, arguments);
+  };
+})();
 
 /* ======== helpers of the panes above, from OTP admin.js ======== */
 var MODAL_GO = null;

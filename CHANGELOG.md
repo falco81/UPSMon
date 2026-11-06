@@ -4,6 +4,21 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.4.6 - 2026-11-06
+
+- **The performance meter's graphs flow from the right to the left, smoothly
+  and together.** The newest reading is always at the right edge, from the
+  very first readings (not only once two minutes are full), and the line moves
+  a step left over the time until the next reading - as long as the readings
+  have lately been coming apart, so one step runs into the next without a stop.
+  It is a CSS animation of each graph now: 4.4.4's SVG animation did not run on
+  the live page in some browsers, and the line stood still. Every graph has the
+  same clock, so they all move together. Still nothing redrawn by a timer.
+- **Coming back draws the last state at once** - F5, from the dashboard, the
+  next day: the numbers and the graphs as they were, and the next reading only
+  brings them up to date. Kept in this browser (localStorage), the time away
+  drawn as a gap; signing out takes it away.
+
 ## 4.4.5 - 2026-11-06
 
 - **Your account -> Passkeys looks as in the other apps.** Each row has a pencil

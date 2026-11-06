@@ -3590,3 +3590,8 @@ body{padding-right:max(16px,env(safe-area-inset-right))}
 
 /* the graphs slide: what moves out of the box is not drawn */
 .hl-spark,.hp-area svg{overflow:hidden}
+/* the graphs flow from the right (4.4.6): one CSS animation per graph, moved a
+   step (--hs) over the time until the next reading */
+@keyframes hl-slide{from{transform:translateX(var(--hs,0px))}to{transform:translateX(0)}}
+.hl-slide{animation-name:hl-slide;animation-timing-function:linear;animation-fill-mode:both;animation-iteration-count:1}
+@media (prefers-reduced-motion:reduce){.hl-slide{animation:none}}
