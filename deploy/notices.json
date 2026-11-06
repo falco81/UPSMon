@@ -1,0 +1,4 @@
+{
+ "about": "What a version asks to be done by hand - see docs/notices.md. Each one: id, since (the version that brings it), when (before: shown before the upgrade, after: raised once it runs, both), level (danger, warn, info), title, text, commands, confirm (before: not started from the pages until ticked as read), check (it goes by itself once this holds), cs {title, text}.",
+ "notices": []
+}

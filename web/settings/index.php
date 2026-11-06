@@ -263,7 +263,7 @@ if (isset($_GET['api'])) {
         'whoami' => '/api/auth/whoami', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys', 'load' => '/api/load',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys', 'load' => '/api/load', 'notices' => '/api/notices',
         'rbackup' => '/api/rbackup',
     ];
     $writes = [
@@ -272,7 +272,7 @@ if (isset($_GET['api'])) {
         'columns' => '/api/auth/columns', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys', 'notices' => '/api/notices',
         'rbackup' => '/api/rbackup',
         'passkey-register' => '/api/auth/passkey/register', 'passkey-begin' => '/api/auth/passkey/begin',
     ];
@@ -657,6 +657,14 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
         in by root, the service restarted, and brought back only once it answers again. The UPS
         is watched all the while; the history and the settings stay. The command line
         (install.sh --upgrade) works as it always has.</p></div>
+    <div class="card full" id="nt-card">
+      <h2>To be done by hand</h2>
+      <p class="note">What upsmon cannot do itself and somebody has to - a step a new version
+        needs on the command line, what the installer left to you (SELinux, the firewall, a
+        package). Kept here, counted beside Upgrades in the menu, said on the dashboard and in
+        the console until it is done. One that can be checked goes by itself once it is so.</p>
+      <div id="nt-list"></div>
+    </div>
     <div class="card full">
       <h2>The nodes</h2>
       <p class="note">A server in maintenance goes on watching the UPS, the plug and the sensors
@@ -685,6 +693,7 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
         <span id="up-drop-says">Drop the upsmon-X.Y.Z.tar.gz here, or press to choose it</span>
       </div>
       <div id="up-pkg"></div>
+      <div id="up-notices"></div>
       <div class="btnrow" style="margin-top:10px">
         <button class="btn cmd primary" id="up-start" data-icon="play" disabled>Upgrade</button>
         <button class="btn cmd" id="up-forget" data-icon="trash" hidden>Forget the package</button>

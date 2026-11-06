@@ -1907,6 +1907,10 @@
    "source": "Last used",
    "text": "Naposledy použit"
   },
+  "os1270": {
+   "source": "Later",
+   "text": "Později"
+  },
   "os1273": {
    "source": "Leap status",
    "text": "Leap status"
@@ -1966,6 +1970,10 @@
   "os1316": {
    "source": "Look after it",
    "text": "Starat se o něj"
+  },
+  "os1317": {
+   "source": "Look again",
+   "text": "Zkontrolovat znovu"
   },
   "os1319": {
    "source": "Look at every page. Nothing can be changed from this account; how your own tables are laid out is yours to change.",
@@ -10718,6 +10726,114 @@
   "k44503": {
    "source": "renamed",
    "text": "přejmenováno"
+  },
+  "n45001": {
+   "source": "As root, on the server:",
+   "text": "Jako root na serveru:"
+  },
+  "n45002": {
+   "source": "Once it is done, press Done.",
+   "text": "Až to bude hotové, stiskněte Hotovo."
+  },
+  "n45003": {
+   "source": "I have read it, and will do what it says",
+   "text": "Přečetl(a) jsem to a udělám, co se v tom píše"
+  },
+  "n45004": {
+   "source": "Is it done?",
+   "text": "Je to hotové?"
+  },
+  "n45005": {
+   "source": "It is done",
+   "text": "Je to hotové"
+  },
+  "n45006": {
+   "source": "Nothing is to be done by hand.",
+   "text": "Ručně není potřeba nic udělat."
+  },
+  "n45007": {
+   "source": "Done lately",
+   "text": "Nedávno hotové"
+  },
+  "n45008": {
+   "source": "done by itself",
+   "text": "vyřešilo se samo"
+  },
+  "n45009": {
+   "source": "taken back",
+   "text": "staženo"
+  },
+  "n45010": {
+   "source": "and after it is in, it will ask",
+   "text": "a až bude nainstalovaná, požádá o"
+  },
+  "n45011": {
+   "source": "Read what the new version asks first, and tick it",
+   "text": "Nejdřív si přečtěte, o co nová verze žádá, a zaškrtněte to"
+  },
+  "n45012": {
+   "source": "This version asks for something to be read first - and done, by hand.",
+   "text": "Tato verze žádá, abyste si nejdřív něco přečetli – a ručně to udělali."
+  },
+  "n45013": {
+   "source": "Tick each one to go on.",
+   "text": "Pro pokračování zaškrtněte každou položku."
+  },
+  "n45014": {
+   "source": "nothing is put in yet - the package stays, ready",
+   "text": "zatím se nic neinstaluje – balíček zůstává připravený"
+  },
+  "n45015": {
+   "source": "To be done by hand",
+   "text": "Je potřeba udělat ručně"
+  },
+  "n45016": {
+   "source": "What upsmon cannot do itself and somebody has to - a step a new version needs on the command line, what the installer left to you (SELinux, the firewall, a package).",
+   "text": "Co upsmon nedokáže udělat sám a musí to udělat někdo jiný – krok, který nová verze potřebuje na příkazové řádce, nebo co vám nechal instalátor (SELinux, firewall, balíček)."
+  },
+  "n45017": {
+   "source": "Said on every page of Settings, on the dashboard and in the console until it is done.",
+   "text": "Zobrazuje se na každé stránce Nastavení, na dashboardu a v konzoli, dokud to není hotové."
+  },
+  "n45018": {
+   "source": "One that can be checked goes by itself once it is so.",
+   "text": "Položka, kterou lze ověřit, zmizí sama, jakmile je splněná."
+  },
+  "n45019": {
+   "source": "must be done",
+   "text": "nutné"
+  },
+  "n45020": {
+   "source": "to be done",
+   "text": "k udělání"
+  },
+  "n45021": {
+   "source": "good to know",
+   "text": "pro informaci"
+  },
+  "n45022": {
+   "source": "looked again",
+   "text": "zkontrolováno znovu"
+  },
+  "n45023": {
+   "source": "Something on this server is to be done by hand",
+   "text": "Na tomto serveru je potřeba něco udělat ručně"
+  },
+  "n45024": {
+   "source": "Things on this server are to be done by hand",
+   "text": "Na tomto serveru je potřeba několik věcí udělat ručně"
+  },
+  "n45025": {
+   "source": "What it is, the administrator sees in Settings, or on the server with upsmon --notices.",
+   "text": "Co to je, uvidí administrátor v Nastavení nebo na serveru příkazem upsmon --notices."
+  },
+  "n45026": {
+   "source": "Open Settings",
+   "text": "Otevřít Nastavení"
+  },
+  "n45900": {
+   "source": "Kept here, counted beside Upgrades in the menu, said on the dashboard and in the console until it is done.",
+   "text": "Drží se tady, jejich počet je u položky Aktualizace v menu a hlásí je i dashboard a konzole, dokud nejsou hotové."
   }
  },
  "patterns": {
@@ -13436,6 +13552,62 @@
   "hl053": {
    "source": "The processor, busy over the last {0} s, all {1} core(s) together",
    "text": "Procesor, vytížení za posledních {0} s, všech {1} jader dohromady"
+  },
+  "np45001": {
+   "source": "… and {0} more to be done by hand",
+   "text": "… a dalších {0} k udělání ručně"
+  },
+  "np45002": {
+   "source": "kept as done: {0}",
+   "text": "označeno jako hotové: {0}"
+  },
+  "np45003": {
+   "source": "“{0}” is kept as done, with your name, and is not said any more.",
+   "text": "„{0}“ se označí jako hotové, s vaším jménem, a už se nebude zobrazovat."
+  },
+  "np45004": {
+   "source": "upsmon {0} asks, before it is put in",
+   "text": "upsmon {0} před instalací žádá"
+  },
+  "np45005": {
+   "source": "Before upsmon {0} is put in",
+   "text": "Před instalací upsmon {0}"
+  },
+  "np45006": {
+   "source": "upsmon {0} asks for something to be read first ({1}) - see it on Settings → Upgrades",
+   "text": "upsmon {0} žádá, abyste si nejdřív něco přečetli ({1}) – najdete to v Nastavení → Aktualizace"
+  },
+  "np45007": {
+   "source": "This band goes by itself once SELinux is {0}.",
+   "text": "Tento pás zmizí sám, až bude SELinux {0}."
+  },
+  "np45008": {
+   "source": "This band goes by itself once {0} is there.",
+   "text": "Tento pás zmizí sám, až bude existovat {0}."
+  },
+  "np45009": {
+   "source": "This band goes by itself once {0} is gone.",
+   "text": "Tento pás zmizí sám, až {0} zmizí."
+  },
+  "np45010": {
+   "source": "This band goes by itself once {0} runs.",
+   "text": "Tento pás zmizí sám, až poběží {0}."
+  },
+  "np45011": {
+   "source": "This band goes by itself once {0} is stopped.",
+   "text": "Tento pás zmizí sám, až se {0} zastaví."
+  },
+  "np45012": {
+   "source": "This band goes by itself once {0} is switched on.",
+   "text": "Tento pás zmizí sám, až bude {0} zapnutá."
+  },
+  "np45013": {
+   "source": "This band goes by itself once {0} is switched off.",
+   "text": "Tento pás zmizí sám, až bude {0} vypnutá."
+  },
+  "np45014": {
+   "source": "This band goes by itself once upsmon {0} or newer runs.",
+   "text": "Tento pás zmizí sám, až poběží upsmon {0} nebo novější."
   }
  },
  "rich": {

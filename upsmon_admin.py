@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.4.6'
+__version__ = '4.5.0'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -1840,7 +1840,8 @@ def upgrade_store_package(store, path, info, by):
             store.db.run('INSERT INTO meta (k, v) VALUES (?, ?)', (k, one))
     meta = {'sha': sha, 'version': info['version'], 'bytes': len(raw), 'pieces': len(pieces),
             'signed_by': info.get('signed_by'), 'changelog': info.get('changelog', ''),
-            'by': by, 'at': time.time()}
+            'by': by, 'at': time.time(),
+            'notices': notices_of_package(path, info['version'], info.get('installed'))}
     store.set_meta('upgrade:pkg', json.dumps(meta))
     return meta
 
@@ -9156,6 +9157,7 @@ def _upgrade_do(h):
     act = b.get('action')
     try:
         if act == 'start':
+            notices_gate(h.store, b.get('ack'))
             upgrade_start(h.store, s['name'], pages=True)
             return dict(_upgrade_view(h), message='the upgrade has begun')
         if act == 'online_look':
@@ -9182,6 +9184,7 @@ def _upgrade_do(h):
                 raise ValueError('an upgrade is going on: wait for it, or stop it first')
             meta = downgrade_fetch(h.store, str(b.get('version') or ''), s['name'])
             if b.get('start'):
+                notices_gate(h.store, b.get('ack'))
                 upgrade_start(h.store, s['name'], pages=True)
                 return dict(_upgrade_view(h), message='upsmon %s fetched and checked; going back '
                             'to it has begun' % meta['version'])
@@ -9193,6 +9196,7 @@ def _upgrade_do(h):
                 raise ValueError('an upgrade is going on: wait for it, or stop it first')
             meta = online_fetch(h.store, str(b.get('version') or ''), s['name'])
             if b.get('start'):
+                notices_gate(h.store, b.get('ack'))
                 upgrade_start(h.store, s['name'], pages=True)
                 return dict(_upgrade_view(h), message='upsmon %s fetched and checked; the upgrade '
                             'has begun' % meta['version'])
@@ -10811,6 +10815,14 @@ class Console(object):
             why = (st.get('maintenance') or {}).get('why') or ''
             self._put(y, 1, 'THIS SERVER IS IN MAINTENANCE - it is being upgraded%s' % (
                 (' (%s)' % why) if why else ''), A['warn'])
+            y += 1
+        # What is to be done by hand (4.5.0): loud, at the top, until it is done.
+        for n in (st.get('notices') or [])[:3]:
+            self._put(y, 1, 'TO DO BY HAND: %s  (upsmon --notices)' % n.get('title'),
+                      A['bad'] if n.get('level') == 'danger' else A['warn'])
+            y += 1
+        if len(st.get('notices') or []) > 3:
+            self._put(y, 1, '... and %d more (upsmon --notices)' % (len(st['notices']) - 3), A['warn'])
             y += 1
         others = [n for n in (st.get('maint_nodes') or []) if str(n) != str(st.get('node'))]
         if others:
@@ -14970,6 +14982,386 @@ def _load(h):
 
 
 # ---------------------------------------------------------------------------
+# What is to be done by hand (upsmon 4.5.0): one way for everything the program
+# cannot do itself and somebody has to - a version that needs a step on the
+# command line, an installer that had to leave SELinux, the firewall or a
+# package for the administrator. Said loud on every page of Settings, on the
+# dashboard (without the details), on the command line and in the console,
+# until it is done.
+#
+# Where they come from:
+#   - the package: deploy/notices.json, signed with the rest. "before" ones are
+#     shown before the upgrade (confirm: it is not started from the pages until
+#     somebody has said they read it), "after" ones are raised once the version
+#     runs here. Only those of the versions between the one that ran and the new
+#     one.
+#   - root: one JSON file per notice in /etc/upsmon/notices.d (install.sh writes
+#     them - upsmon_notice in install.sh); the file taken away takes it back.
+#   - the daemon itself: notice_raise().
+# A notice may name a check (a few fixed kinds, nothing run from the file):
+# once it holds, the notice is done by itself.
+# ---------------------------------------------------------------------------
+NOTICES_DIR = Path(os.environ.get('UPSMON_NOTICES', '/etc/upsmon/notices.d'))
+NOTICES_PKG = LIB_DIR / 'notices.json'
+NOTICE_LEVELS = ('info', 'warn', 'danger')
+NOTICE_WHEN = ('before', 'after', 'both')
+NOTICE_CHECKS = ('selinux', 'file_exists', 'file_missing', 'unit_active', 'unit_inactive',
+                 'unit_enabled', 'unit_disabled', 'version_at_least')
+NOTICE_LOCK = threading.Lock()
+NOTICE_TICK = {'at': 0.0}
+
+
+def _nt_vt(v):
+    try:
+        return tuple(int(x) for x in str(v).split('.'))
+    except ValueError:
+        return (0,)
+
+
+def _nt_text(v, most):
+    return re.sub(r'[\x00-\x08\x0b-\x1f\x7f]', '', str(v or ''))[:most]
+
+
+def notice_clean(raw, source):
+    """One notice as it is kept - whatever it came from, nothing else in it.
+    ValueError when it does not read."""
+    if not isinstance(raw, dict):
+        raise ValueError('a notice is an object')
+    nid = str(raw.get('id') or '')
+    if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', nid):
+        raise ValueError('a notice needs an id of letters, digits, . _ - (at most 64)')
+    level = str(raw.get('level') or 'warn')
+    if level not in NOTICE_LEVELS:
+        raise ValueError('%s: level is one of %s' % (nid, ', '.join(NOTICE_LEVELS)))
+    title = _nt_text(raw.get('title'), 200).strip()
+    if not title:
+        raise ValueError('%s: a notice needs a title' % nid)
+    out = {'id': nid, 'level': level, 'title': title, 'text': _nt_text(raw.get('text'), 4000).strip(),
+           'source': source}
+    cs = raw.get('cs')
+    if isinstance(cs, dict):
+        out['cs'] = {k: _nt_text(cs.get(k), 4000 if k == 'text' else 200).strip()
+                     for k in ('title', 'text') if cs.get(k)}
+    cmds = raw.get('commands') or []
+    if isinstance(cmds, str):
+        cmds = [cmds]
+    out['commands'] = [_nt_text(c, 500).strip() for c in cmds if isinstance(c, str) and c.strip()][:10]
+    if raw.get('link') and re.match(r'^https://[^\s"<>]{3,300}$', str(raw['link'])):
+        out['link'] = str(raw['link'])
+    chk = raw.get('check')
+    if chk:
+        if not isinstance(chk, dict) or len(chk) != 1 or list(chk)[0] not in NOTICE_CHECKS:
+            raise ValueError('%s: check is one of {%s: ...}' % (nid, ', '.join(NOTICE_CHECKS)))
+        k, v = list(chk.items())[0]
+        v = _nt_text(v, 300)
+        if k == 'selinux' and v not in ('enforcing', 'permissive', 'disabled', 'not-enforcing'):
+            raise ValueError('%s: selinux is enforcing, permissive, disabled or not-enforcing' % nid)
+        if k.startswith('unit_') and not re.match(r'^[A-Za-z0-9@._:-]{1,120}$', v):
+            raise ValueError('%s: %s is a unit name' % (nid, k))
+        if k.startswith('file_') and not v.startswith('/'):
+            raise ValueError('%s: %s is a full path' % (nid, k))
+        out['check'] = {k: v}
+    if source == 'package':
+        since = str(raw.get('since') or '')
+        if not re.match(r'^\d+(\.\d+){1,3}$', since):
+            raise ValueError('%s: a notice of the package says since which version (since)' % nid)
+        when = str(raw.get('when') or 'after')
+        if when not in NOTICE_WHEN:
+            raise ValueError('%s: when is before, after or both' % nid)
+        out.update(since=since, when=when, confirm=bool(raw.get('confirm')))
+    return out
+
+
+def notices_parse(text, source='package'):
+    """A notices.json: a list, or {"notices": [...]}."""
+    data = json.loads(text)
+    if isinstance(data, dict):
+        data = data.get('notices', [data] if 'id' in data else [])
+    if not isinstance(data, list):
+        raise ValueError('notices.json is a list of notices')
+    return [notice_clean(x, source) for x in data[:200]]
+
+
+def notices_between(rows, was, now, when=('before', 'both')):
+    """The ones of the versions after `was` up to `now`."""
+    lo, hi = _nt_vt(was or '0'), _nt_vt(now)
+    return [n for n in rows if n.get('when') in when and lo < _nt_vt(n['since']) <= hi]
+
+
+def notices_of_package(path, version, installed=None):
+    """What the package says is to be done by hand, between what runs here and
+    it - read from the package already checked (its signature, every file)."""
+    import tarfile
+    try:
+        with tarfile.open(str(path), 'r:gz') as tar:
+            one = None
+            for m in tar:
+                if m.isreg() and m.name.split('/', 1)[-1] == 'deploy/notices.json' and m.size < 1 << 20:
+                    one = m
+                    break
+            if one is None:
+                return []
+            text = tar.extractfile(one).read().decode('utf-8', 'replace')
+        rows = notices_parse(text, 'package')
+    except Exception as e:                               # noqa: BLE001
+        log('notices: the package\'s notices.json does not read: %s' % e, 'warn')
+        return []
+    return [n for n in rows if _nt_vt(installed or __version__) < _nt_vt(n['since']) <= _nt_vt(version)]
+
+
+def _nt_all(store):
+    try:
+        got = json.loads(store.get_meta('notices') or '{}')
+        return got if isinstance(got, dict) else {}
+    except ValueError:
+        return {}
+
+
+def _nt_save(store, rows):
+    # the done ones: the last 50 kept, for the history
+    done = sorted((n for n in rows.values() if n.get('state') != 'open'),
+                  key=lambda n: n.get('closed_at') or 0, reverse=True)
+    for n in done[50:]:
+        rows.pop(n['id'], None)
+    store.set_meta('notices', json.dumps(rows, ensure_ascii=False))
+
+
+def _nt_digest(n):
+    keep = {k: n.get(k) for k in ('level', 'title', 'text', 'cs', 'commands', 'check', 'link')}
+    return hashlib.sha256(json.dumps(keep, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+
+
+def notice_raise(store, raw, source='daemon', why=''):
+    """Raise one (again if it says something else than the one done before).
+    Returns True when it is open now and was not."""
+    n = notice_clean(raw, source)
+    with NOTICE_LOCK:
+        rows = _nt_all(store)
+        dig = _nt_digest(n)
+        was = rows.get(n['id'])
+        if was and was.get('digest') == dig:
+            # the same one again: an open one stays as it is, a done one stays
+            # done (root's file still there after somebody did it, say)
+            return False
+        n = dict(n, state='open', raised_at=time.time(), digest=dig)
+        rows[n['id']] = n
+        _nt_save(store, rows)
+    store.add_event('to do by hand', '%s: %s%s' % ({'package': 'the new version asks',
+                                                    'root': 'the installer asks'}.get(source, 'upsmon asks'),
+                                                   n['title'], (' (%s)' % why) if why else ''),
+                    'warn' if n['level'] != 'info' else 'info')
+    return True
+
+
+def notice_close(store, nid, state, by='', why=''):
+    with NOTICE_LOCK:
+        rows = _nt_all(store)
+        n = rows.get(nid)
+        if not n:
+            raise ValueError('there is no such notice')
+        if n.get('state') != 'open':
+            return n
+        n.update(state=state, closed_at=time.time(), closed_by=by or '', closed_why=why or '')
+        _nt_save(store, rows)
+    store.add_event('to do by hand', '%s: %s' % (
+        {'done': '%s did it' % (by or 'somebody'), 'resolved': 'done by itself',
+         'taken back': 'taken back by root'}.get(state, state), n['title']), 'info', who=by or None)
+    return n
+
+
+def _nt_unit(name, what):
+    try:
+        r = subprocess.run(['systemctl', 'is-%s' % what, name], stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, timeout=10)
+        return r.stdout.decode().strip()
+    except (OSError, subprocess.SubprocessError):
+        return ''
+
+
+def _nt_selinux():
+    try:
+        v = Path('/sys/fs/selinux/enforce').read_text().strip()
+        return 'enforcing' if v == '1' else 'permissive'
+    except OSError:
+        return 'disabled'
+
+
+def notice_holds(chk):
+    """Whether what the notice waits for is so now (None: cannot be told)."""
+    if not chk:
+        return None
+    k, v = list(chk.items())[0]
+    if k == 'selinux':
+        now = _nt_selinux()
+        return (now != 'enforcing') if v == 'not-enforcing' else now == v
+    if k == 'file_exists':
+        return os.path.exists(v)
+    if k == 'file_missing':
+        return not os.path.exists(v)
+    if k in ('unit_active', 'unit_inactive'):
+        st = _nt_unit(v, 'active')
+        return (st == 'active') if k == 'unit_active' else (st in ('inactive', 'failed', 'unknown') and st != '')
+    if k in ('unit_enabled', 'unit_disabled'):
+        st = _nt_unit(v, 'enabled')
+        return (st == 'enabled') if k == 'unit_enabled' else st in ('disabled', 'masked', 'not-found')
+    if k == 'version_at_least':
+        return _nt_vt(__version__) >= _nt_vt(v)
+    return None
+
+
+def notices_tick(store, force=False):
+    """Every minute: what root left in notices.d, what the version that runs
+    now brought, and the checks of the open ones."""
+    now = time.time()
+    if not force and now - NOTICE_TICK['at'] < 60:
+        return
+    NOTICE_TICK['at'] = now
+    # the version that runs now: its "after" ones, once
+    was = store.get_meta('notices:version')
+    if was != __version__:
+        if was:
+            try:
+                rows = notices_parse(NOTICES_PKG.read_text(encoding='utf-8'), 'package') \
+                    if NOTICES_PKG.exists() else []
+            except (OSError, ValueError) as e:
+                log('notices: %s does not read: %s' % (NOTICES_PKG, e), 'warn')
+                rows = []
+            for n in notices_between(rows, was, __version__, ('after', 'both')):
+                notice_raise(store, n, 'package', why='upsmon %s → %s' % (was, __version__))
+        store.set_meta('notices:version', __version__)
+    # root's, one file each
+    seen = set()
+    try:
+        files = sorted(NOTICES_DIR.glob('*.json')) if NOTICES_DIR.is_dir() else []
+    except OSError:
+        files = []
+    for f in files[:100]:
+        try:
+            if f.stat().st_size > 65536:
+                continue
+            for n in notices_parse(f.read_text(encoding='utf-8'), 'root'):
+                seen.add(n['id'])
+                notice_raise(store, n, 'root')
+        except (OSError, ValueError) as e:
+            log_sparing('notice-' + f.name, 'notices: %s does not read: %s' % (f, e), 'warn', every=3600)
+    for n in list(_nt_all(store).values()):
+        if n.get('state') != 'open':
+            continue
+        if n.get('source') == 'root' and n['id'] not in seen:
+            notice_close(store, n['id'], 'taken back', why='its file is gone')
+            continue
+        try:
+            if notice_holds(n.get('check')):
+                notice_close(store, n['id'], 'resolved')
+        except Exception:                                # noqa: BLE001
+            pass
+
+
+def notices_view(store, lang=''):
+    rows = list(_nt_all(store).values())
+    rank = {'danger': 0, 'warn': 1, 'info': 2}
+    opened = sorted((n for n in rows if n.get('state') == 'open'),
+                    key=lambda n: (rank.get(n.get('level'), 3), -(n.get('raised_at') or 0)))
+    done = sorted((n for n in rows if n.get('state') != 'open'),
+                  key=lambda n: -(n.get('closed_at') or 0))[:20]
+    return {'open': opened, 'done': done}
+
+
+def notices_brief(store):
+    """For the header and the dashboard: how many, how bad - no words of them."""
+    try:
+        opened = [n for n in _nt_all(store).values() if n.get('state') == 'open']
+    except Exception:                                    # noqa: BLE001
+        return {'open': 0, 'level': ''}
+    lv = ''
+    for one in ('danger', 'warn', 'info'):
+        if any(n.get('level') == one for n in opened):
+            lv = one
+            break
+    return {'open': len(opened), 'level': lv}
+
+
+def notices_gate(store, ack):
+    """Before an upgrade from the pages: what the package asks to be read
+    first must have been said read (ApiError 409, detail 'notices')."""
+    try:
+        meta = json.loads(store.get_meta('upgrade:pkg') or 'null') or {}
+    except ValueError:
+        meta = {}
+    need = [n['id'] for n in meta.get('notices') or [] if n.get('confirm')]
+    have = set(str(x) for x in (ack or []) if isinstance(x, str))
+    left = [x for x in need if x not in have]
+    if left:
+        raise ApiError(409, 'upsmon %s asks for something to be read first (%d) - see it on '
+                            'Settings → Upgrades' % (meta.get('version'), len(left)), detail='notices')
+    if need:
+        store.add_event('to do by hand', 'read before the upgrade to %s: %s' % (
+            meta.get('version'), ', '.join(n['title'] for n in meta.get('notices') or [] if n.get('confirm'))),
+            'info')
+
+
+@route('GET', '/api/notices')
+def _notices(h):
+    s = h.me('readonly')
+    notices_tick(h.store)
+    return dict(notices_view(h.store), may_change=s['role'] == 'fulladmin')
+
+
+@route('POST', '/api/notices')
+def _notices_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    do = str(b.get('do') or '')
+    if do == 'check':
+        notices_tick(h.store, force=True)
+        return dict(notices_view(h.store), may_change=True, message='looked again')
+    if do == 'done':
+        try:
+            n = notice_close(h.store, str(b.get('id') or ''), 'done', s['name'])
+        except ValueError as e:
+            raise ApiError(404, str(e))
+        return dict(notices_view(h.store), may_change=True, message='kept as done: %s' % n['title'])
+    raise ApiError(400, 'do is check or done')
+
+
+def cli_lang():
+    return 'cs' if (CONFIG.get('ui_lang') or 'cs') == 'cs' else 'en'
+
+
+def notice_words(n, lang):
+    cs = n.get('cs') or {}
+    if lang == 'cs' and cs.get('title'):
+        return cs['title'], cs.get('text') or n.get('text') or ''
+    return n['title'], n.get('text') or ''
+
+
+def notices_print(rows, pal, lang='en', head=None):
+    """On the terminal: loud, one box each, the commands to copy."""
+    if not rows:
+        print(pal.ok_line('nothing to be done by hand' if lang != 'cs' else 'ručně není potřeba nic udělat'))
+        return
+    print(pal.head(head or ('%d to be done by hand' % len(rows) if lang != 'cs'
+                            else 'ručně je potřeba udělat: %d' % len(rows))))
+    for n in rows:
+        title, text = notice_words(n, lang)
+        mark = {'danger': pal.bad, 'warn': pal.warn}.get(n.get('level'), pal.info)
+        bar = mark('█')
+        print(bar + ' ' + mark(pal.bold(title)) + pal.dim('   [%s]' % n['id']))
+        for line in (text or '').splitlines() or ['']:
+            if line.strip():
+                print(bar + '   ' + line)
+        for c in n.get('commands') or []:
+            print(bar + '   ' + pal.addr('$ ' + c))
+        if n.get('check'):
+            k, v = list(n['check'].items())[0]
+            print(bar + '   ' + pal.dim(('done by itself once %s %s' if lang != 'cs' else 'samo zmizí, až bude %s %s')
+                                        % (k.replace('_', ' '), v)))
+        if n.get('state', 'open') == 'open' and 'raised_at' in n:
+            print(bar + '   ' + pal.dim('done? upsmon --notice-done %s' % n['id']))
+        print('')
+
+
+# ---------------------------------------------------------------------------
 # The database: SQLite, /var/lib/upsmon/upsmon.db
 # ---------------------------------------------------------------------------
 class DbError(Exception):
@@ -16365,6 +16757,7 @@ class Engine(object):
             'ups': self.ups_words(), 'trials': [],
             'accounts': int(self.store.db.value('SELECT COUNT(*) FROM accounts', (), 0) or 0),
             'maintenance': maintenance_row(self.store),
+            'notices': notices_brief(self.store),
         }
 
     # ---- the loop -----------------------------------------------------------------
@@ -16375,7 +16768,8 @@ class Engine(object):
                          ('lockouts', lambda: lockouts_tick(self)),
                          ('time', lambda: ntp_tick(self)), ('power', lambda: power_tick(self)),
                          ('updates', lambda: osup_tick(self)), ('schedule', lambda: osup_sched_tick(self)),
-                         ('backups', lambda: rb_tick(self)), ('copies', lambda: daily_copy_tick(self.store))):
+                         ('backups', lambda: rb_tick(self)), ('copies', lambda: daily_copy_tick(self.store)),
+                         ('notices', lambda: notices_tick(self.store))):
             try:
                 fn()
             except Exception as e:                      # noqa: BLE001
@@ -16519,6 +16913,10 @@ def add_cli_arguments(parser):
     a('--downgrade-check', action='store_true', help='the older versions there, and which are safe')
     a('--downgrade', metavar='VERSION|FILE', help='go back to an older version (only a safe one)')
     a('--maintenance', choices=('on', 'off', 'status'), help='this server in maintenance or not')
+    a('--notices', action='store_true',
+      help='what is to be done by hand - a step an upgrade needs, what the installer left to you')
+    a('--notice-done', metavar='ID', help='that one is done (as Done on the pages)')
+    a('--notices-check', action='store_true', help='the notices looked at again now (their checks, notices.d)')
     a('--proxy-test', nargs='?', const='', metavar='URL',
       help='an address asked the way upsmon asks the web - through the proxy as saved, or '
            'straight - each step shown (empty: where the new versions are looked for)')
@@ -16538,7 +16936,8 @@ CLI_FLAGS = ('users', 'add_user', 'passwd', 'set_role', 'del_user', 'disable_use
              'upgrade_cancel', 'downgrade_check', 'downgrade', 'maintenance', 'console',
              'console_at_login', 'console_status', 'lockouts', 'lockouts_clear', 'backup',
              'copies', 'restore', 'restore_bundle', 'rbackup_now', 'rbackup_status', 'db_check',
-             'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export', 'proxy_test', 'passkeys', 'passkey_forget')
+             'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export', 'proxy_test', 'passkeys', 'passkey_forget',
+             'notices', 'notice_done', 'notices_check')
 
 
 def cli_wanted(args):
@@ -16621,6 +17020,12 @@ def cli_main(args, ups_status=None):
         try:
             store = cli_store()
             got['maintenance'] = maintenance_row(store)
+            try:
+                notices_tick(store)
+                got['notices'] = [{'id': n['id'], 'level': n['level'], 'title': notice_words(n, cli_lang())[0]}
+                                  for n in notices_view(store)['open']]
+            except Exception:                           # noqa: BLE001
+                got['notices'] = []
             st = web_status()
             if st.get('state') == 'failed':
                 got['problems'].append('the web server could not be given its certificate: %s'
@@ -17101,6 +17506,27 @@ def cli_main(args, ups_status=None):
                       (n.get('row') or {}).get('state') or '-', (n.get('row') or {}).get('said') or '')
                      for n in v['nodes']], ['server', 'started', 'restart', 'said'], [22, 20, 12, 60]))
         return 0
+    if args.notices or args.notice_done or args.notices_check:
+        if args.notice_done:
+            try:
+                n = notice_close(store, args.notice_done, 'done', who)
+            except ValueError as e:
+                raise SystemExit('upsmon: %s (upsmon --notices lists them)' % e)
+            print(pal.ok_line('kept as done: %s' % n['title']))
+            return 0
+        notices_tick(store, force=True)
+        v = notices_view(store)
+        if as_json:
+            out(v)
+            return 0
+        if args.notices_check and not args.notices:
+            print(pal.ok_line('looked again: %d to do by hand' % len(v['open'])))
+            return 0
+        notices_print(v['open'], pal, cli_lang())
+        if v['done']:
+            print(pal.dim('done lately: ' + '; '.join('%s (%s, %s)' % (
+                n['title'], n.get('state'), stamp(n.get('closed_at'))) for n in v['done'][:5])))
+        return 0 if not v['open'] else 2
     if args.maintenance:
         if args.maintenance == 'status':
             m = maintenance_row(store)
@@ -17176,6 +17602,19 @@ def cli_main(args, ups_status=None):
             raise SystemExit('upsmon: %s' % e)
         print(pal.ok_line('upsmon %s fetched, signed by %s' % (meta['version'],
                                                              meta.get('signed_by'))))
+        # What the new version asks (4.5.0): shown, and asked again when it
+        # asks to be read first.
+        before = [n for n in meta.get('notices') or [] if n.get('when') in ('before', 'both')]
+        if before:
+            notices_print(before, pal, cli_lang(), head='upsmon %s asks, before it is put in' % meta['version'])
+            if any(n.get('confirm') for n in before) and not args.yes:
+                try:
+                    ok = input('  read it, and go on? (y/N) ').strip().lower() in ('y', 'yes', 'a', 'ano')
+                except (EOFError, KeyboardInterrupt):
+                    ok = False
+                if not ok:
+                    print('  nothing done - the package stays, ready (Settings → Upgrades)')
+                    return 1
         try:
             upgrade_start(store, 'command line')
         except ValueError as e:

@@ -4,6 +4,36 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.5.0 - 2026-11-06
+
+- **What is to be done by hand - one way for all of it.** A step a new version
+  needs on the command line, what the installer had to leave to the administrator
+  (SELinux, the firewall, a package), what the daemon finds: a notice, kept until
+  it is done.
+  - **Settings → Upgrades**, the first card: a band each (as isemon's), red,
+    amber or blue, the commands with Copy, **Done** (a full administrator, kept
+    with the name) and **Look again**; below it, what was done lately. Beside
+    Upgrades in the menu, how many, in the colour of the worst. Nothing new over
+    the pages - the alerts at the top stay as they were.
+  - **The dashboard** says only that something is to be done (warn and danger),
+    with a link to Settings; `/api/status` and `/api/health` carry only how many
+    and how bad.
+  - **The console** says it at the top; **`upsmon --notices`**,
+    **`--notice-done ID`**, **`--notices-check`** on the command line.
+  - Where they come from: the signed package (`deploy/notices.json`, by version:
+    `before` shown before the upgrade, `after` raised once it runs), root
+    (`/etc/upsmon/notices.d`, `upsmon_notice` in install.sh), the daemon.
+  - A notice may name a check (SELinux mode, a file, a systemd unit, a version)
+    and goes by itself once it holds - nothing is ever run from it.
+- **Before an upgrade**, what the new version asks is shown with the package;
+  one marked `confirm` must be ticked as read before the upgrade starts from the
+  pages (the server refuses it otherwise, 409) - also for "upgrade from the web"
+  in one click. `upsmon --upgrade-online` and `install.sh --upgrade` show them
+  and ask again; after install.sh it says what is TO BE DONE BY HAND.
+- install.sh: without `semanage` the SELinux label of the pages is not kept - it
+  is now said (to be done by hand) instead of passing silently.
+- docs/notices.md: the format, for the versions to come. Tests in tests/notices/.
+
 ## 4.4.6 - 2026-11-06
 
 - **The performance meter's graphs flow from the right to the left, smoothly

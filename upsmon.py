@@ -34,7 +34,7 @@ this file; the daemon starts it in threads of its own.
 """
 
 # Bumped with every change; upsmon_admin.py carries the same number.
-__version__ = '4.4.6'
+__version__ = '4.5.0'
 
 import argparse
 import getpass
@@ -3210,6 +3210,7 @@ class Daemon(object):
                         snap = dict(daemon.snapshot or
                                     {'online': False, 'error': daemon.last_error})
                     snap['maintenance'] = daemon.maintenance()
+                    snap['notices'] = daemon.notices()
                     self._send(200, snap)
                 elif path in ('/history', '/api/history'):
                     span = parse_span(query.get('range', ['24h'])[0])
@@ -3415,6 +3416,17 @@ class Daemon(object):
             return {'on': False}
         return {k: row.get(k) for k in ('on', 'why', 'by', 'at') if k in row} or {'on': False}
 
+    def notices(self):
+        """What is to be done by hand on this server (4.5.0), for the dashboard:
+        how many and how bad - never what, that is for Settings."""
+        admin = getattr(self, 'admin', None)
+        if upsmon_admin is None or admin is None or getattr(admin, 'store', None) is None:
+            return {'open': 0, 'level': ''}
+        try:
+            return upsmon_admin.notices_brief(admin.store)
+        except Exception:
+            return {'open': 0, 'level': ''}
+
     def health(self):
         stats = self.store.stats()
         with self.lock:
@@ -3424,6 +3436,7 @@ class Daemon(object):
         return {
             'ok': bool(self.last_ok) and self.consecutive_errors == 0,
             'maintenance': maint,
+            'notices': self.notices(),
             'state': 'maintenance' if maint.get('on') else 'in service',
             'version': __version__,
             'uptime': int(time.time() - self.started),

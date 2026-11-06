@@ -1986,6 +1986,20 @@ driver restarts. Test it: set the value, reboot the NAS, read it back.
 
 ## 20. Maintenance
 
+### What is to be done by hand (4.5.0)
+
+When an upgrade needs a step on the command line, or the installer leaves
+something to you (SELinux, the firewall, a package), it is said in **Settings →
+Upgrades** (a count beside Upgrades in the menu), on the dashboard (only that
+there is something), in the console and by:
+
+```bash
+upsmon --notices
+upsmon --notice-done ID
+```
+
+How a version or root raises one: docs/notices.md.
+
 ### Size
 
 With the default retention, and a plug and a sensor both configured:

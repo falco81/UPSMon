@@ -3422,6 +3422,47 @@ body{padding-right:max(16px,env(safe-area-inset-right))}
   background:var(--panel2,#161b22);color:var(--tx,#e6edf3);outline:none;box-shadow:0 0 0 3px rgba(88,166,255,.18)}
 .pk-list td.rowtools{white-space:nowrap;text-align:right}
 .pk-list td.rowtools .iconbtn+.iconbtn{margin-left:6px}
+/* ---- what is to be done by hand (4.5.0): one band each, as isemon's ---- */
+.nt-banner{display:flex;flex-direction:column;gap:10px;margin:0 0 16px}
+.nt-banner[hidden]{display:none}
+.nt-band{display:grid;grid-template-columns:auto 1fr auto;gap:4px 14px;align-items:start;padding:14px 16px 14px 18px;
+  border:1px solid rgba(210,153,34,.55);border-left:4px solid var(--warn);border-radius:10px;
+  background:linear-gradient(90deg,rgba(210,153,34,.16),rgba(210,153,34,.05) 70%)}
+.nt-band.nt-danger{border-color:rgba(248,81,73,.55);border-left-color:var(--crit);
+  background:linear-gradient(90deg,rgba(248,81,73,.17),rgba(248,81,73,.05) 70%)}
+.nt-band.nt-info{border-color:rgba(88,166,255,.45);border-left-color:var(--info);
+  background:linear-gradient(90deg,rgba(88,166,255,.13),rgba(88,166,255,.04) 70%)}
+.nt-ic{display:flex;padding-top:2px;color:var(--warn)}
+.nt-danger .nt-ic{color:var(--crit)}
+.nt-info .nt-ic{color:var(--info)}
+.nt-body{min-width:0}
+.nt-title{font-weight:700;font-size:15px;color:var(--tx);margin-bottom:2px}
+.nt-text{color:var(--tx-dim);line-height:1.5;font-size:13.5px}
+.nt-text p{margin:4px 0 0}
+.nt-as{margin-top:10px;font-size:12.5px;color:var(--tx-dim)}
+.nt-code{display:flex;align-items:center;gap:10px;max-width:760px;margin-top:6px;padding:6px 6px 6px 14px;
+  border:1px solid var(--line,#30363d);border-radius:8px;background:rgba(0,0,0,.35)}
+.nt-code code{flex:1;min-width:0;overflow-x:auto;white-space:pre;font-size:13px;padding:5px 0;background:none;border:0}
+.nt-foot{margin-top:10px;font-size:12.5px;color:var(--tx-dim)}
+.nt-acts{display:flex;flex-direction:column;align-items:stretch;gap:8px}
+.nt-acts .btn{justify-content:flex-start;white-space:nowrap}
+.nt-ack{display:flex;align-items:center;gap:8px;margin-top:10px;font-weight:600;cursor:pointer}
+.nt-ack input{width:18px;height:18px}
+.nt-more{display:flex;align-items:center;gap:12px;font-size:13px;color:var(--tx-dim);padding:0 4px}
+#nt-list .nt-band,.nt-pkg .nt-band{margin:8px 0}
+.nt-pkg{margin-top:12px}
+.nt-pkg h3,.nt-donehead{margin:14px 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--tx-dim)}
+#up-start.nt-blocked{box-shadow:0 0 0 2px var(--warn)}
+@media (max-width:700px){.nt-band{grid-template-columns:auto 1fr}.nt-acts{grid-column:1 / -1;flex-direction:row;flex-wrap:wrap}}
+/* Settings → Upgrades in the menu: how many are to be done by hand (4.5.0) -
+   a number on the corner of its icon, seen in the narrow menu too */
+.ctl-nav [data-pane="upgrade"]{position:relative}
+.nt-badge{position:absolute;top:2px;left:22px;display:inline-flex;align-items:center;justify-content:center;
+  min-width:17px;height:17px;padding:0 5px;border-radius:99px;font-size:10.5px;font-weight:700;line-height:1;
+  color:#fff;background:var(--warn);box-shadow:0 0 0 2px var(--panel,#0d1117);pointer-events:none}
+.nt-badge.nt-danger{background:var(--crit)}
+.nt-badge.nt-info{background:var(--info)}
+#nt-card.nt-has{border-color:rgba(248,81,73,.35)}
 
 /* ---- upsmon 4.4.0: the load of the server in the header (ai) ---- */
 /* How busy the server is, in the header (from ai 1.0.72-1.0.76). Uses the colour tokens of :root (below). */

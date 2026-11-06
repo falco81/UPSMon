@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.4.6'
+readonly INSTALLER_VERSION='4.5.0'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -161,6 +161,95 @@ confirm() {
     if [[ -n "$ASSUME_YES" ]]; then return 0; fi
     read -r -p "    $prompt [y/N]: " reply || true
     [[ ${reply,,} == y* ]]
+}
+
+# ---------------------------------------------------------------------------
+# What is to be done by hand (4.5.0): one way for everything this installer
+# cannot do itself and leaves to the administrator - said on every page of
+# Settings, on the dashboard, in the console and by `upsmon --notices` until it
+# is done. One JSON file per notice in $NOTICES_DIR; the daemon reads them.
+#   upsmon_notice ID LEVEL "title" "text" [command]... [--check KIND=VALUE]
+#   upsmon_notice_clear ID        (done - the notice goes)
+# LEVEL: danger, warn or info. --check: selinux=enforcing|permissive|disabled|
+# not-enforcing, file_exists=/path, file_missing=/path, unit_active=NAME,
+# unit_inactive=NAME, unit_enabled=NAME, unit_disabled=NAME - once it holds, the
+# notice is done by itself.
+# ---------------------------------------------------------------------------
+readonly NOTICES_DIR=/etc/upsmon/notices.d
+upsmon_notice() {
+    [[ -n "$DRY_RUN" ]] && { note "[would ask, to be done by hand] $3"; return 0; }
+    install -d -m 755 "$NOTICES_DIR" 2>/dev/null || return 0
+    python3 - "$NOTICES_DIR" "$@" <<'PY' || true
+import json, os, re, sys
+d, nid, level, title, text = sys.argv[1:6]
+rest = sys.argv[6:]
+cmds, check = [], None
+i = 0
+while i < len(rest):
+    if rest[i] == '--check' and i + 1 < len(rest):
+        k, _, v = rest[i + 1].partition('=')
+        check = {k: v}
+        i += 2
+        continue
+    cmds.append(rest[i])
+    i += 1
+if not re.match(r'^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$', nid):
+    sys.exit('upsmon_notice: a bad id')
+row = {'id': nid, 'level': level, 'title': title, 'text': text, 'commands': cmds}
+if check:
+    row['check'] = check
+tmp = os.path.join(d, '.%s.json.tmp' % nid)
+with open(tmp, 'w', encoding='utf-8') as f:
+    json.dump(row, f, ensure_ascii=False, indent=1)
+os.chmod(tmp, 0o644)
+os.replace(tmp, os.path.join(d, '%s.json' % nid))
+PY
+    warn "to be done by hand: $3"
+}
+upsmon_notice_clear() {
+    [[ -n "$DRY_RUN" ]] && return 0
+    rm -f -- "$NOTICES_DIR/$1.json" 2>/dev/null || true
+}
+# The notices a version ships (deploy/notices.json) between two versions, on
+# the terminal: WHEN is before or after. Says 1 when one of them is to be read
+# first (confirm).
+notices_show() {
+    local file=$1 from=$2 to=$3 when=$4
+    [[ -f "$file" ]] || return 0
+    python3 - "$file" "$from" "$to" "$when" "$C_BAD" "$C_WARN" "$C_HEAD" "$C_DIM" "$C_OFF" <<'PY'
+import json, sys
+f, lo, hi, when, bad, wrn, head, dim, off = sys.argv[1:10]
+def vt(v):
+    try:
+        return tuple(int(x) for x in v.split('.'))
+    except ValueError:
+        return (0,)
+try:
+    rows = json.load(open(f, encoding='utf-8'))
+    rows = rows.get('notices', []) if isinstance(rows, dict) else rows
+except Exception as e:
+    print('    (deploy/notices.json does not read: %s)' % e)
+    sys.exit(0)
+pick = [n for n in rows if isinstance(n, dict) and vt(lo or '0') < vt(str(n.get('since', '0'))) <= vt(hi)
+        and (n.get('when', 'after') in (when, 'both') or (when == 'before' and n.get('confirm')))]
+if not pick:
+    sys.exit(0)
+print('\n%s==> %s%s' % (head, 'Before it is put in, upsmon %s asks' % hi if when == 'before'
+                         else 'TO BE DONE BY HAND now - upsmon %s asks' % hi, off))
+confirm = False
+for n in pick:
+    c = bad if n.get('level') == 'danger' else wrn
+    print('    %s█ %s%s' % (c, n.get('title', ''), off))
+    for line in str(n.get('text', '')).splitlines():
+        if line.strip():
+            print('    %s█%s   %s' % (c, off, line))
+    for cmd in n.get('commands') or []:
+        print('    %s█%s   %s$ %s%s' % (c, off, head, cmd, off))
+    confirm = confirm or bool(n.get('confirm'))
+if when == 'after':
+    print('    %salso on every page of Settings and in `upsmon --notices` until it is done%s' % (dim, off))
+sys.exit(1 if confirm else 0)
+PY
 }
 
 usage() {
@@ -1019,6 +1108,10 @@ install_program() {
     # Root's helpers: what the pages ask of root, each started by its path unit.
     run install -m 700 "$SOURCE_DIR/deploy/upsmon_web.py" "$LIB_DIR/upsmon_web.py"
     run install -m 755 "$SOURCE_DIR/deploy/upsmon_upgrade.py" "$LIB_DIR/upsmon_upgrade.py"
+    # what this version asks to be done by hand (4.5.0), read by the daemon
+    [[ -f "$SOURCE_DIR/deploy/notices.json" ]] \
+        && run install -m 644 "$SOURCE_DIR/deploy/notices.json" "$LIB_DIR/notices.json"
+    run install -d -m 755 "$NOTICES_DIR"
     local doc
     for doc in INSTALL.md README.md CHANGELOG.md; do
         [[ -f "$SOURCE_DIR/$doc" ]] && run install -m 644 "$SOURCE_DIR/$doc" "$LIB_DIR/$doc"
@@ -1473,7 +1566,18 @@ configure_selinux() {
             return
         fi
         setsebool -P httpd_can_network_connect 1
-        semanage fcontext -a -t httpd_sys_content_t "$WEB_DIR(/.*)?" >/dev/null 2>&1 || true
+        if command -v semanage >/dev/null 2>&1; then
+            semanage fcontext -a -t httpd_sys_content_t "$WEB_DIR(/.*)?" >/dev/null 2>&1 || true
+            upsmon_notice_clear selinux-label
+        else
+            # Without semanage the label is not kept: a relabel of the system
+            # takes it away and the pages stop (4.5.0: said, not left silent).
+            upsmon_notice selinux-label warn \
+                "SELinux: the label of the pages is not kept" \
+                "semanage is not installed, so $WEB_DIR is labelled only until the next relabel of the system - after one, nginx may not read the pages. Install it and record the label:" \
+                "dnf install -y policycoreutils-python-utils" \
+                "semanage fcontext -a -t httpd_sys_content_t \"$WEB_DIR(/.*)?\" && restorecon -R $WEB_DIR"
+        fi
         restorecon -R "$WEB_DIR" "$CERT_DIR" "$NGINX_CONF" >/dev/null 2>&1 || true
         good "allowed php to reach the local APIs, and labelled $WEB_DIR and the certificates"
     fi
@@ -1635,6 +1739,12 @@ do_upgrade() {
     local previous
     previous=$(sed -n "s/^__version__ = '\([0-9.]*\)'.*/\1/p" "$LIB_DIR/upsmon.py" 2>/dev/null || echo unknown)
     say "upsmon ${previous:-unknown} → $NEW_VERSION"
+    # What the new version asks before it is put in (4.5.0). From the pages
+    # it was read and ticked there already.
+    if ! notices_show "$SOURCE_DIR/deploy/notices.json" "$previous" "$NEW_VERSION" before \
+            && [[ -z "${UPSMON_UPGRADE_FROM_PAGES:-}" ]]; then
+        confirm "Read it, and go on?" || { say "nothing changed"; exit 1; }
+    fi
     if [[ "$previous" == 3.* ]]; then
         note "from the standalone 3.x: the dashboard stays as it was, Settings comes"
         note "beside it - the configuration, the history and the certificate are kept"
@@ -1654,6 +1764,7 @@ do_upgrade() {
     start_service
     first_account
     say "was ${previous:-unknown}, now $(upsmon --version 2>/dev/null || echo unknown)"
+    notices_show "$SOURCE_DIR/deploy/notices.json" "$previous" "$NEW_VERSION" after || true
     note "the configuration and the recorded history were not touched"
     if [[ -n "$FIRST_PASSWORD" ]]; then
         local name

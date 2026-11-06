@@ -559,6 +559,14 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
   .maint-banner[hidden]{display:none}
   .maint-banner b{color:var(--warn)}
   .maint-banner .sub{display:block;color:var(--tx-dim);font-size:13px;margin-top:2px}
+  /* something to be done by hand on the server (4.5.0): how bad, never what */
+  .maint-banner.nt-warn,.maint-banner.nt-danger{border-left-width:4px;border-left-color:var(--warn);
+    background:linear-gradient(90deg,rgba(210,153,34,.16),rgba(210,153,34,.05) 70%)}
+  .maint-banner.nt-danger{border-color:rgba(248,81,73,.55);border-left-color:var(--crit);
+    background:linear-gradient(90deg,rgba(248,81,73,.17),rgba(248,81,73,.05) 70%)}
+  .maint-banner.nt-danger .dot{background:var(--crit)}
+  .maint-banner.nt-danger b{color:var(--crit)}
+  .maint-banner a{color:var(--info)}
 </style>
 </head>
 <body>
@@ -590,6 +598,7 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
 <?php endif; ?>
 
 <div class="maint-banner" id="maint-banner" role="status" hidden></div>
+<div class="maint-banner" id="nt-banner" role="alert" hidden></div>
 <div class="tabs" role="tablist">
   <button role="tab" aria-selected="true"  data-tab="overview">Overview</button>
   <button role="tab" aria-selected="false" data-tab="history">History</button>
@@ -3254,9 +3263,32 @@ function drawMaintenance(m) {
   box.hidden = false;
 }
 
+/* Something to be done by hand on the server (4.5.0) - a step an upgrade
+   needs, what the installer left: the dashboard says only that there is, and
+   how bad; what it is, is in Settings for whoever signs in. */
+function drawNotices(n) {
+  var box = $("nt-banner");
+  if (!box) return;
+  if (!n || !n.open || (n.level !== "danger" && n.level !== "warn")) { box.hidden = true; return; }
+  box.className = "maint-banner nt-" + n.level;
+  box.textContent = "";
+  var dot = document.createElement("span"); dot.className = "dot"; box.appendChild(dot);
+  var words = document.createElement("div");
+  var b = document.createElement("b");
+  b.textContent = n.open === 1 ? "Something on this server is to be done by hand" : "Things on this server are to be done by hand";
+  words.appendChild(b);
+  var sub = document.createElement("span"); sub.className = "sub";
+  sub.textContent = "What it is, the administrator sees in Settings, or on the server with upsmon --notices.";
+  words.appendChild(sub);
+  var a = document.createElement("a"); a.href = "/settings/"; a.className = "sub"; a.textContent = "Open Settings"; words.appendChild(a);
+  box.appendChild(words);
+  box.hidden = false;
+}
+
 function refresh() {
   return api("status").then(function (snap) {
     drawMaintenance(snap && snap.maintenance);
+    drawNotices(snap && snap.notices);
     if (!snap || snap.online === false) {
       var verdict = $("verdict");
       verdict.className = "pill crit";

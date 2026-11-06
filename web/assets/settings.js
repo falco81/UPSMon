@@ -3234,7 +3234,7 @@ function drawUpWeb(d) {
         confirmThen('Upgrade to upsmon ' + c.version + '?', htmlText('It is fetched from ' + (c.url || o.url) + ', its signature checked, and '
           + (many ? 'the nodes are upgraded one at a time - each in maintenance while it is, so the service never stops.' : 'this server is upgraded: for a minute the dashboard is away.')), 'Upgrade', function () {
           busy(up, true);
-          api('upgrade', {action: 'online_get', version: c.version, start: true}).then(function (x) { toast(x.message, 'good'); drawUpgrade(x); })
+          ntUpgrade({action: 'online_get', version: c.version, start: true}).then(function (x) { toast(x.message, 'good'); drawUpgrade(x); })
             .catch(oops).then(function () { busy(up, false); });
         }, false);
       };
@@ -3375,6 +3375,7 @@ function drawUpDown(d) {
 function drawUpgrade(d) {
   d = upSteady(d);
   UP.last = d;
+  try { ntPackage(d); } catch (e) { }
   /* The nodes. */
   liveFill($('up-nodes'), function (host) {
   /* By name, so the rows keep their places whichever node answered (1.0.70). */
@@ -3643,13 +3644,13 @@ if ($('up-drop')) {
       var names = (d.nodes || []).filter(function (n) { return n.alive; }).map(function (n) { return n.name; });
       var many = names.length > 1;
       if (p.downgrade) { upDownConfirm(p.version, function () {
-        api('upgrade', {action: 'start'}).then(function (r) { toast(r.message, 'good'); drawUpgrade(r); }).catch(oops);
+        ntUpgrade({action: 'start'}).then(function (r) { toast(r.message, 'good'); drawUpgrade(r); }).catch(oops);
       }); return; }
       confirmThen(many ? 'Upgrade every node to ' + p.version : 'Upgrade this server to ' + p.version,
         many ? 'One node at a time: it is taken out of service, upgraded, checked and brought back, and only then the next one. The VPN and the load balancer use the other node meanwhile.'
              : 'This server is the only one: while it is put in and restarted - a minute or two - the dashboard is away, and these pages stop answering for a moment.',
         'Upgrade', function () {
-          api('upgrade', {action: 'start'}).then(function (r) { toast(r.message, 'good'); drawUpgrade(r); }).catch(oops);
+          ntUpgrade({action: 'start'}).then(function (r) { toast(r.message, 'good'); drawUpgrade(r); }).catch(oops);
         }, !many);
     };
     $('up-forget').onclick = function () {
@@ -7835,6 +7836,226 @@ function hloadPickers(lsec) {
   };
 })();
 
+/* ---- what is to be done by hand (upsmon 4.5.0) ----------------------------
+   A step a new version needs on the command line, what the installer left to
+   the administrator: one banner on every page of Settings, loud, until it is
+   done (Done - a full administrator), or until its check holds. Settings →
+   Upgrades lists them with what was done lately, and before an upgrade shows
+   what the new version asks - the ones to be read first must be ticked. */
+var NT = {d: null, ack: {}, timer: null};
+function ntLang() { return (typeof numLang === 'function' && /^cs/.test(numLang())) ? 'cs' : 'en'; }
+function ntWords(n) {
+  var cs = n.cs || {};
+  if (ntLang() === 'cs' && cs.title) return [cs.title, cs.text || n.text || ''];
+  return [n.title, n.text || ''];
+}
+/* the whole sentence, so that it is said in Czech too */
+function ntCheckWords(chk) {
+  if (!chk) return '';
+  var k = Object.keys(chk)[0], v = chk[k];
+  var f = {selinux: 'This band goes by itself once SELinux is {0}.', file_exists: 'This band goes by itself once {0} is there.',
+           file_missing: 'This band goes by itself once {0} is gone.', unit_active: 'This band goes by itself once {0} runs.',
+           unit_inactive: 'This band goes by itself once {0} is stopped.', unit_enabled: 'This band goes by itself once {0} is switched on.',
+           unit_disabled: 'This band goes by itself once {0} is switched off.',
+           version_at_least: 'This band goes by itself once upsmon {0} or newer runs.'}[k];
+  return f ? f.replace('{0}', v) : '';
+}
+/* "Not now" (as isemon's bands): out of the way in this browser for a day, then
+   back - it is not done by that. */
+var NT_LATER = 'upsmon-nt-later';
+function ntLater() { try { return JSON.parse(localStorage.getItem(NT_LATER) || '{}') || {}; } catch (e) { return {}; } }
+function ntLaterSet(n) {
+  var l = ntLater(), now = Date.now();
+  Object.keys(l).forEach(function (k) { if (!(l[k] > now)) delete l[k]; });
+  l[n.id + ':' + (n.digest || '')] = now + 24 * 3600e3;
+  try { localStorage.setItem(NT_LATER, JSON.stringify(l)); } catch (e) { }
+}
+function ntIsLater(n) { var l = ntLater()[n.id + ':' + (n.digest || '')]; return l && l > Date.now(); }
+/* One notice: a band of its own - the same in the header of every page, on
+   Settings → Upgrades, and before an upgrade. */
+function ntOne(n, opts) {
+  opts = opts || {};
+  var w = ntWords(n);
+  var band = el('div', 'nt-band nt-' + (n.level || 'warn'));
+  var ic = el('span', 'nt-ic');
+  ic.innerHTML = iconMarkup({danger: 'close', warn: 'flag', info: 'info'}[n.level] || 'flag', 18);
+  band.appendChild(ic);
+  var body = el('div', 'nt-body');
+  body.appendChild(noI18n(el('div', 'nt-title', w[0])));
+  if (w[1]) {
+    var tx = noI18n(el('div', 'nt-text', ''));
+    w[1].split(/\n/).forEach(function (line) { if (line.trim()) tx.appendChild(el('p', '', line)); });
+    body.appendChild(tx);
+  }
+  if ((n.commands || []).length) {
+    body.appendChild(el('div', 'nt-as', 'As root, on the server:'));
+    n.commands.forEach(function (c) {
+      var box = el('div', 'nt-code');
+      box.appendChild(noI18n(el('code', 'mono', c)));
+      var cp = cmdButton('Copy', 'copy', 'small');
+      cp.onclick = function () { copyText(c, cp); };
+      box.appendChild(cp);
+      body.appendChild(box);
+    });
+  }
+  if (n.link) {
+    var a = noI18n(el('a', 'small', n.link)); a.href = n.link; a.target = '_blank'; a.rel = 'noopener';
+    body.appendChild(a);
+  }
+  var foot = [];
+  if (n.check) foot.push(ntCheckWords(n.check));
+  else if (opts.live && n.state === 'open') foot.push('Once it is done, press Done.');
+  if (opts.when) foot.push(opts.when);
+  foot.forEach(function (f, i) { body.appendChild(el('div', 'nt-foot' + (i ? ' small' : ''), f)); });
+  if (opts.tick) {
+    var lab = el('label', 'nt-ack');
+    var cb = el('input', ''); cb.type = 'checkbox'; cb.checked = !!NT.ack[n.id];
+    cb.onchange = function () { NT.ack[n.id] = cb.checked; if (typeof opts.tick === 'function') opts.tick(); };
+    lab.appendChild(cb);
+    lab.appendChild(el('span', '', 'I have read it, and will do what it says'));
+    body.appendChild(lab);
+  }
+  band.appendChild(body);
+  var acts = el('div', 'nt-acts');
+  if (opts.live && n.state === 'open' && NT.d && NT.d.may_change) {
+    if (n.check) {
+      var again = cmdButton('Look again', 'refresh', 'small');
+      again.onclick = function () { busy(again, true); api('notices', {do: 'check'}).then(function (d) { ntDraw(d); toast(d.message, 'good'); }).catch(oops).then(function () { busy(again, false); }); };
+      acts.appendChild(again);
+    }
+    var done = cmdButton('Done', 'check', 'small');
+    done.onclick = function () {
+      confirmThen('Is it done?', htmlText('“' + w[0] + '” is kept as done, with your name, and is not said any more.'), 'It is done', function () {
+        api('notices', {do: 'done', id: n.id}).then(function (d) { ntDraw(d); toast(d.message, 'good'); }).catch(oops);
+      }, false);
+    };
+    acts.appendChild(done);
+  }
+  if (opts.open) {
+    var op = cmdButton('Open it', 'gear', 'small');
+    op.onclick = function () { showPane('upgrade'); };
+    acts.appendChild(op);
+  }
+  if (opts.later) {
+    var later = cmdButton('Not now', 'close', 'small');
+    later.onclick = function () { ntLaterSet(n); ntDraw(); };
+    acts.appendChild(later);
+  }
+  if (acts.childNodes.length) band.appendChild(acts);
+  return band;
+}
+function ntDraw(d) {
+  NT.d = d || NT.d;
+  d = NT.d || {open: [], done: []};
+  /* Kept in Settings → Upgrades (4.5.0), not over the pages: the menu says how
+     many, in the colour of the worst. */
+  var nav = document.querySelector('#ctl-nav [data-pane="upgrade"]');
+  if (nav) {
+    var bdg = nav.querySelector('.nt-badge');
+    var open = d.open || [];
+    if (!open.length) { if (bdg) bdg.remove(); }
+    else {
+      if (!bdg) { bdg = noI18n(el('b', 'nt-badge', '')); nav.appendChild(bdg); }
+      bdg.className = 'nt-badge nt-' + (open[0].level || 'warn');
+      bdg.textContent = String(open.length);
+      bdg.title = 'To be done by hand';
+    }
+  }
+  var card = $('nt-card');
+  if (card) card.classList.toggle('nt-has', !!(d.open || []).length);
+  var list = $('nt-list');
+  if (list) {
+    clear(list);
+    if (!(d.open || []).length) list.appendChild(el('p', 'note good', 'Nothing is to be done by hand.'));
+    (d.open || []).forEach(function (n) { list.appendChild(ntOne(n, {live: true, when: n.raised_at ? fmtTime(n.raised_at) : ''})); });
+    if ((d.done || []).length) {
+      list.appendChild(el('h3', 'nt-donehead', 'Done lately'));
+      list.appendChild(listTable(['What', 'How', 'Who', 'When'], d.done.slice(0, 10), function (n) {
+        var tr = el('tr');
+        tr.appendChild(noI18n(el('td', '', ntWords(n)[0])));
+        tr.appendChild(el('td', 'muted', {done: 'done', resolved: 'done by itself', 'taken back': 'taken back'}[n.state] || n.state));
+        tr.appendChild(noI18n(el('td', '', n.closed_by || '–')));
+        tr.appendChild(stampCell(n.closed_at));
+        return tr;
+      }, 'plain'));
+    }
+  }
+}
+function fmtTime(ts) { try { return new Date(ts * 1000).toLocaleString(numLang()); } catch (e) { return ''; } }
+function ntLoad() {
+  if (!$('nt-list') || !ADMIN) return Promise.resolve();
+  return api('notices').then(ntDraw).catch(function () { });
+}
+function ntLoop() {
+  ntLoad();
+  clearInterval(NT.timer);
+  NT.timer = setInterval(function () { if (!document.hidden) ntLoad(); }, 60000);
+}
+/* Before an upgrade: what the package asks, between this version and it. */
+function ntPackage(d) {
+  var host = $('up-notices');
+  if (!host) return;
+  clear(host);
+  var p = (d && d.package) || {};
+  var rows = (p.notices || []).filter(function (n) { return n.when === 'before' || n.when === 'both' || n.confirm; });
+  var after = (p.notices || []).filter(function (n) { return n.when === 'after'; });
+  if (!rows.length && !after.length) return;
+  var box = el('div', 'nt-pkg');
+  if (rows.length) {
+    box.appendChild(el('h3', '', 'upsmon ' + p.version + ' asks, before it is put in'));
+    rows.forEach(function (n) { box.appendChild(ntOne(n, n.confirm ? {tick: ntStartState} : {})); });
+  }
+  if (after.length) {
+    box.appendChild(el('h3', '', 'and after it is in, it will ask'));
+    after.forEach(function (n) { box.appendChild(ntOne(n, {})); });
+  }
+  host.appendChild(box);
+  ntStartState();
+}
+function ntNeed() {
+  var p = ((typeof UP !== 'undefined' && UP.last) || {}).package || {};
+  return (p.notices || []).filter(function (n) { return n.confirm; });
+}
+function ntAcked() { return ntNeed().filter(function (n) { return NT.ack[n.id]; }).map(function (n) { return n.id; }); }
+function ntStartState() {
+  var st = $('up-start');
+  if (!st) return;
+  var left = ntNeed().length - ntAcked().length;
+  st.classList.toggle('nt-blocked', left > 0);
+  st.title = left > 0 ? 'Read what the new version asks first, and tick it' : '';
+}
+/* Every upgrade from these pages goes through here: what is to be read first
+   is asked in a window when it was not ticked - also after the package was
+   fetched from the web in the same click. */
+function ntUpgrade(body) {
+  body = Object.assign({}, body, {ack: ntAcked()});
+  return api('upgrade', body).catch(function (e) {
+    if (!(e && e.status === 409 && e.detail === 'notices')) throw e;
+    return api('upgrade').then(function (v) {
+      if (typeof drawUpgrade === 'function') drawUpgrade(v);
+      return ntAskFirst(v);
+    });
+  });
+}
+function ntAskFirst(v) {
+  var p = (v && v.package) || {};
+  var need = (p.notices || []).filter(function (n) { return n.confirm; });
+  return new Promise(function (res, rej) {
+    var go = null;
+    var tick = function () { if (go) go.disabled = need.some(function (n) { return !NT.ack[n.id]; }); };
+    modal('Before upsmon ' + p.version + ' is put in', function (body) {
+      body.appendChild(el('p', 'note', 'This version asks for something to be read first - and done, by hand. Tick each one to go on.'));
+      need.forEach(function (n) { body.appendChild(ntOne(n, {tick: tick})); });
+    }, [{words: 'Not now', close: true, go: function () { rej(new Error('nothing is put in yet - the package stays, ready')); }},
+        {words: 'Upgrade', cls: 'primary', go: function () {
+          closeModal();
+          api('upgrade', {action: 'start', ack: ntAcked()}).then(res, rej);
+        }, once: true}]);
+    go = [].slice.call(document.querySelectorAll('#modal .btn')).filter(function (x) { return /Upgrade|Aktualizovat/.test(x.textContent); }).pop() || null;
+    tick();
+  });
+}
+
 /* ======== helpers of the panes above, from OTP admin.js ======== */
 var MODAL_GO = null;
 
@@ -8369,6 +8590,7 @@ function dnParts(dn) {
   showTab(h[0] || 'settings');
   setInterval(tick, 5000);
   if (typeof hloadLoop === 'function') hloadLoop();
+  if (typeof ntLoop === 'function') ntLoop();
   explainWhatWasDrawn(document);
   /* A link to #settings/dir, or Back: the page follows the address. */
   window.addEventListener('hashchange', function () {
