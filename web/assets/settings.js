@@ -507,7 +507,8 @@ function showPane(name) {
   if (name === 'about') drawAbout();
   if (name === 'upgrade') loadUpgrade();
   if (name === 'proxy') drawProxy();
-  if (name === 'web') loadWeb();
+  if (name === 'web') { loadWeb(); if (typeof osrLoad === 'function') osrLoad(); }
+  if (name === 'selinux') loadSelinux(); else if (typeof sePoll === 'function') sePoll(false);
   /* The save bar where there is a setting to save, and nowhere else - a page
      of clients or directories saves each one in its own window. */
   markDirtyCount();
@@ -8076,6 +8077,483 @@ function ntAskFirst(v) {
     go = [].slice.call(document.querySelectorAll('#modal .btn')).filter(function (x) { return /Upgrade|Aktualizovat/.test(x.textContent); }).pop() || null;
     tick();
   });
+}
+
+/* ---- Settings → SELinux (upsmon 4.6.0, as upsmon 1.0.265 - one server) -------------------
+   The mode now and after a restart, what upsmon needs of it (its module, the labels of its
+   files, the booleans) and what SELinux refused since the machine started. The steps - made
+   ready and permissive, what upsmon needs put in, enforcing, permissive again - are asked and
+   done by the root helper; nothing happens by itself. */
+var SE = {d: null, poll: null};
+function loadSelinux() {
+  if (!$('se-host')) return;
+  api('selinux').then(function (d) { SE.d = d; drawSelinux(); sePoll(seBusy(d)); }).catch(function (e) {
+    var host = $('se-host');
+    if (host) { clear(host); host.appendChild(el('p', 'note bad', String((e && e.message) || e))); }
+  });
+}
+function seSaveFile(name, b64, mime) {
+  var bin = atob(b64), bytes = new Uint8Array(bin.length);
+  for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  var a = el('a');
+  a.href = URL.createObjectURL(new Blob([bytes], {type: mime || 'application/octet-stream'}));
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function seReport(btn) {
+  /* A report new since the ask, by the server's own clock - asked, waited for (3 min at
+     most), then taken as one file. Nothing is changed to make it. */
+  var end = Date.now() + 180000, me = ((SE.d && SE.d.nodes) || [{}])[0].name;
+  var before = Number((((SE.d && SE.d.reports) || {})[me] || {}).at) || 0;
+  busy(btn, true);
+  SE.rep = {words: 'asking for the report…'};
+  drawSelinux();
+  api('selinux', {action: 'report'}).then(function () {
+    return new Promise(function (done) {
+      (function tick() {
+        api('selinux').then(function (d) {
+          SE.d = d;
+          var r = (d.reports || {})[me];
+          var ready = r && Number(r.at) > before;
+          SE.rep = {words: ready ? 'the report is made' : 'the report is being made - a minute or two…'};
+          drawSelinux();
+          if (ready || Date.now() > end) return done();
+          setTimeout(tick, 3000);
+        }).catch(function () { setTimeout(tick, 3000); });
+      })();
+    });
+  }).then(function () {
+    return api('selinux', {action: 'download'});
+  }).then(function (x) {
+    seSaveFile(x.name, x.file, x.mime || 'application/gzip');
+    SE.rep = {words: 'Downloaded. Look through avc*.txt in it before sending it on: the audit log holds the command lines of the programs SELinux refused something to.'};
+    drawSelinux();
+  }).catch(function (e) { SE.rep = {words: String((e && e.message) || e), bad: true}; drawSelinux(); oops(e); })
+    .then(function () { busy(btn, false); });
+}
+function seBusy(d) {
+  return ((d && d.nodes) || []).some(function (n) { return !!n.pending || !(n.state && n.state.mode); });
+}
+function sePoll(on) {
+  if (on && !SE.poll) SE.poll = setInterval(function () {
+    if (TAB !== 'settings' || PANE !== 'selinux') { sePoll(false); return; }
+    api('selinux').then(function (d) { SE.d = d; drawSelinux(); if (!seBusy(d)) sePoll(false); }).catch(function () {});
+  }, 2000);
+  if (!on && SE.poll) { clearInterval(SE.poll); SE.poll = null; }
+}
+function seAsk(n, action) {
+  return api('selinux', {action: action}).then(function (r) {
+    toast(r.message, 'good');
+    setTimeout(loadSelinux, 800);
+  }).catch(oops);
+}
+function seModeWords(m) {
+  return {Enforcing: 'enforcing', Permissive: 'permissive', Disabled: 'disabled', absent: 'not on this machine'}[m] || 'not said yet';
+}
+function seRow(list, good, words, more) {
+  var r = el('div', 'se-row');
+  r.appendChild(el('span', 'dot ' + (good === true ? 'ok' : good === false ? 'bad' : 'warn')));
+  var t = el('div', 'se-row-t');
+  t.appendChild(el('span', '', words));
+  if (more) t.appendChild(more);
+  r.appendChild(t);
+  list.appendChild(r);
+}
+function drawSelinux() {
+  var host = $('se-host');
+  if (!host || !SE.d) return;
+  clear(host);
+  var c = el('div', 'card full se-card');
+  var h = el('h2', '', 'SELinux');
+  var tl = el('span', 'right');
+  var look = cmdButton('Look again', 'refresh', 'small');
+  look.onclick = function () {
+    busy(look, true);
+    api('selinux', {action: 'check'}).then(function () { setTimeout(loadSelinux, 800); }).catch(oops).then(function () { busy(look, false); });
+  };
+  tl.appendChild(look);
+  /* What whoever writes upsmon's module needs - nothing is changed to make it. */
+  var rep = cmdButton('Download the report', 'download', 'small');
+  rep.onclick = function () { seReport(rep); };
+  tl.appendChild(rep);
+  h.appendChild(tl);
+  c.appendChild(h);
+  if (SE.rep) c.appendChild(el('p', 'note small se-rep' + (SE.rep.bad ? ' bad' : ''), SE.rep.words));
+  c.appendChild(el('p', 'note', 'What SELinux refuses to the web server and the rest when it is enforcing - and what upsmon needs of it here. Nothing changes here unless asked: disabled stays disabled. On the server: upsmon --selinux-check.'));
+  var grid = el('div', 'se-grid');
+  (SE.d.nodes || []).forEach(function (n) { grid.appendChild(seNode(n)); });
+  c.appendChild(grid);
+  host.appendChild(c);
+}
+function seNode(n) {
+  var s = n.state || {};
+  var m = s.mode || '';
+  var box = el('div', 'se-node se-' + (m || 'unknown').toLowerCase());
+  var head = el('div', 'se-head');
+  var nm = el('div', 'se-name');
+  nm.appendChild(noI18n(el('b', '', n.name)));
+  if (n.me) nm.appendChild(el('span', 'tag info', 'this one'));
+  head.appendChild(nm);
+  head.appendChild(el('span', 'se-mode', seModeWords(m)));
+  box.appendChild(head);
+  if (s.config && m !== 'absent' && s.config.toLowerCase() !== (m || '').toLowerCase() && (m !== 'Disabled' || s.relabel_pending))
+    box.appendChild(el('p', 'se-next', 'After the next restart of the machine: ' + seModeWords(s.config.charAt(0).toUpperCase() + s.config.slice(1))));
+  if (s.relabel_pending) box.appendChild(el('p', 'se-next', 'Every file is labelled at the next start - it takes a few minutes before the machine answers.'));
+  if (s.cmdline_off) box.appendChild(el('p', 'note bad small', 'The kernel\'s command line has selinux=0 - it stays off whatever the configuration says.'));
+  if (n.pending) {
+    var w = el('div', 'se-wait');
+    w.appendChild(el('span', 'spin'));
+    w.appendChild(el('span', '', {check: 'looking…', prepare: 'making it ready…', enforce: 'switching to enforcing…', permissive: 'switching to permissive…', report: 'making its report…'}[n.pending] || 'asked…'));
+    box.appendChild(w);
+  }
+  if (!m) {
+    box.appendChild(el('p', 'muted small', 'Not said yet - the server looks within a minute.'));
+    return box;
+  }
+  if (m === 'absent') {
+    box.appendChild(el('p', 'note', 'There is no SELinux on this machine - nothing to do.'));
+    return box;
+  }
+  var made = m === 'Disabled' && /^(permissive|enforcing)$/i.test(s.config || '') && !!s.relabel_pending;
+  if (made) {
+    var v = el('div', 'se-verdict ready');
+    v.appendChild(el('b', '', 'Made ready - waiting for a restart of the machine'));
+    v.appendChild(el('span', 'small', 'Restart it when it suits (Settings → Restart and power off). It comes up permissive; then look here again.'));
+    box.appendChild(v);
+  } else if (m === 'Disabled') {
+    if (/^(permissive|enforcing)$/i.test(s.config || '') && !s.cmdline_off)
+      box.appendChild(el('p', 'note small', 'The configuration says ' + s.config.toLowerCase() + ', but the kernel does not start SELinux - it is not switched on for it (the kernel\'s command line, or the distribution\'s own step such as selinux-activate).'));
+    box.appendChild(el('p', 'note', 'Disabled - upsmon runs as always. Made ready, it comes up permissive at the next restart of the machine: nothing is refused yet, only written down, and upsmon\'s own needs are put in. Enforcing comes after, once nothing was refused.'));
+  } else {
+    var list = el('div', 'se-list');
+    seRow(list, s.module === true ? true : s.module === false ? false : null,
+          s.module === false ? 'upsmon\'s module (upsmon_server) is not installed' : 'upsmon\'s module (upsmon_server) installed');
+    (s.labels || []).forEach(function (x) {
+      seRow(list, x.ok, x.why, noI18n(el('span', 'mono small se-what', x.path + '  ' + (x.label || '?') + (x.ok ? '' : '  →  ' + x.want))));
+    });
+    (s.booleans || []).forEach(function (x) {
+      seRow(list, x.on, x.why, noI18n(el('span', 'mono small se-what', x.name + ' = ' + (x.on ? 'on' : 'off'))));
+    });
+    (s.ports || []).forEach(function (x) {
+      seRow(list, x.labelled, x.why, noI18n(el('span', 'mono small se-what', x.port + '/' + x.proto + '  ' + x.type)));
+    });
+    var d = s.denials || {};
+    seRow(list, d.tool ? !d.total : null, !d.tool ? 'What SELinux refused cannot be read: ausearch is not on this machine (dnf install audit)'
+      : d.since ? (d.total ? 'SELinux refused ' + num(d.total) + ' thing(s) since upsmon\'s needs were put in' : 'Nothing refused since upsmon\'s needs were put in')
+      : d.total ? 'SELinux refused ' + num(d.total) + ' thing(s) since the machine started' : 'Nothing refused since the machine started');
+    if (d.tool && d.settled) seRow(list, true, num(d.settled) + ' refused before, allowed now - by a newer upsmon_server or a boolean put in since; not counted');
+    if (s.auditd === false) seRow(list, false, 'auditd does not run - what SELinux refuses is not written down (systemctl enable --now auditd)');
+    box.appendChild(list);
+    if ((d.groups || []).length) {
+      var det = el('details', 'se-avc');
+      det.appendChild(el('summary', '', 'What was refused (' + num(d.groups.length) + ')'));
+      var t = el('table', 'se-avc-t');
+      d.groups.forEach(function (g) {
+        var tr = el('tr', '');
+        tr.appendChild(el('td', 'num', num(g.count) + '×'));
+        tr.appendChild(noI18n(el('td', 'mono small', g.source + ' → ' + g.target + ' ' + g['class'] + ' { ' + g.perms + ' }')));
+        tr.appendChild(noI18n(el('td', 'mono small muted', g.what || '')));
+        t.appendChild(tr);
+      });
+      det.appendChild(t);
+      box.appendChild(det);
+    }
+    var probs = s.problems || [];
+    /* Refused, and nothing upsmon knows to put in: "Put in what upsmon needs" changes nothing
+       then - the report is what tells how. */
+    var known = s.module !== false && !(s.labels || []).some(function (x) { return x.ok === false; }) &&
+      !(s.booleans || []).some(function (x) { return x.on === false; }) &&
+      !(s.ports || []).some(function (x) { return x.labelled === false; });
+    if (d.total && known) {
+      var hint = el('div', 'se-verdict bad');
+      hint.appendChild(el('b', '', 'upsmon does not know this one yet'));
+      hint.appendChild(el('span', 'small', 'Everything upsmon knows it needs is in place - what was refused is something its module does not cover yet. "Put in what upsmon needs" changes nothing for it: download the report (top right) and send it, so that the module learns it.'));
+      box.appendChild(hint);
+    }
+    var verdict = el('div', 'se-verdict ' + (m === 'Enforcing' && !probs.length ? 'good' : s.ready ? 'ready' : probs.length ? 'bad' : ''));
+    verdict.appendChild(el('b', '', m === 'Enforcing' ? (probs.length ? 'Enforcing - but something is not as upsmon needs it' : 'Enforcing - and everything upsmon needs is there')
+      : s.ready ? 'Ready for enforcing' : 'Not ready for enforcing yet'));
+    if (m === 'Permissive' && !s.ready) verdict.appendChild(el('span', 'small', 'Let it run a day or two as it is used - the pages, a backup, an upgrade - then look again.'));
+    box.appendChild(verdict);
+  }
+  if (n.error) box.appendChild(el('p', 'note bad', n.error));
+  else if ((n.said || []).length && n.action !== 'check') {
+    var sd = el('ul', 'note good small se-said');
+    n.said.forEach(function (x) { sd.appendChild(el('li', '', x)); });
+    box.appendChild(sd);
+  }
+  if (n.at) box.appendChild(el('p', 'muted small', 'Looked at ' + new Date(n.at * 1000).toLocaleString(numLang())));
+  var row = el('div', 'btnrow se-btns');
+  if ((m === 'Disabled' && !made) || m === 'Permissive') {
+    var prep = cmdButton(m === 'Disabled' ? 'Make it ready (permissive)' : 'Put in what upsmon needs', 'shield', m === 'Disabled' ? 'primary' : '');
+    prep.disabled = !!n.pending;
+    prep.onclick = function () {
+      confirmThen(m === 'Disabled' ? 'Make SELinux ready?' : 'Put in what upsmon needs?',
+        htmlText(m === 'Disabled'
+          ? 'The configuration says permissive and every file is labelled at the next start of the machine; upsmon\'s module goes in. Nothing is refused while permissive - SELinux only writes down what it would refuse. The machine is not restarted now: restart it when it suits (Settings → Restart and power off).'
+          : 'upsmon\'s module, the labels of its files and the booleans it needs are put in. Still permissive: nothing is refused.'),
+        m === 'Disabled' ? 'Make it ready' : 'Put it in', function () { seAsk(n, 'prepare'); }, false);
+    };
+    row.appendChild(prep);
+  }
+  if (m === 'Permissive') {
+    var enf = cmdButton('Switch to enforcing', 'lock', s.ready ? 'primary' : '');
+    enf.disabled = !!n.pending || !s.ready;
+    if (!s.ready) enf.title = 'Once nothing is missing and nothing was refused';
+    enf.onclick = function () {
+      confirmThen('Switch to enforcing?', htmlText('From now on SELinux refuses what its policy does not allow - and stays enforcing after a restart. Nothing upsmon needs is missing and nothing was refused since the machine started. If something stops working, "Back to permissive" here (or setenforce 0 on the machine) undoes it at once.'),
+        'Switch to enforcing', function () { seAsk(n, 'enforce'); }, true);
+    };
+    row.appendChild(enf);
+  }
+  if (m === 'Enforcing') {
+    var back = cmdButton('Back to permissive', 'undo', '');
+    back.disabled = !!n.pending;
+    back.onclick = function () {
+      confirmThen('Back to permissive?', htmlText('SELinux no longer refuses anything - it only writes down what it would refuse - now and after a restart.'),
+        'Back to permissive', function () { seAsk(n, 'permissive'); }, false);
+    };
+    row.appendChild(back);
+  }
+  if (row.childNodes.length) box.appendChild(row);
+  return box;
+}
+
+/* ---- Settings → Certificates and TLS → Trusted roots of the system (upsmon 4.6.0) --------
+   Certificate authorities of one's own put into the trust of the operating system - by the
+   system's own way of adding to it (update-ca-trust, update-ca-certificates), the
+   distribution's list left as it is and kept coming with its updates. */
+var OSR = {d: null, n: 0, until: 0, timer: null};
+function osrLoad(live) {
+  if (!$('osr-host')) return;
+  if (!OSR.timer) OSR.timer = setInterval(function () {
+    if (TAB !== 'settings' || PANE !== 'web' || document.hidden) return;
+    osrTick();
+  }, 5000);
+  apiLatest('osroots', 'osroots').then(function (d) {
+    OSR.d = d;
+    if (live) liveRun(drawOsRoots); else drawOsRoots();
+  }).catch(function (e) { if (!live) { var h = $('osr-host'); if (h) { clear(h); h.appendChild(el('p', 'note bad', String((e && e.message) || e))); } } });
+}
+/* Asked every 5 s while the server is still at it or for 90 s after a change, else every 30 s. */
+function osrTick() {
+  OSR.n += 1;
+  var busyNow = OSR.d && (OSR.d.nodes || []).some(function (n) { return n.status === 'waiting'; });
+  if (busyNow || Date.now() < OSR.until || OSR.n % 6 === 0) osrLoad(true);
+}
+function osrStatusTag(n) {
+  var w = {applied: ['good', 'as wanted'], waiting: ['warn', 'waiting'], failed: ['bad', 'failed'],
+           none: ['dim', 'nothing added by upsmon']}[n.status] || ['dim', n.status || '?'];
+  return el('span', 'tag ' + w[0], w[1]);
+}
+function osrDay(ts) { return ts ? new Date(ts * 1000).toLocaleDateString(numLang()) : '?'; }
+function osrSave(text, name) {
+  var a = el('a');
+  a.href = URL.createObjectURL(new Blob([text], {type: 'application/x-pem-file'}));
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function drawOsRoots() {
+  var real = $('osr-host');
+  if (!real || !OSR.d) return;
+  liveFill(real, function (host) {
+    var d = OSR.d, nodes = d.nodes || [], certs = d.certs || [];
+    var tools = el('div', 'btnrow');
+    tools.style.margin = '0 0 12px';
+    if (ADMIN) {
+      var add = cmdButton('Add an authority', 'upload', 'primary small');
+      explain(add, 'A root or an intermediate certificate authority of your own - pasted as PEM, or a .pem, .crt or .cer file; a file with a chain adds each authority in it.');
+      add.onclick = osrAdd;
+      add.disabled = certs.length >= (d.max || 50);
+      tools.appendChild(add);
+      var again = cmdButton('Read it again', 'refresh', 'small');
+      again.onclick = function () {
+        busy(again, true);
+        api('osroots', {action: 'refresh'}).then(function (x) { toast(x.message, 'good'); OSR.until = Date.now() + 90000; })
+          .catch(oops).then(function () { busy(again, false); });
+      };
+      tools.appendChild(again);
+      host.appendChild(tools);
+    }
+    if (!certs.length) {
+      host.appendChild(el('p', 'note', 'upsmon has added none - this server trusts its system\'s own list alone.'));
+    } else {
+      host.appendChild(listTable(['Authority', 'Issued by', 'Valid', 'Key', 'SHA-256', ''], certs, function (c) {
+        var tr = el('tr');
+        var t = el('td');
+        t.appendChild(noI18n(el('b', '', c.cn || '?')));
+        t.appendChild(document.createTextNode(' '));
+        t.appendChild(el('span', 'tag ' + (c.kind === 'root' ? 'info' : 'dim'), c.kind === 'root' ? 'root' : 'intermediate'));
+        var days = daysLeft(c.not_after);
+        if (days !== null && days < 0) t.appendChild(el('span', 'tag bad', 'ran out'));
+        else if (days !== null && days < 60) t.appendChild(el('span', 'tag warn', days + ' days left'));
+        (c.warn || []).forEach(function (w) { t.appendChild(el('div', 'small warn', w)); });
+        tr.appendChild(t);
+        tr.appendChild(noI18n(el('td', 'small', c.kind === 'root' ? '' : String(c.issuer || '').replace(/^.*?CN=/, '').split(',')[0])));
+        tr.appendChild(el('td', 'small', osrDay(c.not_before) + ' – ' + osrDay(c.not_after)));
+        tr.appendChild(noI18n(el('td', 'small', c.key || '?')));
+        var fp = noI18n(el('td', 'mono small', String(c.fp || '').slice(0, 16) + '…'));
+        copyOnClick(fp, c.fp, 'the SHA-256 fingerprint is copied');
+        tr.appendChild(fp);
+        var act = el('td', 'right rowtools');
+        var dl = iconButton('download', 'Download it (PEM)');
+        dl.onclick = function () { osrSave(c.pem, String(c.cn || 'ca').replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 60) + '.pem'); };
+        act.appendChild(dl);
+        if (ADMIN) {
+          var rm = iconButton('trash', 'Take it out of the system\'s trust');
+          rm.onclick = function () { osrRemove(c); };
+          act.appendChild(rm);
+        }
+        tr.appendChild(act);
+        return tr;
+      }, 'plain'));
+    }
+    var py = (nodes[0] || {}).python || d.python || {};
+    if (py.cafile || py.capath) {
+      host.appendChild(el('p', 'muted small', py.system
+        ? 'upsmon\'s own connections (mail, ACME, the remote backups, the new versions) use the system\'s list too - what is added here reaches them at their next connection.'
+        : 'upsmon\'s own connections do not use the system\'s list here (' + (py.cafile || py.capath) + ') - what is added here does not reach them.'));
+    }
+    var grid = el('div', 'pw-grid');
+    grid.style.marginTop = '16px';
+    nodes.forEach(function (n) {
+      var c = el('div', 'card pw-node');
+      var hd = el('div', 'pw-head');
+      hd.appendChild(el('span', 'dot ok'));
+      hd.appendChild(noI18n(el('b', '', n.name)));
+      if (n.me) hd.appendChild(el('span', 'tag info', 'this page'));
+      hd.appendChild(osrStatusTag(n));
+      c.appendChild(hd);
+      if (n.why) c.appendChild(el('p', 'note ' + (n.status === 'failed' ? 'bad' : 'warn'), n.why));
+      var s = n.system || {};
+      c.appendChild(netFacts([
+        ['The system\'s own list', s.count ? s.count + ' authorities' : (s.missing ? 'not there' : '?')],
+        ['Its package', s.package || '–', true],
+        ['Made last', s.at ? ago(s.at) : '–'],
+        ['Local additions in', n.dir || '–', true],
+        ['Made by', n.tool ? n.tool + (n.tool_there === false ? ' (not on this machine)' : '') : '–', true],
+        ['upsmon\'s additions there', String((n.ours || []).length)],
+        ['Read', n.at ? ago(n.at) : 'not yet']
+      ]));
+      var others = n.others || [];
+      if (others.length) {
+        c.appendChild(el('div', 'k small muted', 'Added by somebody else - upsmon leaves them as they are:'));
+        var ul = el('ul', 'small');
+        ul.style.margin = '4px 0 0 18px';
+        others.slice(0, 40).forEach(function (o) {
+          var li = el('li');
+          li.appendChild(noI18n(el('span', 'mono', o.file || '?')));
+          var cs = o.certs || [];
+          if (cs.length) {
+            li.appendChild(noI18n(el('span', '', ' - ' + cs.map(function (x) { return (x.cn || '?'); }).join(', '))));
+            cs.forEach(function (x) {
+              li.appendChild(document.createTextNode(' '));
+              li.appendChild(el('span', 'tag dim', x.kind === 'root' ? 'root' : (x.ca ? 'intermediate' : 'not an authority')));
+            });
+          } else if (o.link) {
+            li.appendChild(el('span', 'muted', ' - a link'));
+          } else {
+            li.appendChild(el('span', 'muted', ' - no certificate read'));
+          }
+          ul.appendChild(li);
+        });
+        c.appendChild(ul);
+      }
+      grid.appendChild(c);
+    });
+    host.appendChild(grid);
+  });
+}
+/* A file as it comes: PEM as it is; DER (.cer) made PEM here, its bytes base64'd. */
+function osrFileText(buf) {
+  var bytes = new Uint8Array(buf);
+  var head = '';
+  for (var i = 0; i < Math.min(bytes.length, 4096); i++) head += String.fromCharCode(bytes[i]);
+  if (head.indexOf('-----BEGIN') >= 0) return new TextDecoder('ascii').decode(bytes);
+  var bin = '';
+  for (var j = 0; j < bytes.length; j++) bin += String.fromCharCode(bytes[j]);
+  var b64 = btoa(bin).replace(/(.{64})/g, '$1\n').replace(/\n$/, '');
+  return '-----BEGIN CERTIFICATE-----\n' + b64 + '\n-----END CERTIFICATE-----\n';
+}
+function osrAdd() {
+  var area, seen, timer = null, checked = '';
+  modal('Add to the system\'s trust', function (body) {
+    body.appendChild(el('p', 'note', 'A certificate authority of your own - a root, or an intermediate - as PEM (-----BEGIN CERTIFICATE-----), or a .pem, .crt or .cer file. A chain adds every authority in it. Only authorities are taken (CA:TRUE), never a private key.'));
+    body.appendChild(el('p', 'note', 'Every program of this server trusts what they sign from then on.'));
+    area = noI18n(el('textarea', 'mono osr-area'));
+    area.rows = 8; area.spellcheck = false; area.placeholder = '-----BEGIN CERTIFICATE-----';
+    body.appendChild(area);
+    var fr = el('div', 'btnrow');
+    fr.style.margin = '8px 0 4px';
+    var pickB = cmdButton('Read a file…', 'upload', 'small');
+    var input = el('input'); input.type = 'file'; input.hidden = true;
+    input.accept = '.pem,.crt,.cer,.der,.cert,.ca-bundle';
+    pickB.onclick = function () { input.click(); };
+    input.onchange = function () {
+      var f = input.files && input.files[0];
+      if (!f) return;
+      if (f.size > 1048576) { toast('that file is far bigger than certificates are', 'warn'); return; }
+      var r = new FileReader();
+      r.onload = function () { area.value = osrFileText(r.result); look(); };
+      r.readAsArrayBuffer(f);
+    };
+    fr.appendChild(pickB); fr.appendChild(input);
+    body.appendChild(fr);
+    seen = el('div', 'osr-seen');
+    body.appendChild(seen);
+    var look = function () {
+      var text = area.value.trim();
+      if (text === checked) return;
+      checked = text;
+      clear(seen);
+      if (!text) return;
+      api('osroots', {action: 'check', text: text}).then(function (x) {
+        if (area.value.trim() !== text) return;
+        clear(seen);
+        (x.certs || []).forEach(function (c) {
+          var box = el('div', 'note osr-one');
+          box.appendChild(noI18n(el('b', '', c.cn || '?')));
+          box.appendChild(document.createTextNode(' '));
+          box.appendChild(el('span', 'tag ' + (c.refused.length ? 'bad' : (c.already ? 'dim' : 'good')),
+            c.refused.length ? 'not taken' : (c.already ? 'there already' : (c.kind === 'root' ? 'root' : 'intermediate'))));
+          box.appendChild(noI18n(el('div', 'muted small', 'SHA-256 ' + c.fp)));
+          box.appendChild(el('div', 'small', 'valid ' + osrDay(c.not_before) + ' – ' + osrDay(c.not_after) + ' · ' + (c.key || '?')));
+          c.refused.forEach(function (w) { box.appendChild(el('div', 'small bad', w)); });
+          c.warn.forEach(function (w) { box.appendChild(el('div', 'small warn', w)); });
+          seen.appendChild(box);
+        });
+      }).catch(function (e) {
+        if (area.value.trim() !== text) return;
+        clear(seen);
+        seen.appendChild(el('p', 'note bad', (e && e.message) || String(e)));
+      });
+    };
+    area.oninput = function () { clearTimeout(timer); timer = setTimeout(look, 400); };
+    setTimeout(function () { area.focus(); }, 60);
+  }, [{words: 'Cancel', close: true}, {words: 'Add them', cls: 'primary', icon: 'add', go: function (b) {
+    busy(b, true);
+    api('osroots', {action: 'add', text: area.value.trim()}).then(function (x) {
+      closeModal();
+      toast(x.message, 'good');
+      OSR.until = Date.now() + 90000;
+      osrLoad();
+    }).catch(function (e) { busy(b, false); oops(e); });
+  }}], 'medium');
+}
+function osrRemove(c) {
+  confirmThen('Take it out of the system\'s trust',
+    htmlText('What ' + (c.cn || '?') + ' (SHA-256 ' + String(c.fp).slice(0, 16) + '…) signs is no longer trusted by this server - unless the system\'s own list has it. Connections that rely on it (LDAPS, mail, syslog…) fail from their next start.'),
+    'Take it away', function () {
+      api('osroots', {action: 'remove', fp: c.fp}).then(function (x) {
+        toast(x.message, 'good');
+        OSR.until = Date.now() + 90000;
+        osrLoad();
+      }).catch(oops);
+    }, true);
 }
 
 /* ======== helpers of the panes above, from OTP admin.js ======== */

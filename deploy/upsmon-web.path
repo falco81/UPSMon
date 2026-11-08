@@ -2,11 +2,12 @@
 #
 # Watches for what the settings pages ask of root: the certificate and TLS of
 # nginx, port 80 answering the ACME CA, the console at login, the time
-# (chrony), the updates of the system, a restart or a power-off. The upsmon
+# (chrony), the updates of the system, a restart or a power-off, SELinux and the
+# system's trusted roots. The upsmon
 # service lays the request down in /var/lib/upsmon/web/ and this starts
 # upsmon-web.service, which checks every value of it and does it as root.
 [Unit]
-Description=upsmon - TLS of nginx, the time, the updates of the system, restart and power off, the console at login, asked for on the pages
+Description=upsmon - TLS of nginx, the time, the updates of the system, restart and power off, the console at login, SELinux and the system's trusted roots, asked for on the pages
 
 [Path]
 PathExists=/var/lib/upsmon/web/request.json
@@ -14,6 +15,8 @@ PathExists=/var/lib/upsmon/web/console.ask
 PathExists=/var/lib/upsmon/web/net.ask
 PathExists=/var/lib/upsmon/web/ntp.ask
 PathExists=/var/lib/upsmon/web/osup.ask
+PathExists=/var/lib/upsmon/web/selinux.ask
+PathExists=/var/lib/upsmon/web/osroots.ask
 Unit=upsmon-web.service
 TriggerLimitIntervalSec=0
 

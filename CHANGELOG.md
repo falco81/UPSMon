@@ -4,6 +4,39 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.6.0 - 2026-11-08
+
+From otp 1.0.265 ("SELinux support and the system's trusted roots"), for one server.
+
+- **Settings -> SELinux** (a new pane): how SELinux is here and what upsmon needs of
+  it - its module, the labels of its files, the booleans - and what SELinux refused
+  since the machine started, or since upsmon's needs were put in. The way to
+  enforcing one step at a time: Make it ready (permissive at the next restart, every
+  file labelled), Put in what upsmon needs, Switch to enforcing (refused while
+  anything is missing, anything was refused or auditd does not run), Back to
+  permissive. Nothing changes unless asked: a machine with SELinux disabled stays so.
+  Download the report: what whoever writes the module needs - nothing is changed to
+  make it.
+- **upsmon's SELinux module** (`upsmon_server.cil`): `/run/upsmon` labelled
+  `httpd_var_run_t` (the pages read the daemon's tokens there), and systemd may hand
+  it back to the service under enforcing. install.sh puts in the tools and auditd,
+  and the module only when it changed; `--uninstall` takes it out.
+- A refused "Switch to enforcing" that put something in on the way no longer leaves
+  what was refused before counting for good: the next "Put in what upsmon needs"
+  marks it.
+- **Settings -> Certificates and TLS -> Trusted roots of the system**: certificate
+  authorities of your own put into the trust of the whole system (curl, dnf, LDAPS,
+  SMTP, upsmon's own connections) the system's own way - update-ca-trust or
+  update-ca-certificates - beside the distribution's list, which keeps coming with
+  its updates. Only `upsmon-<sha256>` files are written; what others put there is
+  shown and left alone. Authorities only (CA:TRUE), warnings for an expired one, weak
+  signatures and keys, an intermediate without its root. Add as PEM, a chain or a
+  .cer file; download, take away.
+- CLI: `upsmon --selinux-check`, `--selinux STEP`, `--selinux-report [FILE]`,
+  `--os-roots`, `--os-roots-add FILE`, `--os-roots-remove SHA256`.
+- upsmon-web.path watches `selinux.ask` and `osroots.ask` too, and is started again by
+  install.sh so that it does. docs/selinux-and-trusted-roots.md.
+
 ## 4.5.1 - 2026-11-06
 
 - **To be done by hand: Clear for "Done lately"** (as ZIGMon 5.44.3 has it). A

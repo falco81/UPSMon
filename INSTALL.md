@@ -1986,6 +1986,14 @@ driver restarts. Test it: set the value, reboot the NAS, read it back.
 
 ## 20. Maintenance
 
+### SELinux and the system's trusted roots (4.6.0)
+
+Settings -> SELinux shows how SELinux is and leads to enforcing a step at a time
+(`upsmon --selinux-check`, `--selinux STEP`, `--selinux-report`); nothing changes
+unless asked. Settings -> Certificates and TLS -> Trusted roots of the system puts
+authorities of your own into the system's trust (`upsmon --os-roots`,
+`--os-roots-add FILE`, `--os-roots-remove SHA256`). See docs/selinux-and-trusted-roots.md.
+
 ### What is to be done by hand (4.5.0)
 
 When an upgrade needs a step on the command line, or the installer leaves

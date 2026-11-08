@@ -263,7 +263,7 @@ if (isset($_GET['api'])) {
         'whoami' => '/api/auth/whoami', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys', 'load' => '/api/load', 'notices' => '/api/notices',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys', 'load' => '/api/load', 'notices' => '/api/notices', 'selinux' => '/api/selinux', 'osroots' => '/api/osroots',
         'rbackup' => '/api/rbackup',
     ];
     $writes = [
@@ -272,7 +272,7 @@ if (isset($_GET['api'])) {
         'columns' => '/api/auth/columns', 'my-settings' => '/api/auth/settings',
         'upgrade' => '/api/upgrade', 'web' => '/api/web', 'lockouts' => '/api/lockouts',
         'console-login' => '/api/console-login', 'acme' => '/api/acme',
-        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys', 'notices' => '/api/notices',
+        'db' => '/api/db', 'ntp' => '/api/ntp', 'power' => '/api/power', 'osup' => '/api/osup', 'proxy' => '/api/proxy', 'acme-push' => '/api/acme-push', 'passkeys' => '/api/auth/passkeys', 'notices' => '/api/notices', 'selinux' => '/api/selinux', 'osroots' => '/api/osroots',
         'rbackup' => '/api/rbackup',
         'passkey-register' => '/api/auth/passkey/register', 'passkey-begin' => '/api/auth/passkey/begin',
     ];
@@ -563,6 +563,7 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
     <div class="ctl-group">Server</div>
     <button type="button" class="fulladmin-only" data-pane="proxy" data-icon="globe" title="An HTTP proxy - and what goes through it: the new versions, the system updates, the automatic certificates.">Proxy</button>
     <button type="button" class="fulladmin-only" data-pane="time" data-icon="clock" title="The clock of this server: chrony, its time servers, how far off it is.">Time</button>
+    <button type="button" class="fulladmin-only" data-pane="selinux" data-icon="shield" title="SELinux on this server: the mode, what upsmon needs of it, what it refused - and the way to enforcing.">SELinux</button>
     <button type="button" class="fulladmin-only" data-pane="power" data-icon="power" title="Restart or switch off this server.">Restart and power off</button>
     <div class="ctl-group">Data</div>
     <button type="button" data-pane="db" data-icon="db" title="Where everything lives, how big it is, copies of it, and erasing what was collected.">The database</button>
@@ -648,7 +649,28 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
         on; acme's address must be among those that may reach these pages.</p>
       <div id="web-push"></div>
     </div>
+    <!-- The system's trusted roots (4.6.0, as upsmon 1.0.265): certificate authorities of one's own
+         put into the trust of the operating system, beside the distribution's list. -->
+    <div class="card full" id="osr-card">
+      <h2>Trusted roots of the system</h2>
+      <p class="note">Certificate authorities of your own - your company's root, an intermediate -
+        trusted by the operating system of this server as a whole: curl, dnf, LDAPS to a domain
+        controller, SMTP, syslog over TLS, upsmon's own connections - every program that uses the
+        system's trust. The distribution's own list stays as it is and keeps coming with the
+        system's updates; these are added beside it, the way the system itself takes local
+        additions (update-ca-trust on RHEL, AlmaLinux and Rocky, update-ca-certificates on Debian
+        and Ubuntu), and stay there through those updates.</p>
+      <div id="osr-host"></div>
+    </div>
 
+  </div>
+  <div class="ctl-pane" id="pane-selinux" hidden>
+    <div class="ctl-head"><h2 class="ctl-title">SELinux</h2>
+      <p class="ctl-lede">How SELinux is on this server and what upsmon needs of it - its module, the
+        labels of its files, the booleans. The way to enforcing, one step at a time: disabled, made
+        ready (permissive at the next start), what upsmon needs put in, then enforcing once nothing
+        was refused. Nothing changes here unless asked.</p></div>
+    <div id="se-host"></div>
   </div>
   <div class="ctl-pane" id="pane-upgrade" hidden>
     <div class="ctl-head"><h2 class="ctl-title">Upgrades and maintenance</h2>

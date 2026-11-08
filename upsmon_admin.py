@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.5.1'
+__version__ = '4.6.0'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -15425,6 +15425,748 @@ def notices_print(rows, pal, lang='en', head=None):
 
 
 # ---------------------------------------------------------------------------
+# SELinux (upsmon 4.6.0, as upsmon 1.0.265 has it - one server, no cluster)
+# ---------------------------------------------------------------------------
+# Settings → SELinux. The page writes 'selinux:want' (check, prepare, enforce, permissive,
+# report); the daemon has its root helper do it and says how SELinux is in 'selinux:now' -
+# looked at again every half hour. Nothing changes unless somebody asks: a machine with SELinux
+# disabled stays so. The first look two minutes after the start, not at once: the helper's
+# semanage and ausearch take a core for seconds.
+SE_WORK = {'busy': False, 'seen': time.time() - 1800 + 120, 'tried': ''}
+SE_ACTIONS = ('check', 'prepare', 'enforce', 'permissive', 'report')
+SE_REPORT_KEEP_S = 3600
+SE_REPORT_MOST = 4 * 1024 * 1024
+SE_EVERY = 1800
+
+
+def _se_num(v):
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _se_obj(v):
+    return v if isinstance(v, dict) else {}
+
+
+def selinux_want(store):
+    """What upsmon needs of SELinux here: the booleans and the ports, and why."""
+    bools = [{'name': 'httpd_can_network_connect',
+              'why': 'the pages ask the daemon on 127.0.0.1:%s and :%s' % (
+                  CONFIG.get('admin_port') or 9849, (FILE_CONFIG or {}).get('api_port') or 9848)}]
+    return {'booleans': bools, 'ports': [], 'node': node_name(), 'facts': selinux_facts(store)}
+
+
+def selinux_facts(store):
+    """What upsmon uses here, for the report: switches and ports only - nothing secret."""
+    def on(k):
+        return bool(CONFIG.get(k))
+    try:
+        kinds = sorted({str(t.get('kind') or '') for t in rb_targets(store) if t.get('enabled')})
+    except Exception:                                   # noqa: BLE001
+        kinds = []
+    return {'upsmon': __version__, 'admin_port': CONFIG.get('admin_port') or 9849,
+            'acme': on('acme'), 'proxy': on('proxy'), 'remote_backups': kinds,
+            'passkeys': on('passkeys'), 'load_meter': on('load_meter')}
+
+
+def selinux_view(store):
+    me = node_name()
+    now = _meta_json(store, 'selinux:now') or {}
+    want = _meta_json(store, 'selinux:want') or {}
+    node = {'name': me, 'me': True, 'state': _se_obj(now.get('data')), 'at': now.get('at'),
+            'error': now.get('error') or '', 'said': now.get('said') or [], 'action': now.get('action') or '',
+            'pending': (want.get('do') if want and want.get('id') != now.get('done') else '')}
+    rep = _meta_json(store, 'selinux:report') or {}
+    reps = {me: {k: rep.get(k) for k in ('at', 'bytes', 'error', 'id')}} if rep else {}
+    return {'nodes': [node], 'reports': reps}
+
+
+def selinux_ask(store, action, by):
+    if action not in SE_ACTIONS:
+        raise ValueError('check, prepare, enforce or permissive')
+    # A step asked and not done yet is not put aside by a look or a report: its one row was
+    # written over, and "enforcing" never happened.
+    was = _meta_json(store, 'selinux:want') or {}
+    now = _meta_json(store, 'selinux:now') or {}
+    if action in ('check', 'report') and was.get('do') in ('prepare', 'enforce', 'permissive') and \
+            was.get('id') != now.get('done') and time.time() - _se_num(was.get('at')) < 3600:
+        if action == 'check':
+            return
+        raise ValueError('the step asked is not done yet (%s) - ask for the report after it' % was.get('do'))
+    store.set_meta('selinux:want', json.dumps({'id': secrets.token_hex(6), 'do': action, 'by': by,
+                                               'at': time.time()}))
+    if action == 'report':
+        store.add_event('settings', '%s asked for the SELinux report' % by, 'info', who=by)
+    elif action != 'check':
+        store.add_event('settings', '%s asked SELinux: %s' % (by, {
+            'prepare': 'made ready, permissive (or what upsmon needs put in)', 'enforce': 'enforcing',
+            'permissive': 'permissive again'}[action]), 'warn', who=by)
+
+
+def selinux_tick(engine):
+    """Every few seconds: a step asked done; how it is, looked at now and then."""
+    store = engine.store
+    rep = _meta_json(store, 'selinux:report') or {}
+    if rep and time.time() - _se_num(rep.get('at')) > SE_REPORT_KEEP_S:
+        store.db.run("DELETE FROM meta WHERE k = 'selinux:report'")
+    want = _meta_json(store, 'selinux:want') or {}
+    now = _meta_json(store, 'selinux:now') or {}
+    # A step tried is not tried again: with its answer not written, it would run every 3 s.
+    asked = bool(want) and want.get('id') != now.get('done') and want.get('id') != SE_WORK['tried']
+    if SE_WORK['busy'] or not (asked or time.time() - SE_WORK['seen'] > SE_EVERY):
+        return
+    SE_WORK['busy'] = True
+    SE_WORK['seen'] = time.time()
+    if asked:
+        SE_WORK['tried'] = want.get('id') or ''
+    do = want.get('do') if asked and want.get('do') in SE_ACTIONS else 'check'
+
+    def go():
+        try:
+            err = ''
+            data = _se_obj(now.get('data')) if do != 'check' else {}
+            said = []
+            try:
+                data = root_ask('selinux.ask', 'selinux.json', dict(selinux_want(store), do=do),
+                                120 if do == 'check' else 600)
+                said = data.pop('said', []) if isinstance(data, dict) else []
+            except ValueError as e:
+                err = str(e)[:400]
+                if do not in ('check', 'report'):
+                    log('SELinux: %s' % err, 'warn')
+            if do == 'report':
+                r = {'id': want.get('id'), 'at': time.time(), 'error': err, 'bytes': 0, 'data': ''}
+                if not err:
+                    try:
+                        raw = (WEB_DIR / 'selinux-report.tar.gz').read_bytes()
+                        if len(raw) > SE_REPORT_MOST:
+                            raise ValueError('the report is %d MB - too large to pass on; upsmon '
+                                             '--selinux-report on the server itself' % (len(raw) >> 20))
+                        r.update(bytes=len(raw), data=seal_secret(base64.b64encode(raw).decode('ascii'),
+                                                                   'selinux:report'))
+                    except (OSError, ValueError) as e:
+                        r['error'] = str(e)[:400]
+                    try:
+                        (WEB_DIR / 'selinux-report.tar.gz').unlink()
+                    except OSError:
+                        pass
+                store.set_meta('selinux:report', json.dumps(r))
+                data = _se_obj(now.get('data'))
+            if do not in ('check', 'report'):
+                store.add_event('settings', 'SELinux: %s' % (err or '; '.join(said) or 'done'),
+                                'bad' if err else 'warn')
+                if not err:
+                    log('SELinux: %s' % ('; '.join(said) or 'done'), 'warn')
+            store.set_meta('selinux:now', json.dumps({
+                'data': data if isinstance(data, dict) else {}, 'at': time.time(),
+                'done': want.get('id') if asked else now.get('done'), 'error': err, 'said': said, 'action': do}))
+        except Exception as e:                          # noqa: BLE001
+            log_sparing('selinux', 'SELinux: %s' % e, 'warn', every=600)
+        finally:
+            SE_WORK['busy'] = False
+    threading.Thread(target=go, name='upsmon-selinux', daemon=True).start()
+
+
+def selinux_report_bundle(store):
+    """The report as one archive, from the database."""
+    rep = _meta_json(store, 'selinux:report') or {}
+    raw = None
+    if rep.get('data'):
+        got = unseal_secret(rep['data'], 'selinux:report')
+        try:
+            raw = base64.b64decode(got) if got else None
+        except (ValueError, TypeError):
+            raw = None
+    if not raw:
+        raise ValueError(rep.get('error') or 'no report yet - ask for it first')
+    return raw
+
+
+@route('GET', '/api/selinux')
+def _selinux(h):
+    h.me('fulladmin')
+    return selinux_view(h.store)
+
+
+@route('POST', '/api/selinux')
+def _selinux_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    action = str(b.get('action') or '')
+    try:
+        if action == 'download':
+            data = selinux_report_bundle(h.store)
+            h.store.add_event('settings', '%s took the SELinux report' % s['name'], 'info', who=s['name'])
+            return {'name': 'upsmon-selinux-report-%s-%s.tar.gz' % (
+                        re.sub(r'[^A-Za-z0-9._-]', '', node_name()) or 'upsmon', time.strftime('%Y%m%d-%H%M')),
+                    'file': base64.b64encode(data).decode('ascii'), 'mime': 'application/gzip', 'missing': []}
+        selinux_ask(h.store, action, s['name'])
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    return {'message': {'check': 'asked: it looks within seconds',
+                        'prepare': 'asked: SELinux is made ready within seconds',
+                        'enforce': 'asked: SELinux switches to enforcing within seconds',
+                        'permissive': 'asked: SELinux switches to permissive within seconds',
+                        'report': 'asked: the report is made within a minute'}[action], 'busy': []}
+
+
+# ---------------------------------------------------------------------------
+# The system's trusted roots (upsmon 4.6.0, as upsmon 1.0.265 has it - one server)
+# ---------------------------------------------------------------------------
+# Settings → Certificates and TLS → Trusted roots of the system: certificate authorities of
+# one's own put into the trust of the operating system as a whole - curl, dnf, LDAPS, SMTP,
+# syslog over TLS and upsmon's own connections. The root helper (upsmon_web.py, osroots.ask)
+# puts them where the system itself takes local additions from and runs the system's own tool;
+# the distribution's list is never touched and keeps coming with the system's updates.
+# 'oscerts:want' = {v, certs, by, at, what} is the set; the daemon brings the machine to it -
+# when it changes, at the start, every half hour - and says how it went in 'oscerts:node';
+# 'oscerts:again' asks it to read again.
+OSR_MAX = 50
+OSR_PEM_MAX = 16384
+OSR_RESYNC_S = 1800
+OSR_RETRY_S = 600
+OSR_LATE_S = 300
+OSR_W = {'busy': False, 'since': 0.0, 'done_hash': None, 'done_at': 0.0, 'fail_hash': None,
+         'fail_at': 0.0, 'again_seen': None}
+OSR_LOCK = threading.Lock()
+OSR_BLOCK_RE = re.compile(r'-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\s]*?)-----END CERTIFICATE-----')
+OSR_PY = {'fixed': ''}
+OSR_SYSTEM_BUNDLES = ('/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem',
+                      '/etc/ssl/certs/ca-certificates.crt', '/etc/pki/tls/certs/ca-bundle.crt')
+
+
+def osr_python_fix():
+    """upsmon's own TLS clients (mail, ACME, the remote backups, the proxy test) make their
+    contexts with ssl.create_default_context() - OpenSSL's default places, the system's list on
+    a Python of the distribution. A Python built with an OpenSSL of its own may look where there
+    is nothing: pointed at the system's list then, and only then."""
+    import ssl
+    if os.environ.get('SSL_CERT_FILE') or os.environ.get('SSL_CERT_DIR'):
+        return
+    try:
+        p = ssl.get_default_verify_paths()
+    except Exception:                                   # noqa: BLE001
+        return
+    if p.cafile and os.path.isfile(p.cafile):
+        return
+    try:
+        if p.capath and os.path.isdir(p.capath) and any(n.endswith('.0') for n in os.listdir(p.capath)):
+            return
+    except OSError:
+        pass
+    for f in OSR_SYSTEM_BUNDLES:
+        if os.path.isfile(f):
+            os.environ['SSL_CERT_FILE'] = f
+            OSR_PY['fixed'] = f
+            return
+
+
+osr_python_fix()
+
+
+def osr_python_trust():
+    import ssl
+    try:
+        p = ssl.get_default_verify_paths()
+    except Exception:                                   # noqa: BLE001
+        return {}
+    cafile = os.environ.get('SSL_CERT_FILE') or p.cafile or ''
+    capath = os.environ.get('SSL_CERT_DIR') or p.capath or ''
+    sysf = [f for f in OSR_SYSTEM_BUNDLES if os.path.isfile(f)]
+    real = os.path.realpath(cafile) if cafile and os.path.exists(cafile) else ''
+    system = bool(real and any(os.path.realpath(f) == real for f in sysf)) or \
+        bool(capath and os.path.realpath(capath) in ('/etc/ssl/certs', '/etc/pki/tls/certs'))
+    return {'cafile': cafile, 'capath': capath, 'system': system, 'fixed': OSR_PY['fixed'],
+            'openssl': getattr(ssl, 'OPENSSL_VERSION', '')}
+
+
+def osr_blocks(text):
+    text = str(text or '')
+    if re.search(r'PRIVATE KEY|BEGIN ENCRYPTED|BEGIN PKCS7|BEGIN TRUSTED CERTIFICATE', text):
+        raise ValueError('no private key and nothing but certificates (-----BEGIN CERTIFICATE-----)')
+    out = []
+    for body in OSR_BLOCK_RE.findall(text):
+        try:
+            der = base64.b64decode(re.sub(r'\s+', '', body), validate=True)
+        except ValueError:
+            raise ValueError('a certificate that is not base64')
+        if not der or len(der) > OSR_PEM_MAX * 3 // 4:
+            raise ValueError('a certificate of %d bytes - one is a few kB at most' % len(der))
+        enc = base64.b64encode(der).decode('ascii')
+        out.append(('-----BEGIN CERTIFICATE-----\n%s\n-----END CERTIFICATE-----\n' % '\n'.join(
+            enc[i:i + 64] for i in range(0, len(enc), 64)), der))
+    if not out:
+        raise ValueError('no certificate in it (-----BEGIN CERTIFICATE-----)')
+    return out
+
+
+def osr_text(raw):
+    """A file as it came - PEM, or one certificate in DER (.cer) - as PEM text."""
+    if isinstance(raw, str):
+        raw = raw.encode('utf-8', 'replace')
+    if b'-----BEGIN' in raw:
+        return raw.decode('ascii', 'replace')
+    if raw[:1] == b'\x30':
+        try:
+            return _openssl(['x509', '-inform', 'DER'], data=raw, what='not a certificate in DER').decode('ascii')
+        except ValueError:
+            pass
+    raise ValueError('neither PEM (-----BEGIN CERTIFICATE-----) nor one certificate in DER')
+
+
+def _osr_time(s):
+    import calendar
+    try:
+        return calendar.timegm(time.strptime(re.sub(r'\s+', ' ', s.strip()), '%b %d %H:%M:%S %Y %Z'))
+    except ValueError:
+        return 0
+
+
+def osr_facts(pem, der):
+    """As the root helper reads it (upsmon_web.py osroots_facts - the same words)."""
+    txt = _openssl(['x509', '-noout', '-text', '-nameopt', 'RFC2253'], data=pem.encode('ascii'),
+                   what='not a certificate openssl reads').decode('utf-8', 'replace')
+
+    def one(rx):
+        m = re.search(rx, txt, re.M)
+        return m.group(1).strip() if m else ''
+    f = {'fp': hashlib.sha256(der).hexdigest(), 'subject': one(r'^\s*Subject: ?(.*)$')[:400],
+         'issuer': one(r'^\s*Issuer: ?(.*)$')[:400], 'not_before': _osr_time(one(r'Not Before\s*: (.*)$')),
+         'not_after': _osr_time(one(r'Not After\s*: (.*)$')), 'sig': one(r'Signature Algorithm: (\S+)')[:60]}
+    cn = re.search(r'(?:^|,)CN=((?:\\.|[^,])*)', f['subject'])
+    f['cn'] = (cn.group(1) if cn else f['subject'])[:200]
+    alg = one(r'Public Key Algorithm: (\S+)')
+    bits = one(r'Public-Key: \((\d+) bit\)')
+    curve = one(r'NIST CURVE: (\S+)') or one(r'ASN1 OID: (\S+)')
+    f['key'] = ('RSA %s' % bits) if alg == 'rsaEncryption' else \
+        ('EC %s' % (curve or bits)) if alg == 'id-ecPublicKey' else \
+        (alg.replace('ED25519', 'Ed25519').replace('ED448', 'Ed448')[:40] if alg else '?')
+    f['bits'] = int(bits) if bits.isdigit() else 0
+    bc = re.search(r'X509v3 Basic Constraints:.*\n\s*(CA:(TRUE|FALSE))', txt)
+    f['ca'] = bool(bc and bc.group(2) == 'TRUE')
+    ku = re.search(r'X509v3 Key Usage:.*\n\s*(.*)', txt)
+    f['ku_sign'] = None if not ku else ('Certificate Sign' in ku.group(1))
+    f['root'] = f['subject'] == f['issuer']
+    f['kind'] = 'root' if f['root'] else 'intermediate'
+    refused, warn = [], []
+    now = time.time()
+    if not bc:
+        refused.append('it says nothing of being an authority (no basicConstraints CA:TRUE) - only a '
+                       'certificate authority goes here')
+    elif not f['ca']:
+        refused.append('it is not a certificate authority (CA:FALSE) - a server\'s own certificate does '
+                       'not go here')
+    if f['ku_sign'] is False:
+        refused.append('its key usage does not let it sign certificates (no keyCertSign)')
+    if f['not_after'] and f['not_after'] < now:
+        warn.append('it ran out on %s - nothing it signed is trusted'
+                    % time.strftime('%Y-%m-%d', time.gmtime(f['not_after'])))
+    if f['not_before'] and f['not_before'] > now + 300:
+        warn.append('it is valid only from %s' % time.strftime('%Y-%m-%d', time.gmtime(f['not_before'])))
+    if not f['root'] and re.match(r'(?i)(sha1|md5|md2)', f['sig']):
+        warn.append('it is signed with %s - the system\'s crypto policy (DEFAULT) refuses it, and every '
+                    'chain through it' % f['sig'])
+    if f['key'].startswith('RSA') and 0 < f['bits'] < 2048:
+        warn.append('its key has %d bits - the system\'s crypto policy (DEFAULT) refuses fewer than 2048'
+                    % f['bits'])
+    f['refused'], f['warn'] = refused, warn
+    return f
+
+
+def osr_hash(certs):
+    return hashlib.sha256(','.join(sorted(str(c.get('fp') or '') for c in certs or [])).encode()).hexdigest()[:24]
+
+
+def osr_want(store):
+    """The set wanted - or None while none was ever written."""
+    got = _meta_json(store, 'oscerts:want')
+    if not isinstance(got, dict) or not isinstance(got.get('certs'), list):
+        return None
+    certs = [c for c in got['certs'] if isinstance(c, dict) and isinstance(c.get('pem'), str)
+             and re.match(r'^[0-9a-f]{64}\Z', str(c.get('fp') or ''))][:OSR_MAX]
+    return {'v': int(_se_num(got.get('v'))), 'certs': certs, 'by': str(got.get('by') or ''),
+            'at': _se_num(got.get('at')), 'what': str(got.get('what') or ''), 'hash': osr_hash(certs)}
+
+
+def osr_save(store, certs, by, what):
+    was = osr_want(store) or {'v': 0}
+    row = {'v': max(int(time.time() * 1000), was['v'] + 1), 'certs': certs, 'by': by, 'at': time.time(),
+           'what': what}
+    store.set_meta('oscerts:want', json.dumps(row))
+    store.add_event('settings', '%s %s - the system\'s trusted roots' % (by, what), 'warn', who=by)
+    return row
+
+
+def osr_read_text(text):
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError('the certificates: PEM text, or a file')
+    if len(text) > OSR_MAX * OSR_PEM_MAX:
+        raise ValueError('that is far more than %d certificates' % OSR_MAX)
+    blocks = osr_blocks(osr_text(text))
+    if len(blocks) > OSR_MAX:
+        raise ValueError('%d certificates in it - %d at most' % (len(blocks), OSR_MAX))
+    return [dict(osr_facts(pem, der), pem=pem) for pem, der in blocks]
+
+
+def osr_check(store, text):
+    """What adding this text would do - nothing written."""
+    want = osr_want(store) or {'certs': []}
+    have = {c['fp'] for c in want['certs']}
+    subjects = {osr_facts_kept(c['pem']).get('subject') for c in want['certs']}
+    got = osr_read_text(text)
+    subjects |= {f['subject'] for f in got if not f['refused']}
+    for f in got:
+        f['already'] = f['fp'] in have
+        if not f['root'] and not f['refused'] and f['issuer'] not in subjects:
+            f['warn'] = f['warn'] + ['an intermediate without its root here: programs that take a partial '
+                                     'chain (curl, Python 3.13 on) trust it by itself, others want its root '
+                                     'too - add the root as well, unless the system\'s list has it']
+    return got
+
+
+def osr_add(store, text, by):
+    got = osr_check(store, text)
+    want = osr_want(store) or {'certs': []}
+    certs = list(want['certs'])
+    seen = set()
+    added = [f for f in got if not f['refused'] and not f['already'] and not (f['fp'] in seen or seen.add(f['fp']))]
+    refused = [{'cn': f['cn'], 'fp': f['fp'], 'why': '; '.join(f['refused'])} for f in got if f['refused']]
+    if not added:
+        if refused:
+            raise ValueError('nothing added: %s' % '; '.join('%s - %s' % (r['cn'], r['why']) for r in refused))
+        raise ValueError('nothing added: every certificate in it is there already')
+    if len(certs) + len(added) > OSR_MAX:
+        raise ValueError('%d certificates at most - %d are there, %d more asked' % (OSR_MAX, len(certs), len(added)))
+    for f in added:
+        certs.append({'pem': f['pem'], 'fp': f['fp'], 'cn': f['cn'], 'kind': f['kind'], 'by': by, 'at': time.time()})
+    osr_save(store, certs, by, 'added %s' % ', '.join('%s (%s, SHA-256 %s)' % (f['cn'], f['kind'], f['fp'][:16])
+                                                      for f in added))
+    return {'added': [{k: f[k] for k in ('cn', 'fp', 'kind', 'warn')} for f in added],
+            'refused': refused, 'already': [f['cn'] for f in got if f['already']],
+            'message': 'added %d - the system trusts %s within a minute' % (
+                len(added), 'it' if len(added) == 1 else 'them')}
+
+
+def osr_find(certs, fp):
+    fp = re.sub(r'[^0-9a-f]', '', str(fp or '').lower())
+    if len(fp) < 12:
+        raise ValueError('the SHA-256 fingerprint - 12 characters of it at least')
+    hit = [c for c in certs if c['fp'].startswith(fp)]
+    if not hit:
+        raise ValueError('upsmon has added no certificate with that fingerprint')
+    if len(hit) > 1:
+        raise ValueError('more than one certificate begins with that - give more of it')
+    return hit[0]
+
+
+def osr_remove(store, fp, by):
+    want = osr_want(store) or {'certs': []}
+    c = osr_find(want['certs'], fp)
+    osr_save(store, [x for x in want['certs'] if x['fp'] != c['fp']], by,
+             'took away %s (SHA-256 %s)' % (c.get('cn') or '?', c['fp'][:16]))
+    return {'message': 'taken away - the system no longer trusts it within a minute'}
+
+
+def osr_again(store):
+    store.set_meta('oscerts:again', repr(time.time()))
+
+
+def _osr_state(data):
+    keep = {k: data[k] for k in ('ours', 'others', 'system', 'flavour', 'dir', 'tool', 'tool_there') if k in data}
+    keep['ours'] = [x for x in (keep.get('ours') or []) if isinstance(x, dict)][:OSR_MAX + 10]
+    keep['others'] = [x for x in (keep.get('others') or []) if isinstance(x, dict)][:200]
+    return keep
+
+
+def osroots_tick(engine):
+    if not WEB_DIR.is_dir():
+        return
+    store = engine.store
+    with OSR_LOCK:
+        if OSR_W['busy'] and time.time() - OSR_W['since'] < 900:
+            return
+    want = osr_want(store)
+    h = want['hash'] if want else None
+    again = str(store.get_meta('oscerts:again') or '')
+    now = time.time()
+    due = now - OSR_W['done_at'] > OSR_RESYNC_S
+    if want is not None and h != OSR_W['done_hash'] and \
+            not (h == OSR_W['fail_hash'] and now - OSR_W['fail_at'] < OSR_RETRY_S):
+        due = True
+    if again != OSR_W['again_seen']:
+        first = OSR_W['again_seen'] is None
+        OSR_W['again_seen'] = again
+        if again and not first:
+            due = True
+    if not due:
+        return
+    with OSR_LOCK:
+        if OSR_W['busy'] and time.time() - OSR_W['since'] < 900:
+            return
+        OSR_W['busy'], OSR_W['since'] = True, time.time()
+
+    def go():
+        row = {'at': time.time(), 'v': want['v'] if want else 0, 'hash': h or '', 'ok': False,
+               'error': '', 'said': [], 'refused': [], 'python': osr_python_trust()}
+        old = _meta_json(store, 'oscerts:node') or {}
+        try:
+            if want is None:
+                data = root_ask('osroots.ask', 'osroots.json', {'do': 'list'}, 120)
+            else:
+                data = root_ask('osroots.ask', 'osroots.json',
+                                {'do': 'sync', 'certs': [c['pem'] for c in want['certs']]}, 300)
+            row.update(ok=True, said=[str(x)[:200] for x in data.get('said') or []][:120],
+                       refused=[x for x in data.get('refused') or [] if isinstance(x, dict)][:OSR_MAX],
+                       state=_osr_state(data))
+            OSR_W.update(done_hash=h, done_at=time.time(), fail_hash=None)
+            if row['said']:
+                log('the system\'s trusted roots: %s' % '; '.join(row['said']))
+                store.add_event('settings', 'the system\'s trusted roots - %s' % '; '.join(row['said']), 'info')
+        except Exception as e:                          # noqa: BLE001
+            row.update(error=str(e)[:400] or e.__class__.__name__, state=old.get('state') or {})
+            OSR_W.update(done_hash=None, done_at=time.time(), fail_hash=h, fail_at=time.time())
+            log_sparing('osroots', 'the system\'s trusted roots: %s' % e, 'warn' if want else 'info',
+                        every=900 if want else 3600)
+        try:
+            store.set_meta('oscerts:node', json.dumps(row))
+        except Exception as e:                          # noqa: BLE001
+            log_sparing('osroots-row', 'the system\'s trusted roots: %s' % e, 'warn', every=900)
+        finally:
+            with OSR_LOCK:
+                OSR_W['busy'] = False
+    threading.Thread(target=go, name='upsmon-osroots', daemon=True).start()
+
+
+def osr_node_status(want, row):
+    """(status, words): applied, waiting, failed - or 'none' while nothing was ever asked."""
+    if want is None:
+        if row.get('error'):
+            return 'failed', str(row['error'])
+        return 'none', ''
+    if row.get('at') and row.get('hash') == want['hash']:
+        if not row.get('ok'):
+            return 'failed', str(row.get('error') or 'the root helper said no')
+        if row.get('refused'):
+            return 'failed', '; '.join('%s - %s' % (r.get('cn') or '?', r.get('why') or '?') for r in row['refused'])
+        return 'applied', ''
+    if time.time() - _se_num(want.get('at')) > OSR_LATE_S:
+        return 'waiting', ('asked more than five minutes ago and not done - is upsmon-web.path running?'
+                           + ((' (last: %s)' % row['error']) if row.get('error') else ''))
+    return 'waiting', ''
+
+
+OSR_FACTS = {}
+
+
+def osr_facts_kept(pem):
+    key = hashlib.sha256(pem.encode('utf-8', 'replace')).hexdigest()
+    got = OSR_FACTS.get(key)
+    if got is None:
+        try:
+            p, der = osr_blocks(pem)[0]
+            got = osr_facts(p, der)
+        except ValueError as e:
+            got = {'cn': '?', 'warn': [], 'refused': [str(e)]}
+        if len(OSR_FACTS) > 400:
+            OSR_FACTS.clear()
+        OSR_FACTS[key] = got
+    return got
+
+
+def osr_view(store):
+    want = osr_want(store)
+    row = _meta_json(store, 'oscerts:node') or {}
+    status, why = osr_node_status(want, row)
+    st = row.get('state') if isinstance(row.get('state'), dict) else {}
+    me = node_name()
+    node = {'name': me, 'me': True, 'alive': True, 'status': status, 'why': why, 'at': row.get('at'),
+            'said': row.get('said') or [], 'error': row.get('error') or '', 'ours': st.get('ours') or [],
+            'others': st.get('others') or [], 'system': st.get('system') or {}, 'flavour': st.get('flavour') or '',
+            'dir': st.get('dir') or '', 'tool': st.get('tool') or '', 'tool_there': st.get('tool_there'),
+            'python': row.get('python') or {}}
+    certs = []
+    facts = [(c, osr_facts_kept(c['pem'])) for c in (want or {}).get('certs') or []]
+    subjects = {f.get('subject') for _c, f in facts}
+    for c, f in facts:
+        warn = list(f.get('warn') or [])
+        if f.get('kind') == 'intermediate' and f.get('issuer') not in subjects:
+            warn.append('its root is not among these - trusted by itself only where a partial chain is taken '
+                        '(curl, Python 3.13 on), unless the system\'s list has the root')
+        hit = [x for x in node['ours'] if x.get('fp') == c['fp']]
+        certs.append({'fp': c['fp'], 'pem': c['pem'], 'cn': f.get('cn'), 'subject': f.get('subject'),
+                      'issuer': f.get('issuer'), 'not_before': f.get('not_before'), 'not_after': f.get('not_after'),
+                      'key': f.get('key'), 'kind': f.get('kind'), 'sig': f.get('sig'), 'warn': warn,
+                      'by': c.get('by') or '', 'at': c.get('at'),
+                      'on': {me: (hit[0].get('in_bundle') is not False) if hit else False}})
+    return {'certs': certs, 'nodes': [node], 'cluster': False, 'max': OSR_MAX,
+            'want': {k: want[k] for k in ('v', 'by', 'at', 'what', 'hash')} if want else None,
+            'python': osr_python_trust()}
+
+
+@route('GET', '/api/osroots')
+def _osroots(h):
+    h.me('readonly')          # read-only may see: certificates of authorities are nothing secret
+    return osr_view(h.store)
+
+
+@route('POST', '/api/osroots')
+def _osroots_do(h):
+    s = h.me('fulladmin')
+    b = h.body()
+    act = str(b.get('action') or '')
+    try:
+        if act == 'check':
+            return {'certs': [{k: f[k] for k in ('fp', 'cn', 'subject', 'issuer', 'not_before', 'not_after',
+                                                   'key', 'kind', 'sig', 'warn', 'refused', 'already')}
+                              for f in osr_check(h.store, b.get('text'))]}
+        if act == 'add':
+            return osr_add(h.store, b.get('text'), s['name'])
+        if act == 'remove':
+            return osr_remove(h.store, b.get('fp'), s['name'])
+        if act == 'refresh':
+            osr_again(h.store)
+            return {'message': 'asked: the trusted roots are read again within a minute'}
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    raise ApiError(400, 'check, add, remove or refresh')
+
+
+# ---- the command line --------------------------------------------------------------------------
+def cli_sure(args, words):
+    if args.yes:
+        return
+    if not sys.stdin.isatty():
+        raise SystemExit('upsmon: %s - add --yes to do it without a terminal' % words)
+    if input('%s. Go on? [y/N] ' % words).strip().lower() not in ('y', 'yes', 'a', 'ano'):
+        raise SystemExit('nothing done')
+
+
+def _selinux_helper(extra, want, timeout=600):
+    """The root helper of this machine run for SELinux, what upsmon needs given on stdin."""
+    helper = LIB_DIR / 'upsmon_web.py'
+    if not helper.exists():
+        helper = LIB_DIR / 'deploy' / 'upsmon_web.py'
+    if not helper.exists():
+        raise SystemExit('upsmon: the root helper (upsmon_web.py) is not installed')
+    return subprocess.run(['/usr/bin/python3', '-I', str(helper)] + extra, input=want or '{}',
+                          capture_output=True, text=True, timeout=timeout)
+
+
+def cli_selinux(args, pal, store):
+    """upsmon --selinux-check, --selinux STEP, --selinux-report [FILE]: as root - the root helper
+    does it, what upsmon needs given to it."""
+    if os.geteuid() != 0:
+        raise SystemExit('upsmon: SELinux is root\'s - run it as root')
+    want = json.dumps(selinux_want(store))
+    if args.selinux_report is not None:
+        out = args.selinux_report or '/root/upsmon-selinux-report-%s-%s.tar.gz' % (
+            re.sub(r'[^A-Za-z0-9._-]', '', node_name())[:60] or 'upsmon', time.strftime('%Y%m%d-%H%M'))
+        print(pal.dim('gathering what SELinux says here - a minute or two (ausearch, semanage)...'))
+        got = _selinux_helper(['--selinux-report', out], want, 1200)
+        sys.stderr.write(got.stderr)
+        if got.returncode != 0:
+            return got.returncode
+        print(pal.ok_line('the report is in %s (%d kB)' % (out, os.path.getsize(out) >> 10)))
+        print('  look through avc*.txt in it before sending it on: the audit log holds the command '
+              'lines of the programs SELinux refused something to')
+        return 0
+    step = args.selinux or 'check'
+    if step == 'check':
+        got = _selinux_helper(['--selinux-check'] + (['--json'] if args.json else []), want, 300)
+    else:
+        cli_sure(args, {'prepare': 'SELinux permissive at the next start of this machine, every file labelled '
+                                   'then (the machine is not restarted now)',
+                        'apply': 'upsmon\'s module, the labels of its files and the booleans it needs put in '
+                                 '(still permissive)',
+                        'enforce': 'SELinux ENFORCING on this machine, now and after a restart',
+                        'permissive': 'SELinux permissive on this machine, now and after a restart'}[step])
+        got = _selinux_helper(['--selinux-do', step] + (['--json'] if args.json else []), want)
+        store.add_event('settings', 'the command line asked SELinux: %s (%s)' % (
+            step, 'done' if got.returncode == 0 else 'not done'), 'warn', who='the command line')
+    sys.stdout.write(got.stdout)
+    sys.stderr.write(got.stderr)
+    return got.returncode
+
+
+def cli_os_roots(args, pal, store, out):
+    """upsmon --os-roots, --os-roots-add FILE, --os-roots-remove SHA256."""
+    who = 'the command line'
+    if args.os_roots_add:
+        try:
+            with open(args.os_roots_add, 'rb') as f:
+                raw = f.read(OSR_MAX * OSR_PEM_MAX + 1)
+            text = osr_text(raw)
+            got = osr_check(store, text)
+        except (OSError, ValueError) as e:
+            raise SystemExit('upsmon: %s: %s' % (args.os_roots_add, e))
+        for c in got:
+            print('  %s  %s  %s' % (pal.head(c['cn'] or '?'), c['kind'], pal.dim('SHA-256 ' + c['fp'])))
+            print(pal.dim('    issued by %s; valid %s - %s; %s' % (
+                c['issuer'], stamp(c['not_before']) if c['not_before'] else '?',
+                stamp(c['not_after']) if c['not_after'] else '?', c['key'])))
+            for w in c['refused']:
+                print(pal.bad_line('    not taken: %s' % w))
+            for w in c['warn']:
+                print(pal.warn_line('    %s' % w))
+            if c['already']:
+                print(pal.dim('    there already'))
+        if not any(not c['refused'] and not c['already'] for c in got):
+            raise SystemExit('upsmon: nothing to add')
+        cli_sure(args, 'every program of this server will trust what these sign')
+        try:
+            r = osr_add(store, text, who)
+        except ValueError as e:
+            raise SystemExit('upsmon: %s' % e)
+        out(r) if args.json else print(pal.ok_line(r['message']))
+        return 0
+    if args.os_roots_remove:
+        cli_sure(args, 'what %s signs is no longer trusted by the system' % args.os_roots_remove)
+        try:
+            r = osr_remove(store, args.os_roots_remove, who)
+        except ValueError as e:
+            raise SystemExit('upsmon: %s' % e)
+        out(r) if args.json else print(pal.ok_line(r['message']))
+        return 0
+    v = osr_view(store)
+    if args.json:
+        out(v)
+        return 0
+    print(pal.head('the system\'s trusted roots - upsmon\'s additions (%d of %d at most)' % (len(v['certs']), v['max'])))
+    print(table([[c['cn'] or '?', c['kind'] or '?', c['fp'][:16],
+                  stamp(c['not_after']) if c.get('not_after') else '?', c.get('key') or '?',
+                  'yes' if any((c.get('on') or {}).values()) else 'not yet'] for c in v['certs']],
+                ['name', 'kind', 'sha-256', 'valid until', 'key', 'in the system']))
+    for c in v['certs']:
+        for w in c.get('warn') or []:
+            print(pal.warn_line('  %s: %s' % (c['cn'], w)))
+    for n in v['nodes']:
+        s = n['system'] or {}
+        say = {'applied': pal.ok_line, 'failed': pal.bad_line, 'none': pal.dim}.get(n['status'], pal.warn_line)
+        print(say('%s%s' % ({'applied': 'as wanted', 'waiting': 'waiting', 'failed': 'failed',
+                             'none': 'nothing added by upsmon'}.get(n['status'], n['status']),
+                            (': ' + n['why']) if n['why'] else '')))
+        if n.get('dir'):
+            print(pal.dim('  local additions in %s, made into the system\'s list by %s' % (n['dir'], n['tool'])))
+        if s:
+            print(pal.dim('  the system\'s own list: %s certificates in %s%s' % (
+                s.get('count', '?'), s.get('path', '?'), ('; package %s' % s['package']) if s.get('package') else '')))
+        others = n.get('others') or []
+        if others:
+            print(pal.dim('  added by somebody else (upsmon leaves them as they are):'))
+            for o in others:
+                cs = o.get('certs') or []
+                print('    %s  %s' % (o.get('file'), ', '.join('%s (%s)' % (c.get('cn'), c.get('kind')) for c in cs)
+                                      or ('a link to %s' % o['link'] if o.get('link') else 'no certificate read')))
+        py = n.get('python') or {}
+        if py and not py.get('system'):
+            print(pal.warn_line('  upsmon\'s own connections trust %s - not the system\'s list' % (
+                py.get('cafile') or py.get('capath') or '?')))
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # The database: SQLite, /var/lib/upsmon/upsmon.db
 # ---------------------------------------------------------------------------
 class DbError(Exception):
@@ -16832,7 +17574,8 @@ class Engine(object):
                          ('time', lambda: ntp_tick(self)), ('power', lambda: power_tick(self)),
                          ('updates', lambda: osup_tick(self)), ('schedule', lambda: osup_sched_tick(self)),
                          ('backups', lambda: rb_tick(self)), ('copies', lambda: daily_copy_tick(self.store)),
-                         ('notices', lambda: notices_tick(self.store))):
+                         ('notices', lambda: notices_tick(self.store)),
+                         ('selinux', lambda: selinux_tick(self)), ('osroots', lambda: osroots_tick(self))):
             try:
                 fn()
             except Exception as e:                      # noqa: BLE001
@@ -16980,6 +17723,16 @@ def add_cli_arguments(parser):
       help='what is to be done by hand - a step an upgrade needs, what the installer left to you')
     a('--notice-done', metavar='ID', help='that one is done (as Done on the pages)')
     a('--notices-check', action='store_true', help='the notices looked at again now (their checks, notices.d)')
+    a('--selinux-check', action='store_true',
+      help='how SELinux is here and what upsmon needs of it (exit 1 when something is missing)')
+    a('--selinux', choices=('check', 'prepare', 'apply', 'enforce', 'permissive'), metavar='STEP',
+      help='SELinux: check, prepare (permissive at the next start), apply (what upsmon needs put in), '
+           'enforce, permissive - asks first (--yes)')
+    a('--selinux-report', nargs='?', const='', metavar='FILE',
+      help='what SELinux says here, for whoever writes upsmon\'s module - nothing is changed')
+    a('--os-roots', action='store_true', help='the system\'s trusted roots upsmon added, and how the system has them')
+    a('--os-roots-add', metavar='FILE', help='a certificate authority of your own (.pem, .crt, .cer) into the system\'s trust')
+    a('--os-roots-remove', metavar='SHA256', help='that one out of the system\'s trust (12 characters of its fingerprint at least)')
     a('--notices-clear-done', action='store_true',
       help='"done lately" emptied (Clear on the pages) - what is still to be done stays')
     a('--proxy-test', nargs='?', const='', metavar='URL',
@@ -17002,7 +17755,8 @@ CLI_FLAGS = ('users', 'add_user', 'passwd', 'set_role', 'del_user', 'disable_use
              'console_at_login', 'console_status', 'lockouts', 'lockouts_clear', 'backup',
              'copies', 'restore', 'restore_bundle', 'rbackup_now', 'rbackup_status', 'db_check',
              'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export', 'proxy_test', 'passkeys', 'passkey_forget',
-             'notices', 'notice_done', 'notices_check', 'notices_clear_done')
+             'notices', 'notice_done', 'notices_check', 'notices_clear_done',
+             'selinux_check', 'selinux', 'selinux_report', 'os_roots', 'os_roots_add', 'os_roots_remove')
 
 
 def cli_wanted(args):
@@ -17571,6 +18325,10 @@ def cli_main(args, ups_status=None):
                       (n.get('row') or {}).get('state') or '-', (n.get('row') or {}).get('said') or '')
                      for n in v['nodes']], ['server', 'started', 'restart', 'said'], [22, 20, 12, 60]))
         return 0
+    if args.selinux_check or args.selinux or args.selinux_report is not None:
+        return cli_selinux(args, pal, store)
+    if args.os_roots or args.os_roots_add or args.os_roots_remove:
+        return cli_os_roots(args, pal, store, out)
     if args.notices or args.notice_done or args.notices_check or args.notices_clear_done:
         if args.notices_clear_done:
             gone = notices_done_clear(store, None, who)

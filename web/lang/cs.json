@@ -1735,6 +1735,10 @@
    "source": "Issued by",
    "text": "Vydal"
   },
+  "os1155": {
+   "source": "Issuer",
+   "text": "Vydavatel"
+  },
   "os1158": {
    "source": "It answers, but this account may not make anything in it. Set it up, or give the account rights on that database.",
    "text": "Odpovídá, ale tento účet v ní nesmí nic vytvořit. Nastavte ji, nebo dejte účtu práva k té databázi."
@@ -4139,6 +4143,10 @@
    "source": "The public half. Click it to copy.",
    "text": "Veřejná polovina. Kliknutím zkopírujete."
   },
+  "os2718": {
+   "source": "The report",
+   "text": "Report"
+  },
   "os2724": {
    "source": "The root helper of this node is not installed (install.sh --upgrade puts it in).",
    "text": "Pomocník roota na tomto uzlu není nainstalovaný (doinstaluje ho install.sh --upgrade)."
@@ -5054,6 +5062,10 @@
   "os3337": {
    "source": "a portable copy",
    "text": "přenositelná kopie"
+  },
+  "os3342": {
+   "source": "a report",
+   "text": "report"
   },
   "os3343": {
    "source": "a request waits for its certificate",
@@ -6006,6 +6018,10 @@
   "os3829": {
    "source": "locked with the password of the backups",
    "text": "zamčeno heslem záloh"
+  },
+  "os3831": {
+   "source": "look again",
+   "text": "zkontrolovat znovu"
   },
   "os3832": {
    "source": "looking…",
@@ -7626,6 +7642,10 @@
   "os4844": {
    "source": "what it says",
    "text": "co říká"
+  },
+  "os4845": {
+   "source": "what upsmon needs",
+   "text": "co potřebuje upsmon"
   },
   "os4852": {
    "source": "where",
@@ -10846,6 +10866,478 @@
   "n45952": {
    "source": "went by itself",
    "text": "vyřešilo se samo"
+  },
+  "s46001": {
+   "source": "How SELinux is on this server and what upsmon needs of it - its module, the labels of its files, the booleans. The way to enforcing, one step at a time: disabled, made ready (permissive at the next start), what upsmon needs put in, then enforcing once nothing was refused. Nothing changes here unless asked.",
+   "text": "Jak je na tomto serveru SELinux a co od něj upsmon potřebuje – jeho modul, štítky jeho souborů, booleany. Cesta k režimu enforcing, krok za krokem: vypnuto, připraveno (při příštím startu permissive), vloženo, co upsmon potřebuje, a pak enforcing, jakmile už nic nebylo zamítnuto. Bez vyžádání se tu nic nemění."
+  },
+  "s46002": {
+   "source": "SELinux on this server: the mode, what upsmon needs of it, what it refused - and the way to enforcing.",
+   "text": "SELinux na tomto serveru: režim, co od něj upsmon potřebuje, co zamítl – a cesta k režimu enforcing."
+  },
+  "s46003": {
+   "source": "Download the report",
+   "text": "Stáhnout report"
+  },
+  "s46004": {
+   "source": "What SELinux refuses to the web server and the rest when it is enforcing - and what upsmon needs of it here. Nothing changes here unless asked: disabled stays disabled. On the server: upsmon --selinux-check.",
+   "text": "Co SELinux v režimu enforcing odepírá webovému serveru a ostatním – a co od něj upsmon tady potřebuje. Bez vyžádání se tu nic nemění: vypnutý zůstane vypnutý. Na serveru: upsmon --selinux-check."
+  },
+  "s46005": {
+   "source": "the folder of the daemon's token and port",
+   "text": "složka s tokenem a portem démona"
+  },
+  "s46006": {
+   "source": "the token the settings pages ask with",
+   "text": "token, kterým se ptají stránky nastavení"
+  },
+  "s46007": {
+   "source": "the token the dashboard asks with",
+   "text": "token, kterým se ptá dashboard"
+  },
+  "s46008": {
+   "source": "the pages",
+   "text": "stránky"
+  },
+  "s46009": {
+   "source": "Not ready for enforcing yet",
+   "text": "Zatím není připraveno na enforcing"
+  },
+  "s46010": {
+   "source": "Let it run a day or two as it is used - the pages, a backup, an upgrade - then look again.",
+   "text": "Nechte ho den nebo dva běžet při běžném používání – stránky, záloha, aktualizace – a pak se podívejte znovu."
+  },
+  "s46011": {
+   "source": "there is no SELinux on this machine",
+   "text": "na tomto stroji není SELinux"
+  },
+  "s46012": {
+   "source": "Put in what upsmon needs",
+   "text": "Vložit, co upsmon potřebuje"
+  },
+  "s46013": {
+   "source": "Switch to enforcing",
+   "text": "Přepnout na enforcing"
+  },
+  "s46014": {
+   "source": "upsmon's module (upsmon_server) is not installed",
+   "text": "modul upsmonu (upsmon_server) není nainstalovaný"
+  },
+  "s46015": {
+   "source": "upsmon's module (upsmon_server) installed",
+   "text": "modul upsmonu (upsmon_server) je nainstalovaný"
+  },
+  "s46016": {
+   "source": "auditd does not run - what SELinux refuses is not written down (systemctl enable --now auditd)",
+   "text": "auditd neběží – co SELinux zamítne, se nikam nezapisuje (systemctl enable --now auditd)"
+  },
+  "s46017": {
+   "source": "SELinux is enforcing, and stays so after a restart",
+   "text": "SELinux je v režimu enforcing a zůstane tak i po restartu"
+  },
+  "s46018": {
+   "source": "SELinux is permissive, and stays so after a restart",
+   "text": "SELinux je v režimu permissive a zůstane tak i po restartu"
+  },
+  "s46019": {
+   "source": "Put in what upsmon needs?",
+   "text": "Vložit, co upsmon potřebuje?"
+  },
+  "s46020": {
+   "source": "upsmon's module, the labels of its files and the booleans it needs are put in. Still permissive: nothing is refused.",
+   "text": "Vloží se modul upsmonu, štítky jeho souborů a booleany, které potřebuje. Stále permissive: nic se nezamítá."
+  },
+  "s46021": {
+   "source": "Switch to enforcing?",
+   "text": "Přepnout na enforcing?"
+  },
+  "s46022": {
+   "source": "From now on SELinux refuses what its policy does not allow - and stays enforcing after a restart. Nothing upsmon needs is missing and nothing was refused since the machine started. If something stops working, \"Back to permissive\" here (or setenforce 0 on the machine) undoes it at once.",
+   "text": "Od této chvíle SELinux zamítá, co jeho politika nedovoluje – a v režimu enforcing zůstane i po restartu. Nic, co upsmon potřebuje, nechybí a od startu stroje nebylo nic zamítnuto. Kdyby něco přestalo fungovat, „Zpět na permissive“ tady (nebo setenforce 0 na stroji) to hned vrátí."
+  },
+  "s46023": {
+   "source": "Nothing refused since the machine started",
+   "text": "Od startu stroje nic nezamítnuto"
+  },
+  "s46024": {
+   "source": "Nothing refused since upsmon's needs were put in",
+   "text": "Od vložení potřeb upsmonu nic nezamítnuto"
+  },
+  "s46025": {
+   "source": "Ready for enforcing",
+   "text": "Připraveno na enforcing"
+  },
+  "s46026": {
+   "source": "What SELinux refused cannot be read: ausearch is not on this machine (dnf install audit)",
+   "text": "Co SELinux zamítl, nelze přečíst: na stroji není ausearch (dnf install audit)"
+  },
+  "s46027": {
+   "source": "upsmon does not know this one yet",
+   "text": "Tohle upsmon zatím nezná"
+  },
+  "s46028": {
+   "source": "Everything upsmon knows it needs is in place - what was refused is something its module does not cover yet. \"Put in what upsmon needs\" changes nothing for it: download the report (top right) and send it, so that the module learns it.",
+   "text": "Vše, o čem upsmon ví, že potřebuje, je na místě – zamítnuto bylo něco, co jeho modul zatím nepokrývá. „Vložit, co upsmon potřebuje“ na tom nic nezmění: stáhněte report (vpravo nahoře) a pošlete ho, aby se to modul naučil."
+  },
+  "s46029": {
+   "source": "Enforcing - and everything upsmon needs is there",
+   "text": "Enforcing – a vše, co upsmon potřebuje, je na místě"
+  },
+  "s46030": {
+   "source": "Enforcing - but something is not as upsmon needs it",
+   "text": "Enforcing – ale něco není tak, jak upsmon potřebuje"
+  },
+  "s46031": {
+   "source": "Back to permissive",
+   "text": "Zpět na permissive"
+  },
+  "s46032": {
+   "source": "Back to permissive?",
+   "text": "Zpět na permissive?"
+  },
+  "s46033": {
+   "source": "SELinux no longer refuses anything - it only writes down what it would refuse - now and after a restart.",
+   "text": "SELinux už nic nezamítá – jen zapisuje, co by zamítl – teď i po restartu."
+  },
+  "s46034": {
+   "source": "The kernel's command line has selinux=0 - it stays off whatever the configuration says.",
+   "text": "Příkazová řádka jádra obsahuje selinux=0 – SELinux zůstane vypnutý, ať konfigurace říká cokoli."
+  },
+  "s46035": {
+   "source": "Disabled - upsmon runs as always. Made ready, it comes up permissive at the next restart of the machine: nothing is refused yet, only written down, and upsmon's own needs are put in. Enforcing comes after, once nothing was refused.",
+   "text": "Vypnuto – upsmon běží jako vždy. Po přípravě se při příštím restartu stroje spustí v režimu permissive: zatím se nic nezamítá, jen zapisuje, a vloží se, co upsmon potřebuje. Enforcing přijde potom, jakmile už nic nebude zamítnuto."
+  },
+  "s46036": {
+   "source": "Make it ready (permissive)",
+   "text": "Připravit (permissive)"
+  },
+  "s46037": {
+   "source": "Make SELinux ready?",
+   "text": "Připravit SELinux?"
+  },
+  "s46038": {
+   "source": "The configuration says permissive and every file is labelled at the next start of the machine; upsmon's module goes in. Nothing is refused while permissive - SELinux only writes down what it would refuse. The machine is not restarted now: restart it when it suits (Settings → Restart and power off).",
+   "text": "Konfigurace bude říkat permissive a při příštím startu stroje dostane štítek každý soubor; vloží se modul upsmonu. V režimu permissive se nic nezamítá – SELinux jen zapisuje, co by zamítl. Stroj se teď nerestartuje: restartujte ho, až se to hodí (Nastavení → Restart a vypnutí)."
+  },
+  "s46039": {
+   "source": "Make it ready",
+   "text": "Připravit"
+  },
+  "s46040": {
+   "source": "Put it in",
+   "text": "Vložit"
+  },
+  "s46041": {
+   "source": "Every file is labelled at the next start - it takes a few minutes before the machine answers.",
+   "text": "Při příštím startu dostane štítek každý soubor – než stroj začne odpovídat, potrvá to pár minut."
+  },
+  "s46042": {
+   "source": "Made ready - waiting for a restart of the machine",
+   "text": "Připraveno – čeká se na restart stroje"
+  },
+  "s46043": {
+   "source": "Restart it when it suits (Settings → Restart and power off). It comes up permissive; then look here again.",
+   "text": "Restartujte ho, až se to hodí (Nastavení → Restart a vypnutí). Naběhne v režimu permissive; pak se sem podívejte znovu."
+  },
+  "s46044": {
+   "source": "not on this machine",
+   "text": "na tomto stroji není"
+  },
+  "s46045": {
+   "source": "not said yet",
+   "text": "zatím neřečeno"
+  },
+  "s46046": {
+   "source": "enforcing",
+   "text": "enforcing"
+  },
+  "s46047": {
+   "source": "permissive",
+   "text": "permissive"
+  },
+  "s46048": {
+   "source": "disabled",
+   "text": "vypnuto"
+  },
+  "s46049": {
+   "source": "this one",
+   "text": "tento"
+  },
+  "s46050": {
+   "source": "looking…",
+   "text": "dívá se…"
+  },
+  "s46051": {
+   "source": "making it ready…",
+   "text": "připravuje se…"
+  },
+  "s46052": {
+   "source": "switching to enforcing…",
+   "text": "přepíná se na enforcing…"
+  },
+  "s46053": {
+   "source": "switching to permissive…",
+   "text": "přepíná se na permissive…"
+  },
+  "s46054": {
+   "source": "making its report…",
+   "text": "dělá se report…"
+  },
+  "s46055": {
+   "source": "asked…",
+   "text": "vyžádáno…"
+  },
+  "s46056": {
+   "source": "There is no SELinux on this machine - nothing to do.",
+   "text": "Na tomto stroji není SELinux – není co dělat."
+  },
+  "s46057": {
+   "source": "Not said yet - the server looks within a minute.",
+   "text": "Zatím neřečeno – server se podívá do minuty."
+  },
+  "s46058": {
+   "source": "Once nothing is missing and nothing was refused",
+   "text": "Až nebude nic chybět a nic nebude zamítnuto"
+  },
+  "s46059": {
+   "source": "asking for the report…",
+   "text": "žádá se o report…"
+  },
+  "s46060": {
+   "source": "the report is made",
+   "text": "report je hotový"
+  },
+  "s46061": {
+   "source": "the report is being made - a minute or two…",
+   "text": "report se dělá – minutu nebo dvě…"
+  },
+  "s46062": {
+   "source": "Downloaded. Look through avc*.txt in it before sending it on: the audit log holds the command lines of the programs SELinux refused something to.",
+   "text": "Staženo. Než ho pošlete dál, projděte v něm avc*.txt: auditní log obsahuje příkazové řádky programů, kterým SELinux něco zamítl."
+  },
+  "s46063": {
+   "source": "asked: it looks within seconds",
+   "text": "vyžádáno: podívá se během pár sekund"
+  },
+  "s46064": {
+   "source": "asked: SELinux is made ready within seconds",
+   "text": "vyžádáno: SELinux se připraví během pár sekund"
+  },
+  "s46065": {
+   "source": "asked: SELinux switches to enforcing within seconds",
+   "text": "vyžádáno: SELinux se během pár sekund přepne na enforcing"
+  },
+  "s46066": {
+   "source": "asked: SELinux switches to permissive within seconds",
+   "text": "vyžádáno: SELinux se během pár sekund přepne na permissive"
+  },
+  "s46067": {
+   "source": "asked: the report is made within a minute",
+   "text": "vyžádáno: report bude do minuty"
+  },
+  "s46068": {
+   "source": "Trusted roots of the system",
+   "text": "Důvěryhodné kořeny systému"
+  },
+  "s46069": {
+   "source": "Certificate authorities of your own - your company's root, an intermediate - trusted by the operating system of this server as a whole: curl, dnf, LDAPS to a domain controller, SMTP, syslog over TLS, upsmon's own connections - every program that uses the system's trust. The distribution's own list stays as it is and keeps coming with the system's updates; these are added beside it, the way the system itself takes local additions (update-ca-trust on RHEL, AlmaLinux and Rocky, update-ca-certificates on Debian and Ubuntu), and stay there through those updates.",
+   "text": "Vlastní certifikační autority – kořen vaší firmy, mezilehlá autorita – kterým věří celý operační systém tohoto serveru: curl, dnf, LDAPS k řadiči domény, SMTP, syslog přes TLS, vlastní spojení upsmonu – každý program, který používá důvěru systému. Vlastní seznam distribuce zůstává, jak je, a dál přichází s aktualizacemi systému; tyto se přidávají vedle něj, tak jak systém sám přijímá místní doplňky (update-ca-trust na RHEL, AlmaLinux a Rocky, update-ca-certificates na Debianu a Ubuntu), a zůstávají tam i přes ty aktualizace."
+  },
+  "s46070": {
+   "source": "upsmon has added none - this server trusts its system's own list alone.",
+   "text": "upsmon žádnou nepřidal – tento server věří jen vlastnímu seznamu systému."
+  },
+  "s46071": {
+   "source": "upsmon's own connections (mail, ACME, the remote backups, the new versions) use the system's list too - what is added here reaches them at their next connection.",
+   "text": "Vlastní spojení upsmonu (e-mail, ACME, vzdálené zálohy, nové verze) používají také seznam systému – co se přidá tady, uplatní se při jejich příštím spojení."
+  },
+  "s46072": {
+   "source": "as wanted",
+   "text": "jak má být"
+  },
+  "s46073": {
+   "source": "waiting",
+   "text": "čeká"
+  },
+  "s46074": {
+   "source": "failed",
+   "text": "selhalo"
+  },
+  "s46075": {
+   "source": "nothing added by upsmon",
+   "text": "upsmon nic nepřidal"
+  },
+  "s46076": {
+   "source": "this page",
+   "text": "tato stránka"
+  },
+  "s46077": {
+   "source": "The system's own list",
+   "text": "Vlastní seznam systému"
+  },
+  "s46078": {
+   "source": "Its package",
+   "text": "Jeho balíček"
+  },
+  "s46079": {
+   "source": "Made last",
+   "text": "Naposledy vytvořen"
+  },
+  "s46080": {
+   "source": "Local additions in",
+   "text": "Místní doplňky v"
+  },
+  "s46081": {
+   "source": "Made by",
+   "text": "Vytváří"
+  },
+  "s46082": {
+   "source": "upsmon's additions there",
+   "text": "Doplňky upsmonu tam"
+  },
+  "s46083": {
+   "source": "Read",
+   "text": "Načteno"
+  },
+  "s46084": {
+   "source": "not yet",
+   "text": "zatím ne"
+  },
+  "s46085": {
+   "source": "not there",
+   "text": "není tam"
+  },
+  "s46086": {
+   "source": "Added by somebody else - upsmon leaves them as they are:",
+   "text": "Přidal někdo jiný – upsmon je nechává, jak jsou:"
+  },
+  "s46087": {
+   "source": "its root is not among these - trusted by itself only where a partial chain is taken (curl, Python 3.13 on), unless the system's list has the root",
+   "text": "její kořen mezi nimi není – sama o sobě se jí věří jen tam, kde se bere i neúplný řetězec (curl, Python od 3.13), pokud kořen nemá seznam systému"
+  },
+  "s46088": {
+   "source": "Add to the system's trust",
+   "text": "Přidat do důvěry systému"
+  },
+  "s46089": {
+   "source": "Every program of this server trusts what they sign from then on.",
+   "text": "Od té chvíle každý program tohoto serveru věří tomu, co podepíšou."
+  },
+  "s46090": {
+   "source": "it is not a certificate authority (CA:FALSE) - a server's own certificate does not go here",
+   "text": "není to certifikační autorita (CA:FALSE) – vlastní certifikát serveru sem nepatří"
+  },
+  "s46091": {
+   "source": "it says nothing of being an authority (no basicConstraints CA:TRUE) - only a certificate authority goes here",
+   "text": "neříká, že je autorita (chybí basicConstraints CA:TRUE) – sem patří jen certifikační autorita"
+  },
+  "s46092": {
+   "source": "its key usage does not let it sign certificates (no keyCertSign)",
+   "text": "její použití klíče jí nedovoluje podepisovat certifikáty (chybí keyCertSign)"
+  },
+  "s46093": {
+   "source": "Take it out of the system's trust",
+   "text": "Vyjmout z důvěry systému"
+  },
+  "s46094": {
+   "source": "Add an authority",
+   "text": "Přidat autoritu"
+  },
+  "s46095": {
+   "source": "Read it again",
+   "text": "Načíst znovu"
+  },
+  "s46096": {
+   "source": "Download it (PEM)",
+   "text": "Stáhnout (PEM)"
+  },
+  "s46097": {
+   "source": "Authority",
+   "text": "Autorita"
+  },
+  "s46098": {
+   "source": "Issued by",
+   "text": "Vydal"
+  },
+  "s46099": {
+   "source": "Valid",
+   "text": "Platnost"
+  },
+  "s46100": {
+   "source": "Key",
+   "text": "Klíč"
+  },
+  "s46101": {
+   "source": "root",
+   "text": "kořen"
+  },
+  "s46102": {
+   "source": "intermediate",
+   "text": "mezilehlá"
+  },
+  "s46103": {
+   "source": "ran out",
+   "text": "vypršela"
+  },
+  "s46104": {
+   "source": "not taken",
+   "text": "nepřijato"
+  },
+  "s46105": {
+   "source": "there already",
+   "text": "už tam je"
+  },
+  "s46106": {
+   "source": "Add them",
+   "text": "Přidat je"
+  },
+  "s46107": {
+   "source": "a link",
+   "text": "odkaz"
+  },
+  "s46108": {
+   "source": "no certificate read",
+   "text": "žádný certifikát nenačten"
+  },
+  "s46109": {
+   "source": "not an authority",
+   "text": "není autorita"
+  },
+  "s46110": {
+   "source": "A root or an intermediate certificate authority of your own - pasted as PEM, or a .pem, .crt or .cer file; a file with a chain adds each authority in it.",
+   "text": "Vlastní kořenová nebo mezilehlá certifikační autorita – vložená jako PEM, nebo soubor .pem, .crt či .cer; soubor s řetězcem přidá každou autoritu v něm."
+  },
+  "s46111": {
+   "source": "A chain adds every authority in it.",
+   "text": "Řetězec přidá každou autoritu, kterou obsahuje."
+  },
+  "s46112": {
+   "source": "Only authorities are taken (CA:TRUE), never a private key.",
+   "text": "Přijímají se jen autority (CA:TRUE), nikdy soukromý klíč."
+  },
+  "s46113": {
+   "source": "asked: the trusted roots are read again within a minute",
+   "text": "vyžádáno: důvěryhodné kořeny se do minuty načtou znovu"
+  },
+  "s46114": {
+   "source": "taken away - the system no longer trusts it within a minute",
+   "text": "odebráno – systém jí do minuty přestane věřit"
+  },
+  "s46115": {
+   "source": "that file is far bigger than certificates are",
+   "text": "ten soubor je na certifikáty příliš velký"
+  },
+  "s46116": {
+   "source": "the SHA-256 fingerprint is copied",
+   "text": "otisk SHA-256 je zkopírovaný"
+  },
+  "s46117": {
+   "source": "nothing added: every certificate in it is there already",
+   "text": "nic nepřidáno: každý certifikát v tom už tam je"
+  },
+  "s46900": {
+   "source": "A certificate authority of your own - a root, or an intermediate - as PEM (-----BEGIN CERTIFICATE-----), or a .pem, .crt or .cer file. A chain adds every authority in it. Only authorities are taken (CA:TRUE), never a private key.",
+   "text": "Vlastní certifikační autorita – kořenová nebo mezilehlá – jako PEM (-----BEGIN CERTIFICATE-----), nebo soubor .pem, .crt či .cer. Řetězec přidá každou autoritu, kterou obsahuje. Přijímají se jen autority (CA:TRUE), nikdy soukromý klíč."
   }
  },
  "patterns": {
@@ -11100,6 +11592,10 @@
   "op0113": {
    "source": "Its {0} (only to read: it is not put back)",
    "text": "Jeho {0} (jen ke čtení: neobnovuje se)"
+  },
+  "op0115": {
+   "source": "LDAPS, {0}",
+   "text": "LDAPS, {0}"
   },
   "op0121": {
    "source": "Looked {0}: {1}",
@@ -11880,6 +12376,10 @@
   "op0599": {
    "source": "not restarted: {0} did not restart and come back",
    "text": "nerestartováno: {0} se nerestartoval a nevrátil"
+  },
+  "op0603": {
+   "source": "not taken: {0}",
+   "text": "nepřevzato: {0}"
   },
   "op0606": {
    "source": "nothing in that file is a setting this version keeps (it holds: {0})",
@@ -13624,6 +14124,70 @@
   "np45900": {
    "source": "done lately cleared ({0})",
    "text": "nedávno hotové vymazáno ({0})"
+  },
+  "p46001": {
+   "source": "SELinux refused {0} thing(s) since the machine started",
+   "text": "SELinux od startu stroje zamítl {0}×"
+  },
+  "p46002": {
+   "source": "SELinux refused {0} thing(s) since upsmon's needs were put in",
+   "text": "SELinux od vložení potřeb upsmonu zamítl {0}×"
+  },
+  "p46003": {
+   "source": "{0} refused before, allowed now - by a newer upsmon_server or a boolean put in since; not counted",
+   "text": "{0}× zamítnuto dříve, teď povoleno – novějším upsmon_server nebo booleanem vloženým od té doby; nepočítá se"
+  },
+  "p46004": {
+   "source": "What was refused ({0})",
+   "text": "Co bylo zamítnuto ({0})"
+  },
+  "p46005": {
+   "source": "After the next restart of the machine: {0}",
+   "text": "Po příštím restartu stroje: {0}"
+  },
+  "p46006": {
+   "source": "The configuration says {0}, but the kernel does not start SELinux - it is not switched on for it (the kernel's command line, or the distribution's own step such as selinux-activate).",
+   "text": "Konfigurace říká {0}, ale jádro SELinux nespouští – není pro něj zapnutý (příkazová řádka jádra, nebo vlastní krok distribuce jako selinux-activate)."
+  },
+  "p46007": {
+   "source": "Looked at {0}",
+   "text": "Podíváno {0}"
+  },
+  "p46008": {
+   "source": "{0} authorities",
+   "text": "{0} autorit"
+  },
+  "p46009": {
+   "source": "{0} days left",
+   "text": "zbývá {0} dní"
+  },
+  "p46010": {
+   "source": "added {0} - the system trusts them within a minute",
+   "text": "přidáno {0} – systém jim bude do minuty věřit"
+  },
+  "p46011": {
+   "source": "added {0} - the system trusts it within a minute",
+   "text": "přidáno {0} – systém jí bude do minuty věřit"
+  },
+  "p46012": {
+   "source": "valid {0} – {1} · {2}",
+   "text": "platnost {0} – {1} · {2}"
+  },
+  "p46013": {
+   "source": "What {0} (SHA-256 {1}…) signs is no longer trusted by this server - unless the system's own list has it. Connections that rely on it (LDAPS, mail, syslog…) fail from their next start.",
+   "text": "Tomu, co podepisuje {0} (SHA-256 {1}…), už tento server nebude věřit – pokud ji nemá vlastní seznam systému. Spojení, která na ní stojí (LDAPS, e-mail, syslog…), selžou od svého příštího startu."
+  },
+  "p46014": {
+   "source": "upsmon's own connections do not use the system's list here ({0}) - what is added here does not reach them.",
+   "text": "Vlastní spojení upsmonu tady seznam systému nepoužívají ({0}) – co se přidá tady, se k nim nedostane."
+  },
+  "p46900": {
+   "source": "the root helper did not answer in {0} s - is upsmon-web.path running?",
+   "text": "root helper neodpověděl do {0} s – běží upsmon-web.path?"
+  },
+  "p46901": {
+   "source": "the pages ask the daemon on 127.0.0.1:{0} and :{1}",
+   "text": "stránky se ptají démona na 127.0.0.1:{0} a :{1}"
   }
  },
  "rich": {

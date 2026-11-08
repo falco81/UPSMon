@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.5.1'
+readonly INSTALLER_VERSION='4.6.0'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -1321,6 +1321,9 @@ install_service() {
     if [[ -z "$DRY_RUN" ]]; then
         systemctl enable upsmon >/dev/null 2>&1 || true
         systemctl enable --now upsmon-web.path upsmon-upgrade.path >/dev/null 2>&1 || true
+        # What it watches for may have grown (4.6.0: selinux.ask, osroots.ask): a path unit
+        # keeps the files it watched until it is started again.
+        systemctl restart upsmon-web.path >/dev/null 2>&1 || true
     fi
     # The console when root signs in: on the first time, as otp has it.
     run install -m 644 "$SOURCE_DIR/deploy/upsmon-console-login.sh" "$CONSOLE_PROFILE"
@@ -1549,6 +1552,66 @@ PYNGINX
     good "serving $name over HTTPS: the dashboard at /, Settings at /settings/"
 }
 
+# SELinux (4.6.0, as otp 1.0.265): the tools Settings -> SELinux and upsmon --selinux-check
+# need, auditd where SELinux is on, and upsmon's module (upsmon_server.cil) - put into the
+# policy only when it changed since it was last put in. The mode is never touched here: a
+# machine with SELinux disabled stays disabled; the way to enforcing is asked on the pages.
+selinux_tools() {
+    [[ "${PKG:-}" == "dnf" ]] || return 0
+    [[ -d /etc/selinux || -x /usr/sbin/getenforce ]] || return 0
+    local want=() p
+    for p in policycoreutils libselinux-utils policycoreutils-python-utils audit selinux-policy-targeted; do
+        rpm -q "$p" >/dev/null 2>&1 || want+=("$p")
+    done
+    if (( ${#want[@]} )); then
+        if run dnf install -y "${want[@]}" >/dev/null 2>&1; then
+            good "SELinux: put in ${want[*]}"
+        else
+            warn "SELinux: ${want[*]} could not be put in (no repository reached?) - dnf install -y ${want[*]}"
+        fi
+    fi
+    if command -v getenforce >/dev/null 2>&1 && [[ "$(getenforce 2>/dev/null)" != "Disabled" ]] &&
+            command -v auditd >/dev/null 2>&1 && ! systemctl is-active --quiet auditd 2>/dev/null; then
+        # auditd refuses to be started by systemctl on some releases: service(8) then.
+        { run systemctl enable --now auditd >/dev/null 2>&1 || run service auditd start >/dev/null 2>&1; } &&
+            good "SELinux: auditd started - what SELinux refuses is written down" ||
+            warn "SELinux: auditd could not be started - systemctl enable --now auditd"
+    fi
+    return 0
+}
+
+selinux_module() {
+    selinux_tools
+    [[ -f "$SOURCE_DIR/deploy/upsmon_server.cil" ]] || return 0
+    local had=""
+    # Compared with the one last put into the policy, not with the copy beside the program:
+    # a semodule that failed once would leave the copy new and the policy old for good.
+    cmp -s "$SOURCE_DIR/deploy/upsmon_server.cil" "$LIB_DIR/upsmon_server.cil.in-policy" 2>/dev/null && had=1
+    run install -D -m 0644 "$SOURCE_DIR/deploy/upsmon_server.cil" "$LIB_DIR/upsmon_server.cil"
+    command -v getenforce >/dev/null 2>&1 || return 0
+    command -v semodule >/dev/null 2>&1 || return 0
+    [[ "$(getenforce)" == "Disabled" ]] && return 0
+    if [[ -z "$had" ]] || ! semodule -l 2>/dev/null | awk '$1=="upsmon_server"{f=1} END{exit !f}'; then
+        if run semodule -i "$LIB_DIR/upsmon_server.cil" 2>/dev/null; then
+            run install -m 0644 "$LIB_DIR/upsmon_server.cil" "$LIB_DIR/upsmon_server.cil.in-policy"
+            good "SELinux: upsmon's module (upsmon_server) is in the policy"
+        else
+            warn "SELinux: upsmon's module could not be put in: semodule -i $LIB_DIR/upsmon_server.cil"
+        fi
+    fi
+    [[ -d /run/upsmon ]] && command -v restorecon >/dev/null 2>&1 && run restorecon -R /run/upsmon 2>/dev/null || true
+    # Said when the policy does not label it: the pages could not read the daemon's token
+    # under enforcing - Settings -> SELinux says what else is missing.
+    if command -v matchpathcon >/dev/null 2>&1 && [[ -z "$DRY_RUN" ]]; then
+        local want=""
+        want="$(matchpathcon /run/upsmon 2>/dev/null || true)"
+        case "$want" in
+            *httpd_var_run_t*|*httpd_runtime_t*) ;;
+            *) warn "SELinux: the policy does not label /run/upsmon for the pages (${want:-nothing}) - upsmon --selinux-check";;
+        esac
+    fi
+}
+
 configure_selinux() {
     step "SELinux"
     if ! command -v getenforce >/dev/null 2>&1 || [[ $(getenforce) == Disabled ]]; then
@@ -1755,6 +1818,7 @@ do_upgrade() {
     create_user
     install_program
     install_service
+    selinux_module
     if [[ -n "$WITH_WEB" ]]; then
         install_web
         install_certificate
@@ -1783,6 +1847,10 @@ do_uninstall() {
     fi
 
     run systemctl disable --now upsmon upsmon-web.path upsmon-upgrade.path 2>/dev/null || true
+    # upsmon's SELinux module goes with it; the mode, booleans and ports are the machine's and stay.
+    if command -v semodule >/dev/null 2>&1 && semodule -l 2>/dev/null | awk '$1=="upsmon_server"{f=1} END{exit !f}'; then
+        run semodule -r upsmon_server >/dev/null 2>&1 || warn "SELinux: semodule -r upsmon_server failed"
+    fi
     run rm -f "$UNIT" /etc/logrotate.d/upsmon /etc/systemd/system/upsmon-web.path \
         /etc/systemd/system/upsmon-web.service /etc/systemd/system/upsmon-upgrade.path \
         /etc/systemd/system/upsmon-upgrade.service "$CONSOLE_PROFILE" "$CONSOLE_SYSCTL"
@@ -1820,6 +1888,7 @@ main() {
     install_program
     write_config
     install_service
+    selinux_module
     install_web
     install_certificate
     configure_nginx

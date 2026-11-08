@@ -3469,6 +3469,38 @@ body{padding-right:max(16px,env(safe-area-inset-right))}
 .nt-none svg{flex:none}
 .nt-done-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:16px 0 6px}
 .nt-done-head .nt-donehead{margin:0}
+.se-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px;margin-top:12px}
+.se-node{border:1px solid var(--line);border-radius:14px;background:var(--panel2);padding:14px 16px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.se-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.se-name{display:flex;align-items:center;gap:8px;font-size:15px;min-width:0}
+.se-mode{font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--tx-dim)}
+.se-enforcing .se-mode{color:var(--ok);border-color:rgba(63,185,80,.5);background:var(--ok-bg)}
+.se-permissive .se-mode{color:var(--warn);border-color:rgba(210,153,34,.5);background:var(--warn-bg)}
+.se-next{margin:0;font-size:12.5px;color:var(--warn)}
+.se-wait{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--info)}
+.se-wait .spin{width:13px;height:13px;border:2px solid var(--line);border-top-color:var(--info);border-radius:50%;animation:turn .9s linear infinite}
+.se-list{display:flex;flex-direction:column;border:1px solid var(--line);border-radius:10px;background:var(--panel);overflow:hidden}
+.se-row{display:flex;gap:10px;align-items:flex-start;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px}
+.se-row:last-child{border-bottom:0}
+.se-row .dot{margin-top:5px;flex:0 0 auto}
+.se-row-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+.se-what{color:var(--tx-dim);overflow-wrap:anywhere}
+.se-avc summary{cursor:pointer;font-size:13px}
+.se-avc-t{width:100%;border-collapse:collapse;margin-top:6px}
+.se-avc-t td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}
+.se-avc-t td.num{white-space:nowrap;text-align:right;color:var(--crit)}
+.se-verdict{display:flex;flex-direction:column;gap:3px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);font-size:13px}
+.se-verdict.good{border-color:rgba(63,185,80,.5);background:var(--ok-bg)}
+.se-verdict.ready{border-color:rgba(88,166,255,.5);background:var(--info-bg)}
+.se-verdict.bad{border-color:rgba(210,153,34,.5);background:var(--warn-bg)}
+.se-btns{margin-top:auto;padding-top:4px}
+.se-said{margin:0;list-style:none;padding:8px 12px;display:flex;flex-direction:column;gap:2px}
+/* the system's trusted roots (4.6.0) */
+.osr-area{width:100%;min-height:150px;font-size:12.5px}
+.osr-one{margin:8px 0 0}
+#osr-card .rowtools{white-space:nowrap}
+#osr-card .rowtools .iconbtn+.iconbtn{margin-left:6px}
+#se-host .se-card h2 .right{display:flex;gap:8px;flex-wrap:wrap}
 
 /* ---- upsmon 4.4.0: the load of the server in the header (ai) ---- */
 /* How busy the server is, in the header (from ai 1.0.72-1.0.76). Uses the colour tokens of :root (below). */

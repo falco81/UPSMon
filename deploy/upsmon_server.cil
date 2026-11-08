@@ -1,0 +1,25 @@
+; upsmon - what SELinux needs for upsmon that the system's policy does not say (4.6.0).
+; Installed by install.sh and by every upgrade where SELinux is on (semodule -i
+; upsmon_server.cil), taken away with semodule -r upsmon_server. Labels first; a narrow
+; rule only where no label or boolean does it, each in a block of its own.
+;
+; /run/upsmon holds the daemon's tokens and port (admin-token, admin-port, api-token). The
+; pages (php-fpm, httpd_t) read them; made by systemd as var_run_t, httpd_t may not read
+; it. Labelled as the web server's own run files, which httpd_t reads; the daemon
+; (unconfined_service_t) writes them as before.
+;
+; Both spellings: the policy reads a path through file_contexts.subs_dist first - on RHEL 8
+; "/run" is looked up as "/var/run", on newer policies the other way round - so a rule for one
+; of them alone may never be matched. The one never looked up does nothing.
+(filecon "/run/upsmon" dir (system_u object_r httpd_var_run_t ((s0) (s0))))
+(filecon "/run/upsmon/.*" any (system_u object_r httpd_var_run_t ((s0) (s0))))
+(filecon "/var/run/upsmon" dir (system_u object_r httpd_var_run_t ((s0) (s0))))
+(filecon "/var/run/upsmon/.*" any (system_u object_r httpd_var_run_t ((s0) (s0))))
+
+; systemd hands /run/upsmon back to the service's account before every command of the unit
+; (RuntimeDirectory=), ExecReload too: it may change the owner and the mode of what is in it -
+; "init_t -> httpd_var_run_t file { setattr }" under enforcing. Only that: no read, no write.
+; In a block of its own, so that a policy without one of the types still takes the rest.
+(optional upsmon_server_systemd_runtime
+    (allow init_t httpd_var_run_t (dir (getattr setattr search open read)))
+    (allow init_t httpd_var_run_t (file (getattr setattr))))
