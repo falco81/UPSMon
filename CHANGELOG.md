@@ -4,6 +4,17 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.6.1 - 2026-11-08
+
+- **The SELinux report: processes.txt was empty.** `ps -eZo ...` is refused by procps
+  ("can not use output modifiers with user-defined output") and the filter threw the
+  refusal away too. It is `ps -eo label,...` now - the domain each program runs in -
+  and a command that says nothing is said to have said nothing, with its exit code.
+- Looked through on a real AlmaLinux 9.8 (permissive): every label, the boolean and the
+  module as upsmon needs them; the only refusals (php-fpm -> 127.0.0.1:9849,
+  `name_connect`) were from the minute before `httpd_can_network_connect` was put in,
+  and are not counted since - ready for enforcing.
+
 ## 4.6.0 - 2026-11-08
 
 From otp 1.0.265 ("SELinux support and the system's trusted roots"), for one server.

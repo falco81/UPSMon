@@ -1762,7 +1762,10 @@ def _se_out(cmd, timeout=120, data=None, light=True):
         got = subprocess.run(cmd, input=data, capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.SubprocessError) as e:
         return '(%s: %s)\n' % (' '.join(cmd), e)
-    return _se_cut((got.stdout or '') + (('\n--- stderr ---\n' + got.stderr) if got.stderr.strip() else ''))
+    text = (got.stdout or '') + (('\n--- stderr ---\n' + got.stderr) if got.stderr.strip() else '')
+    if not text.strip():
+        text = '(%s said nothing - it ended with %d)\n' % (cmd[0], got.returncode)
+    return _se_cut(text)
 
 
 def se_report_parts(r):
@@ -1798,9 +1801,11 @@ def se_report_parts(r):
                 lab.append(_se_out(['ls', '-Za', p], 20, light=False).rstrip())
             lab.append('  policy says: ' + _se_out(['matchpathcon', p], 20, light=False).strip())
     parts['labels.txt'] = '\n'.join(lab) + '\n'
-    ps = _se_out(['ps', '-eZo', 'label,user,pid,comm,args'], 60, light=False)
-    parts['processes.txt'] = '\n'.join(x[:200] for x in ps.splitlines()
-                                       if x.startswith('LABEL') or any(c in x for c in SE_REPORT_COMMS)) + '\n'
+    # -o label alone (4.6.1): -Z with -o is refused by procps ("can not use output modifiers
+    # with user-defined output") - and the filter below threw that away, the file was empty.
+    ps = _se_out(['ps', '-eo', 'label,user,pid,comm,args'], 60, light=False)
+    keep = [x[:200] for x in ps.splitlines() if x.startswith('LABEL') or any(c in x for c in SE_REPORT_COMMS)]
+    parts['processes.txt'] = '\n'.join(keep if len(keep) > 1 else ps.splitlines()[:40]) + '\n'
     ports = _se_out(['semanage', 'port', '-l'], 300)
     parts['ports.txt'] = '==== labelled\n' + '\n'.join(
         x for x in ports.splitlines() if x.split()[:1] and x.split()[0] in SE_REPORT_PORT_TYPES) + \

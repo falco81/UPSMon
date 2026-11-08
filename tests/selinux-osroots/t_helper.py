@@ -160,6 +160,10 @@ import tarfile
 names = tarfile.open(os.path.join(W, 'state', 'web', 'selinux-report.tar.gz')).getnames()
 check('the report: a tar.gz with check.json, avc, labels, README', r['bytes'] > 0 and
       all(any(n.endswith(x) for n in names) for x in ('check.json', 'avc.txt', 'labels.txt', 'README.txt')), names)
+tf = tarfile.open(os.path.join(W, 'state', 'web', 'selinux-report.tar.gz'))
+proc = tf.extractfile([m for m in tf.getmembers() if m.name.endswith('processes.txt')][0]).read().decode()
+check('… processes.txt holds the domains (4.6.1: ps -eZo was refused, the file was empty)',
+      proc.startswith('LABEL') and len(proc.splitlines()) > 1, proc[:120])
 # selinux.ask through the folder, as the daemon asks it
 with open(os.path.join(W, 'state', 'web', 'selinux.ask'), 'w') as f:
     json.dump(dict(WANT, do='check', id='abc123'), f)
