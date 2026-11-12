@@ -4,6 +4,30 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.7.0 - 2026-11-12
+
+The same as acme 1.0.88 found on isemon: a certificate uploaded **without its
+intermediate** (the leaf alone, as many CAs mail it) was served by nginx alone. Browsers
+fetch the missing link themselves and said nothing; Python, curl, openssl, Java,
+monitoring and acme refused it ("unable to get local issuer certificate").
+
+- **The chain is completed as browsers do.** When what was uploaded (or ordered, or
+  pushed by acme) does not reach a root of the system's trust, the issuer is fetched from
+  the certificate's Authority Information Access -> CA Issuers (DER, PEM or PKCS#7),
+  up to four steps, and kept only when the chain then verifies against the system's
+  roots (or the root uploaded with it - a company CA). The root itself is never sent.
+  Fetched straight, never through the proxy.
+- **Checked against the system's roots** - before only against a root uploaded with it.
+  An upload that cannot be completed is kept with a clear warning and an event.
+- **Settings -> Certificates and TLS**, on the card: *Chain* - "complete (2
+  certificates up to …)" in green, or "incomplete - the intermediate … is not sent" in
+  red with why, and **Complete the chain** for the certificate already in place.
+- **Served**: once nginx has a certificate, upsmon connects to itself (127.0.0.1:443 with
+  its name) as a client that fetches nothing and says what nginx sends and whether that
+  is trusted - a failure is an event, not silence.
+- Already right, and kept so: nginx gets the certificate followed by its chain, the
+  intermediates in order and the root left out; ACME and acme push give the whole chain.
+
 ## 4.6.1 - 2026-11-08
 
 - **The SELinux report: processes.txt was empty.** `ps -eZo ...` is refused by procps

@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.6.1'
+__version__ = '4.7.0'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -3258,6 +3258,9 @@ def cert_bundle(cert='', key='', chain='', root='', pfx=b'', password='', pendin
         chain_out.append(nxt)
         inter.remove(nxt)
         at = infos[nxt]
+    # Missing or incomplete (4.7.0): completed from CA Issuers, as a browser does, and kept
+    # only when it then reaches a root the system (or the root given) trusts.
+    chain_out, chain_check = chain_complete(leaf, chain_out, roots)
     info = cert_info(leaf)
     verify = ''
     if roots:
@@ -3279,7 +3282,7 @@ def cert_bundle(cert='', key='', chain='', root='', pfx=b'', password='', pendin
     return {'cert': leaf + '\n', 'chain': ''.join(c + '\n' for c in chain_out),
             'root': ''.join(c + '\n' for c in roots), 'key': key_pem, 'info': info,
             'chain_info': [cert_info(c) for c in chain_out],
-            'root_info': [cert_info(c) for c in roots], 'verify': verify}
+            'root_info': [cert_info(c) for c in roots], 'verify': verify, 'chain_check': chain_check}
 
 
 def _san_ext(names):
@@ -3517,6 +3520,8 @@ def web_tick(store):
     h = web_hash(desired)
     if st.get('hash') == h:
         if st.get('state') == 'done':
+            # Served as it should be (4.7.0): upsmon asks itself once for each change.
+            web_self_check(store, node_name(), h)
             # Done, by root's last word - and nginx really has it (1.0.104):
             # a machine put back from its own backup, nginx set up again or
             # a file changed by hand is given what the database says again.
@@ -4279,7 +4284,7 @@ def acme_order(store, target, name, by, say=None):
                 | {'at': time.time()}))
         prof.update(cert=got['cert'], chain=got['chain'], root=got['root'],
                     key=seal_secret(got['key'], 'web:tls'), info=info,
-                    chain_info=got['chain_info'], root_info=got['root_info'],
+                    chain_info=got['chain_info'], root_info=got['root_info'], chain_check=got.get('chain_check'),
                     verify=got['verify'], how='ACME')
         if alt:
             prof['alt'] = alt
@@ -9266,6 +9271,7 @@ def _web(h):
                      'state': {t: acme_state(store, t) for t in tls_targets(store)},
                      'before': {t: acme_before(store, t) for t in tls_targets(store)}},
             'presets': TLS_PRESETS, 'dh': DH_WORDS,
+            'selfcheck': {t: _meta_json(store, 'web:selfcheck:' + t) for t in tls_targets(store)},
             'may': me.get('role') == 'fulladmin'}
 
 
@@ -9334,7 +9340,7 @@ def _web_do(h):
             raise ApiError(400, 'this certificate ran out on %s' % stamp(info['not_after']))
         prof.update(cert=got['cert'], chain=got['chain'], root=got['root'],
                     key=seal_secret(got['key'], 'web:tls'), info=info,
-                    chain_info=got['chain_info'], root_info=got['root_info'],
+                    chain_info=got['chain_info'], root_info=got['root_info'], chain_check=got.get('chain_check'),
                     verify=got['verify'], how=how)
         # A dual one keeps its twin (4.3.3); one alone leaves none beside it.
         if got.get('alt'):
@@ -9352,10 +9358,26 @@ def _web_do(h):
         store.add_event('settings', '%s put a certificate in for %s: %s%s (until %s)' % (
             who, words, info.get('subject'), ' and its ECDSA twin' if got.get('alt') else '',
             stamp(info.get('not_after')) if info.get('not_after') else '?'), 'warn', who=who)
+        ck = got.get('chain_check') or {}
+        if ck and not ck.get('ok') and not ck.get('self_signed'):
+            store.add_event('settings', 'the certificate of %s: %s (%s)' % (words, chain_words(ck), ck.get('error') or ''),
+                            'warn', who=who)
         return {'message': 'the certificate of %s is kept; the node%s put%s it in within a few '
                            'seconds' % (words, 's' if target == 'vip' else '',
-                                        '' if target == 'vip' else 's'),
+                                        '' if target == 'vip' else 's') + (
+                    ('. The chain: %s - clients other than browsers will refuse it: upload it with its '
+                     'chain (the intermediates after the certificate)' % chain_words(ck))
+                    if ck and not ck.get('ok') and not ck.get('self_signed') else
+                    ('. The chain was incomplete: %s fetched, as browsers do' % ', '.join(ck['fetched']))
+                    if ck.get('fetched') else ''),
                 'tls': tls_view(prof)}
+    if act == 'tls_chain':
+        try:
+            ck, said = tls_chain_complete(store, target, who)
+        except ValueError as e:
+            raise ApiError(400, str(e))
+        return {'message': '%s%s' % (chain_words(ck), (' - ' + '; '.join(said)) if said else ''),
+                'tls': tls_view(tls_profile(store, target)), 'chain_check': ck}
     if act == 'tls_csr':
         names = [x.strip() for x in re.split(r'[\s,;]+', str(b.get('names') or '')) if x.strip()]
         key, csr = make_csr(str(b.get('cn') or '').strip(), names, str(b.get('kind') or 'rsa2048'),
@@ -16167,6 +16189,236 @@ def cli_os_roots(args, pal, store, out):
 
 
 # ---------------------------------------------------------------------------
+# The whole chain (upsmon 4.7.0, as acme 1.0.88 found on isemon)
+# ---------------------------------------------------------------------------
+# nginx serves the certificate followed by its intermediates. When a certificate came
+# without them (uploaded alone, a CA's mail with the leaf only), browsers fetch the missing
+# link themselves from the certificate's Authority Information Access -> CA Issuers and say
+# nothing - but Python, curl, openssl, Java, monitoring and acme do not, and refuse the
+# connection. So it is completed here the way browsers do: the CA Issuers address of the
+# last one read, the issuer downloaded (DER, PEM or PKCS#7), until the chain reaches a root
+# of the system's trust (four steps at most). What was fetched is kept only when the chain
+# then verifies against the system's roots (or the root given with it) - a link, never an
+# anchor. Checked again after nginx has it: upsmon connects to itself as a client that
+# fetches nothing.
+CHAIN_STEPS = 4
+CHAIN_FETCH_MOST = 65536
+CHAIN_SYSTEM = ('/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem', '/etc/pki/tls/certs/ca-bundle.crt',
+                '/etc/ssl/certs/ca-certificates.crt')
+SELF_CHECK = {'hash': None, 'busy': False}
+
+
+def chain_system_bundle():
+    for f in CHAIN_SYSTEM:
+        if os.path.isfile(f):
+            return f
+    return ''
+
+
+def _chain_cn(text):
+    m = re.search(r'(?:^|,\s*|/)CN\s*=\s*([^,/]+)', str(text or ''))
+    return (m.group(1).strip() if m else str(text or '').strip())[:200]
+
+
+def chain_verify(leaf, chain, roots=()):
+    """(ok, words): the certificate and its chain against the system's roots - and the root
+    given with it, a company's own. Nothing is fetched."""
+    sysb = chain_system_bundle()
+    with tempfile.TemporaryDirectory(prefix='upsmon-chain-') as t:
+        def put(name, text):
+            p = os.path.join(t, name)
+            with open(p, 'w') as f:
+                f.write(text)
+            return p
+        anchors = (open(sysb).read() if sysb else '') + '\n' + ''.join(str(r).strip() + '\n' for r in roots or ())
+        if not anchors.strip():
+            return False, 'this machine has no list of trusted roots'
+        args = ['verify', '-CAfile', put('anchors.pem', anchors)]
+        if chain:
+            args += ['-untrusted', put('chain.pem', ''.join(str(c).strip() + '\n' for c in chain))]
+        args.append(put('leaf.pem', str(leaf).strip() + '\n'))
+        try:
+            _openssl(args, what='the chain')
+            return True, 'ok'
+        except ValueError as e:
+            return False, str(e)
+
+
+def chain_aia(pem):
+    """The CA Issuers address of a certificate (http:// or https://), or ''."""
+    try:
+        txt = _openssl(['x509', '-noout', '-text'], data=str(pem).encode('ascii', 'replace'),
+                       what='the certificate').decode('utf-8', 'replace')
+    except ValueError:
+        return ''
+    m = re.search(r'CA Issuers - URI:(https?://[^\s,]+)', txt)
+    return m.group(1).strip()[:400] if m else ''
+
+
+def chain_fetch(url):
+    """The certificates at a CA Issuers address, as PEM - DER, PEM or PKCS#7 (.p7c) - fetched
+    straight (never through the proxy: it is the CA's own address, as a browser asks it)."""
+    import urllib.request
+    if not re.match(r'^https?://[A-Za-z0-9.-]+(:\d+)?/', url):
+        raise ValueError('not an address a certificate says: %s' % url[:120])
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(url, headers={'User-Agent': 'upsmon/%s' % __version__})
+    with opener.open(req, timeout=10) as r:
+        raw = r.read(CHAIN_FETCH_MOST + 1)
+    if len(raw) > CHAIN_FETCH_MOST:
+        raise ValueError('%s gave far more than a certificate' % url[:120])
+    if b'-----BEGIN' in raw:
+        text = raw.decode('ascii', 'replace')
+    else:
+        text = ''
+        for args in (['x509', '-inform', 'DER'], ['pkcs7', '-inform', 'DER', '-print_certs'],
+                     ['pkcs7', '-print_certs']):
+            try:
+                text = _openssl(args, data=raw, what='what %s gave' % url[:80]).decode('ascii', 'replace')
+                break
+            except ValueError:
+                continue
+    out = [m.group(0) for m in PEM_CERT.finditer(text)]
+    if not out:
+        raise ValueError('%s gave no certificate' % url[:120])
+    return out
+
+
+def chain_complete(leaf, chain, roots=()):
+    """The chain as nginx should send it, and what was found: (chain, check).
+    check = {ok, count, top, fetched: [cn], missing, error, self_signed}."""
+    chain = [str(c).strip() for c in chain or [] if str(c).strip()]
+    info = cert_info(leaf)
+    check = {'ok': False, 'count': 1 + len(chain), 'top': '', 'fetched': [], 'missing': '', 'error': '',
+             'self_signed': bool(info.get('self_signed')), 'at': time.time()}
+    if check['self_signed']:
+        return chain, check
+    ok, words = chain_verify(leaf, chain, roots)
+    fetched = []
+    steps = 0
+    while not ok and steps < CHAIN_STEPS:
+        steps += 1
+        last = chain[-1] if chain else leaf
+        want = (cert_info(last) or {}).get('issuer')
+        url = chain_aia(last)
+        if not url:
+            break
+        try:
+            got = chain_fetch(url)
+        except Exception as e:                          # noqa: BLE001
+            check['error'] = 'the issuer could not be fetched from %s: %s' % (url, str(e)[:160])
+            break
+        nxt = next((c for c in got if cert_info(c).get('subject') == want), None)
+        if not nxt:
+            check['error'] = '%s gave a certificate of another authority than %s' % (url, _chain_cn(want))
+            break
+        if cert_info(nxt).get('self_signed'):
+            break                                       # a root: never sent, the clients have it
+        if nxt in chain:
+            break
+        chain.append(nxt)
+        fetched.append(nxt)
+        ok, words = chain_verify(leaf, chain, roots)
+    if fetched and not ok:
+        # Fetched and still not reaching a trusted root: nothing of it kept.
+        chain = chain[:len(chain) - len(fetched)]
+        fetched = []
+        ok, words = chain_verify(leaf, chain, roots)
+    last = chain[-1] if chain else leaf
+    check.update(ok=ok, count=1 + len(chain), fetched=[_chain_cn(cert_info(c).get('subject')) for c in fetched],
+                 top=_chain_cn((cert_info(last) or {}).get('issuer')))
+    if not ok:
+        check['missing'] = _chain_cn((cert_info(last) or {}).get('issuer'))
+        check['error'] = check['error'] or words
+    return chain, check
+
+
+def chain_words(check):
+    """One line for the card and the events."""
+    if not check:
+        return ''
+    if check.get('self_signed'):
+        return 'self-signed - no chain; clients trust it only when told to'
+    if check.get('ok'):
+        return 'complete (%d certificate%s up to %s)%s' % (
+            check['count'], '' if check['count'] == 1 else 's', check.get('top') or '?',
+            (' - %s fetched as browsers do' % ', '.join(check['fetched'])) if check.get('fetched') else '')
+    return 'incomplete - the intermediate %s is not sent' % (check.get('missing') or '?')
+
+
+def chain_split(text):
+    return [m.group(0) for m in PEM_CERT.finditer(str(text or ''))]
+
+
+def tls_chain_complete(store, target, by):
+    """Complete the chain of the certificate in place (and of its twin)."""
+    prof = tls_profile(store, target) or {}
+    if not prof.get('cert'):
+        raise ValueError('there is no certificate of its own here to complete')
+    roots = chain_split(prof.get('root'))
+    chain, check = chain_complete(prof['cert'], chain_split(prof.get('chain')), roots)
+    said = []
+    if chain_split(prof.get('chain')) != chain:
+        prof.update(chain=''.join(c + '\n' for c in chain), chain_info=[cert_info(c) for c in chain])
+        said.append('the chain completed: %s' % ', '.join(check['fetched']))
+    prof['chain_check'] = check
+    alt = prof.get('alt')
+    if isinstance(alt, dict) and alt.get('cert'):
+        c2, k2 = chain_complete(alt['cert'], chain_split(alt.get('chain')), roots)
+        if chain_split(alt.get('chain')) != c2:
+            alt['chain'] = ''.join(c + '\n' for c in c2)
+            said.append('the ECDSA twin\'s chain completed: %s' % ', '.join(k2['fetched']))
+        alt['chain_check'] = k2
+    tls_save(store, target, prof, by)
+    store.add_event('settings', '%s: the chain of the certificate of %s - %s' % (
+        by, target, chain_words(check)), 'info' if check['ok'] else 'warn', who=by)
+    return check, said
+
+
+def web_self_check(store, target, hash_):
+    """Once nginx has a certificate: upsmon asks itself as a client that fetches nothing
+    (openssl s_client against the system's roots) - what it sends, and whether that is
+    trusted. A failure is an event, not silence."""
+    if SELF_CHECK['busy'] or SELF_CHECK['hash'] == hash_:
+        return
+    SELF_CHECK.update(busy=True, hash=hash_)
+
+    def go():
+        try:
+            prof = tls_profile(store, target) or {}
+            info = prof.get('info') or {}
+            name = (info.get('san') or [None])[0] or _chain_cn(info.get('subject')) or node_name()
+            name = re.sub(r'^\*\.', 'www.', str(name))
+            row = {'at': time.time(), 'name': name, 'ok': False, 'sent': 0, 'said': ''}
+            sysb = chain_system_bundle()
+            cmd = ['openssl', 's_client', '-connect', '127.0.0.1:%s' % os.environ.get('UPSMON_SELFCHECK_PORT', '443'), '-servername', name, '-showcerts']
+            if sysb:
+                cmd += ['-CAfile', sysb]
+            try:
+                got = subprocess.run(cmd, input=b'', capture_output=True, timeout=20)
+                out = got.stdout.decode('utf-8', 'replace')
+                row['sent'] = out.count('-----BEGIN CERTIFICATE-----')
+                m = re.search(r'Verify return code: (\d+) \(([^)]*)\)', out)
+                row['ok'] = bool(m and m.group(1) == '0')
+                row['said'] = (m.group(2) if m else (got.stderr.decode('utf-8', 'replace').strip().splitlines() or
+                                                      ['no answer'])[-1])[:200]
+            except (OSError, subprocess.SubprocessError) as e:
+                row['said'] = str(e)[:200]
+            row['self_signed'] = bool(info.get('self_signed'))
+            store.set_meta('web:selfcheck:' + target, json.dumps(row))
+            if not row['ok'] and not row['self_signed'] and row['sent']:
+                store.add_event('settings', 'nginx on %s sends %d certificate(s) for %s, and a client that '
+                                'fetches nothing does not trust them: %s' % (node_name(), row['sent'], name,
+                                                                             row['said']), 'warn')
+                log('the web certificate as served is not trusted by a plain client: %s' % row['said'], 'warn')
+        except Exception as e:                          # noqa: BLE001
+            log_sparing('web-selfcheck', 'the self-check of the web certificate: %s' % e, 'warn', every=3600)
+        finally:
+            SELF_CHECK['busy'] = False
+    threading.Thread(target=go, name='upsmon-selfcheck', daemon=True).start()
+
+
+# ---------------------------------------------------------------------------
 # The database: SQLite, /var/lib/upsmon/upsmon.db
 # ---------------------------------------------------------------------------
 class DbError(Exception):
@@ -18028,7 +18280,7 @@ def cli_main(args, ups_status=None):
             prof = tls_profile(store, me) or {}
             prof.update(cert=got['cert'], chain=got['chain'], root=got['root'],
                         key=seal_secret(got['key'], 'web:tls'), info=got['info'],
-                        chain_info=got['chain_info'], root_info=got['root_info'],
+                        chain_info=got['chain_info'], root_info=got['root_info'], chain_check=got.get('chain_check'),
                         verify=got['verify'], how='self-signed, made here')
             prof.pop('pending_key', None)
             prof.pop('csr', None)

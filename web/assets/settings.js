@@ -3684,6 +3684,36 @@ function loadWeb() {
     apiLatest('web', 'web').then(function (d) { liveRun(function () { drawWeb(d); }); }).catch(function () {});
   }, 5000);
 }
+/* The chain of a certificate in place (4.7.0): complete up to a root of the system's trust,
+   or what is missing - with Complete the chain, done as browsers do (CA Issuers). */
+function chainFact(prof, target, d) {
+  var box = el('span', 'chain-fact');
+  var c = prof.chain_check;
+  if (!c) {
+    box.appendChild(el('span', '', prof.chain_info ? (prof.chain_info.length + ' between it and the root') : '–'));
+  } else if (c.self_signed) {
+    box.appendChild(el('span', 'muted', 'self-signed - no chain; clients trust it only when told to'));
+  } else if (c.ok) {
+    box.appendChild(el('span', 'good', 'complete (' + c.count + ' certificate(s) up to ' + (c.top || '?') + ')'));
+    if ((c.fetched || []).length) box.appendChild(el('span', 'muted small', ' - ' + c.fetched.join(', ') + ' fetched, as browsers do'));
+  } else {
+    box.appendChild(el('span', 'bad', 'incomplete - the intermediate ' + (c.missing || '?') + ' is not sent'));
+    if (c.error) box.appendChild(noI18n(el('span', 'muted small chain-why', ' (' + c.error + ')')));
+  }
+  if (d.may && prof.cert && c && !c.ok && !c.self_signed || (d.may && prof.cert && !c)) {
+    var b = cmdButton(c ? 'Complete the chain' : 'Check the chain', 'refresh', 'small');
+    b.style.marginLeft = '8px';
+    b.onclick = function () {
+      busy(b, true);
+      api('web', {action: 'tls_chain', target: target}).then(function (r) {
+        toast(r.message, r.chain_check && r.chain_check.ok ? 'good' : 'warn');
+        loadWeb();
+      }).catch(oops).then(function () { busy(b, false); });
+    };
+    box.appendChild(b);
+  }
+  return box;
+}
 function daysLeft(ts) { return ts ? Math.floor((ts - Date.now() / 1000) / 86400) : null; }
 function certTone(days) { return days === null ? 'dim' : (days < 0 ? 'crit' : (days < 21 ? 'warn' : 'ok')); }
 function webTargetWords(t) { return t === 'vip' ? 'the VIP address' : t; }
@@ -3735,10 +3765,14 @@ function certCard(d, target) {
                  ['Key', (info.key || '–') + (prof && prof.alt && prof.alt.info && prof.alt.info.key ? ' + ' + prof.alt.info.key + ' (a second certificate beside it)' : '')]];
     if (info.san && info.san.length) facts.push(['Names', noI18n(el('span', '', info.san.join(', ')))]);
     if (prof) {
-      facts.push(['Chain', prof.chain_info ? (prof.chain_info.length + ' between it and the root') : '–']);
+      facts.push(['Chain', chainFact(prof, target, d)]);
       facts.push(['Root', prof.root_info && prof.root_info.length ? noI18n(el('span', '', prof.root_info[0].cn || 'given')) : 'not given']);
       if (prof.verify) facts.push(['Checked', prof.verify === 'ok' ? el('span', 'good', 'the chain leads to the root') : el('span', 'bad', prof.verify)]);
     }
+    var sc = (d.selfcheck || {})[target];
+    if (sc && sc.at && !(info && info.self_signed)) facts.push(['Served', el('span', sc.ok ? 'good' : 'bad', sc.ok
+      ? 'nginx sends ' + sc.sent + ' certificate(s) - a client that fetches nothing trusts them'
+      : 'nginx sends ' + sc.sent + ' certificate(s) - a client that fetches nothing refuses them: ' + (sc.said || '?'))]);
     var kv = el('dl', 'cert-kv');
     facts.forEach(function (f) {
       kv.appendChild(el('dt', '', f[0]));

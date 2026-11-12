@@ -11338,6 +11338,22 @@
   "s46900": {
    "source": "A certificate authority of your own - a root, or an intermediate - as PEM (-----BEGIN CERTIFICATE-----), or a .pem, .crt or .cer file. A chain adds every authority in it. Only authorities are taken (CA:TRUE), never a private key.",
    "text": "Vlastní certifikační autorita – kořenová nebo mezilehlá – jako PEM (-----BEGIN CERTIFICATE-----), nebo soubor .pem, .crt či .cer. Řetězec přidá každou autoritu, kterou obsahuje. Přijímají se jen autority (CA:TRUE), nikdy soukromý klíč."
+  },
+  "s47001": {
+   "source": "self-signed - no chain; clients trust it only when told to",
+   "text": "self-signed – bez řetězce; klienti mu věří, jen když se jim to řekne"
+  },
+  "s47002": {
+   "source": "Complete the chain",
+   "text": "Doplnit řetězec"
+  },
+  "s47003": {
+   "source": "Check the chain",
+   "text": "Zkontrolovat řetězec"
+  },
+  "s47004": {
+   "source": "Served",
+   "text": "Posílá"
   }
  },
  "patterns": {
@@ -14188,6 +14204,38 @@
   "p46901": {
    "source": "the pages ask the daemon on 127.0.0.1:{0} and :{1}",
    "text": "stránky se ptají démona na 127.0.0.1:{0} a :{1}"
+  },
+  "p47001": {
+   "source": "complete ({0} certificate(s) up to {1})",
+   "text": "úplný ({0} certifikát(y) až po {1})"
+  },
+  "p47002": {
+   "source": "complete ({0} certificates up to {1})",
+   "text": "úplný ({0} certifikáty až po {1})"
+  },
+  "p47003": {
+   "source": "incomplete - the intermediate {0} is not sent",
+   "text": "neúplný – mezilehlá autorita {0} se neposílá"
+  },
+  "p47004": {
+   "source": "- {0} fetched, as browsers do",
+   "text": "– {0} doplněna, jako to dělají prohlížeče"
+  },
+  "p47005": {
+   "source": "nginx sends {0} certificate(s) - a client that fetches nothing trusts them",
+   "text": "nginx posílá {0} certifikát(y) – klient, který nic nedohledává, jim věří"
+  },
+  "p47006": {
+   "source": "nginx sends {0} certificate(s) - a client that fetches nothing refuses them: {1}",
+   "text": "nginx posílá {0} certifikát(y) – klient, který nic nedohledává, je odmítne: {1}"
+  },
+  "p47007": {
+   "source": "the certificate of {0} is kept; the node puts it in within a few seconds. The chain was incomplete: {1} fetched, as browsers do",
+   "text": "certifikát pro {0} je uložený; uzel ho během pár sekund nasadí. Řetězec byl neúplný: {1} doplněna, jako to dělají prohlížeče"
+  },
+  "p47008": {
+   "source": "the certificate of {0} is kept; the node puts it in within a few seconds. The chain: {1} - clients other than browsers will refuse it: upload it with its chain (the intermediates after the certificate)",
+   "text": "certifikát pro {0} je uložený; uzel ho během pár sekund nasadí. Řetězec: {1} – jiní klienti než prohlížeče ho odmítnou: nahrajte ho i s řetězcem (mezilehlé autority za certifikátem)"
   }
  },
  "rich": {

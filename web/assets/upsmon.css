@@ -3501,6 +3501,12 @@ body{padding-right:max(16px,env(safe-area-inset-right))}
 #osr-card .rowtools{white-space:nowrap}
 #osr-card .rowtools .iconbtn+.iconbtn{margin-left:6px}
 #se-host .se-card h2 .right{display:flex;gap:8px;flex-wrap:wrap}
+/* the whole chain (4.7.0): complete in green, incomplete in red */
+.chain-fact .good{color:var(--ok)}
+.chain-fact .bad{color:var(--crit)}
+.chain-fact .chain-why{display:block;font-weight:400}
+.cert-kv dd .good{color:var(--ok)}
+.cert-kv dd .bad{color:var(--crit)}
 
 /* ---- upsmon 4.4.0: the load of the server in the header (ai) ---- */
 /* How busy the server is, in the header (from ai 1.0.72-1.0.76). Uses the colour tokens of :root (below). */
