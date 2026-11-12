@@ -391,6 +391,10 @@
    "source": "Add an empty column to the right",
    "text": "Přidat prázdný sloupec vpravo"
   },
+  "os0323": {
+   "source": "Add it",
+   "text": "Přidat"
+  },
   "os0326": {
    "source": "Address",
    "text": "Adresa"
@@ -11354,6 +11358,50 @@
   "s47004": {
    "source": "Served",
    "text": "Posílá"
+  },
+  "s471001": {
+   "source": "self-signed - no chain; whoever connects must trust this certificate itself",
+   "text": "self-signed – bez řetězce; kdo se připojuje, musí věřit přímo tomuto certifikátu"
+  },
+  "s471002": {
+   "source": "incomplete - what nginx sends does not lead to a root of the system: curl, Python, monitoring and other clients refuse it",
+   "text": "neúplný – co nginx posílá, nevede ke kořeni systému: curl, Python, monitoring a další klienti to odmítnou"
+  },
+  "s471003": {
+   "source": "checked as a client that fetches nothing: the whole chain is sent",
+   "text": "ověřeno jako klient, který nic nedohledává: posílá se celý řetězec"
+  },
+  "s471004": {
+   "source": "Upload the missing authority",
+   "text": "Nahrát chybějící autoritu"
+  },
+  "s471005": {
+   "source": "Add it to the chain",
+   "text": "Přidat do řetězce"
+  },
+  "s471006": {
+   "source": "Missing in the chain:",
+   "text": "V řetězci chybí:"
+  },
+  "s471007": {
+   "source": "The certificate of that authority - the intermediate (or several) your certificate authority gives with the certificate, often called \"CA bundle\", \"intermediate\" or \"chain\" - as PEM or a .cer / .crt file. Only certificates of authorities, never a key; the certificate and its key stay as they are. A root is kept to check with and never sent.",
+   "text": "Certifikát té autority – mezilehlá (nebo několik), kterou certifikační autorita dává k certifikátu, často pod názvem „CA bundle“, „intermediate“ nebo „chain“ – jako PEM nebo soubor .cer / .crt. Jen certifikáty autorit, nikdy klíč; certifikát a jeho klíč zůstávají, jak jsou. Kořen se uloží ke kontrole a nikdy se neposílá."
+  },
+  "s471008": {
+   "source": "Checked against the system's root authorities; an intermediate the certificate did not come with is fetched from its CA Issuers address, as browsers do it - so that curl, Python, monitoring and other clients that fetch nothing take it too.",
+   "text": "Ověří se proti kořenovým autoritám systému; mezilehlá autorita, která s certifikátem nepřišla, se stáhne z adresy CA Issuers, jak to dělají prohlížeče – aby ho přijali i curl, Python, monitoring a další klienti, kteří nic nedohledávají."
+  },
+  "s471009": {
+   "source": "only the certificates of the authorities - no private key",
+   "text": "jen certifikáty autorit – žádný soukromý klíč"
+  },
+  "s471010": {
+   "source": "every certificate in it is there already",
+   "text": "každý certifikát v tom už tam je"
+  },
+  "s471011": {
+   "source": "no certificate in it (-----BEGIN CERTIFICATE-----, or a .cer file)",
+   "text": "není v tom žádný certifikát (-----BEGIN CERTIFICATE-----, nebo soubor .cer)"
   }
  },
  "patterns": {
@@ -14236,6 +14284,62 @@
   "p47008": {
    "source": "the certificate of {0} is kept; the node puts it in within a few seconds. The chain: {1} - clients other than browsers will refuse it: upload it with its chain (the intermediates after the certificate)",
    "text": "certifikát pro {0} je uložený; uzel ho během pár sekund nasadí. Řetězec: {1} – jiní klienti než prohlížeče ho odmítnou: nahrajte ho i s řetězcem (mezilehlé autority za certifikátem)"
+  },
+  "p471001": {
+   "source": "complete - {0} certificates up to {1}",
+   "text": "úplný – {0} certifikáty až po {1}"
+  },
+  "p471002": {
+   "source": "complete - {0} certificate up to {1}",
+   "text": "úplný – {0} certifikát až po {1}"
+  },
+  "p471003": {
+   "source": "complete - {0} certificates up to {1} (fetched: {2} - it was not sent with the certificate)",
+   "text": "úplný – {0} certifikáty až po {1} (doplněno: {2} – s certifikátem nepřišla)"
+  },
+  "p471004": {
+   "source": "complete - {0} certificates up to {1} - a private root: only clients that trust it take it",
+   "text": "úplný – {0} certifikáty až po {1} – soukromý kořen: přijmou ho jen klienti, kteří mu věří"
+  },
+  "p471005": {
+   "source": "complete - {0} certificates up to {1} (fetched: {2} - it was not sent with the certificate) - a private root: only clients that trust it take it",
+   "text": "úplný – {0} certifikáty až po {1} (doplněno: {2} – s certifikátem nepřišla) – soukromý kořen: přijmou ho jen klienti, kteří mu věří"
+  },
+  "p471006": {
+   "source": "incomplete - the authority {0} is not sent and could not be completed ({1}); curl, Python, monitoring and other clients refuse it - only browsers fetch it themselves; send the certificate with its chain, or, for a private CA, its root to the clients",
+   "text": "neúplný – autorita {0} se neposílá a nešlo ji doplnit ({1}); curl, Python, monitoring a další klienti ho odmítnou – jen prohlížeče si ji dohledají samy; nahrajte certifikát i s řetězcem, nebo u soukromé CA dejte klientům její kořen"
+  },
+  "p471007": {
+   "source": "it leads to {0}, a root the system does not trust (a private CA?) - the chain is complete; the clients (curl, monitoring, acme) must trust that root, or give its root here (Upload the missing authority)",
+   "text": "vede k {0}, kořeni, kterému systém nevěří (soukromá CA?) – řetězec je úplný; klienti (curl, monitoring, acme) musí tomu kořeni věřit, nebo ho sem nahrajte (Nahrát chybějící autoritu)"
+  },
+  "p471008": {
+   "source": "a client that fetches nothing (curl, Python, monitoring) refuses what nginx sends: {0}",
+   "text": "klient, který nic nedohledává (curl, Python, monitoring), odmítne, co nginx posílá: {0}"
+  },
+  "p471009": {
+   "source": "what nginx sends could not be checked: {0}",
+   "text": "co nginx posílá, nešlo ověřit: {0}"
+  },
+  "p471010": {
+   "source": "the certificate of {0} is kept; the node puts it in within a few seconds. The chain: {1}",
+   "text": "certifikát pro {0} je uložený; uzel ho během pár sekund nasadí. Řetězec: {1}"
+  },
+  "p471011": {
+   "source": "none of these is the authority that signed the chain's last certificate ({0})",
+   "text": "žádný z nich není autorita, která podepsala poslední certifikát řetězce ({0})"
+  },
+  "p471012": {
+   "source": "{0} names no CA Issuers address to fetch it from",
+   "text": "{0} neuvádí adresu CA Issuers, odkud by šla stáhnout"
+  },
+  "p471013": {
+   "source": "the authority {0} could not be fetched from {1}: {2}",
+   "text": "autoritu {0} nešlo stáhnout z {1}: {2}"
+  },
+  "p471014": {
+   "source": "{0} does not hold the authority {1}",
+   "text": "{0} neobsahuje autoritu {1}"
   }
  },
  "rich": {

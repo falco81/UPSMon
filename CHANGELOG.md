@@ -4,6 +4,30 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.7.1 - 2026-11-12
+
+The whole chain as plexmon 2.9.8 describes it, for every application of ours.
+
+- **Upload the missing authority** - when the intermediate cannot be fetched (no CA
+  Issuers address, no way out, a private CA): a dialog says which authority is missing
+  and takes it as PEM or a .cer / .crt file (Read a file…). Only certificates of
+  authorities, never a key; the certificate and its key stay; a root is kept to check
+  with and never sent; one that is not the issuer of the chain's last link is refused.
+- **A private CA**: a chain that leads to a root the system does not trust is said so
+  ("it leads to …, a root the system does not trust (a private CA?)"); with its root
+  uploaded it is complete - "a private root: only clients that trust it take it".
+- On the card's buttons: **Complete the chain** (primary, when it is incomplete) or
+  **Check the chain**, and Upload the missing authority beside it; none for a
+  self-signed one. The words of each state as described; *Chain* green or red.
+- **The file nginx has now** is checked too (the system's roots, nothing fetched),
+  kept by the file's time - a certificate put in before this version is caught.
+- The self-check after nginx reloads asks as Python does, with the root kept for a
+  private CA; "checked as a client that fetches nothing: the whole chain is sent", or an
+  event when refused.
+- The answers say `complete`, never `ok: false` (the pages took that for an error with no
+  words); openssl's words without the paths of its temporary files; what was fetched is
+  kept a day, at most 256 kB each.
+
 ## 4.7.0 - 2026-11-12
 
 The same as acme 1.0.88 found on isemon: a certificate uploaded **without its

@@ -1,9 +1,9 @@
-"""The whole chain (4.7.0): a certificate uploaded without its intermediate is completed
-from CA Issuers as browsers do - kept only when it then reaches a trusted root; a chain
-given is ordered and kept; a fetch that fails or gives another authority keeps nothing.
-A CA of its own: a root (as the system's), an intermediate served over HTTP at the address
-in the leaf's AIA, as DER, PEM and PKCS#7. python3 tests/chain/t_chain.py"""
-import http.server, json, os, subprocess, sys, tempfile, threading
+"""The whole chain (4.7.0, 4.7.1 as plexmon 2.9.8 describes it): checked against the system's
+roots, completed from CA Issuers as browsers do, the missing authority uploaded by hand, a
+private CA's root, the file nginx has now, and upsmon asking itself as a client that fetches
+nothing. A CA of its own: a root (as the system's), an intermediate served over HTTP at the
+address in the leaf's AIA as DER, PEM and PKCS#7. python3 tests/chain/t_chain.py"""
+import http.server, json, os, socket, subprocess, sys, tempfile, threading, time
 
 W = tempfile.mkdtemp(prefix='upsmon-chain-')
 os.environ['UPSMON_STATE'] = W
@@ -42,116 +42,173 @@ class H(http.server.SimpleHTTPRequestHandler):
 srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
 PORT = srv.server_address[1]
 threading.Thread(target=srv.serve_forever, daemon=True).start()
-# the CA: root -> intermediate -> leaf (AIA -> http://127.0.0.1:PORT/int.cer)
-ossl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'root.key', '-out', 'root.pem', '-days', '3650',
-     '-subj', '/CN=Test Root G2', '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign')
-ossl('req', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'int.key', '-out', 'int.csr', '-subj', '/CN=Test TLS RSA CA G1')
-with open(os.path.join(W, 'int.ext'), 'w') as f:
-    f.write('basicConstraints=critical,CA:TRUE,pathlen:0\nkeyUsage=critical,keyCertSign,cRLSign\n')
-ossl('x509', '-req', '-in', 'int.csr', '-CA', 'root.pem', '-CAkey', 'root.key', '-CAcreateserial', '-out', 'int.pem',
-     '-days', '1825', '-extfile', 'int.ext')
-ossl('req', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'leaf.key', '-out', 'leaf.csr', '-subj', '/CN=monitor.example')
+base = 'http://127.0.0.1:%d/' % PORT
 
 
-def leaf_with(url, out):
-    with open(os.path.join(W, 'leaf.ext'), 'w') as f:
-        f.write('basicConstraints=CA:FALSE\nsubjectAltName=DNS:monitor.example\n'
-                'authorityInfoAccess=caIssuers;URI:%s\n' % url)
-    ossl('x509', '-req', '-in', 'leaf.csr', '-CA', 'int.pem', '-CAkey', 'int.key', '-CAcreateserial', '-out', out,
-         '-days', '90', '-extfile', 'leaf.ext')
-    return open(os.path.join(W, out)).read()
+def ca(name, cn, issuer=None, aia=None):
+    """A CA certificate: self-signed, or signed by `issuer` (a name of one made before)."""
+    if issuer is None:
+        ossl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', name + '.key', '-out', name + '.pem', '-days', '3650',
+             '-subj', '/CN=' + cn, '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign')
+        return open(os.path.join(W, name + '.pem')).read()
+    ossl('req', '-newkey', 'rsa:2048', '-nodes', '-keyout', name + '.key', '-out', name + '.csr', '-subj', '/CN=' + cn)
+    with open(os.path.join(W, name + '.ext'), 'w') as f:
+        f.write('basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n' +
+                ('authorityInfoAccess=caIssuers;URI:%s\n' % aia if aia else ''))
+    ossl('x509', '-req', '-in', name + '.csr', '-CA', issuer + '.pem', '-CAkey', issuer + '.key', '-CAcreateserial',
+         '-out', name + '.pem', '-days', '1825', '-extfile', name + '.ext')
+    return open(os.path.join(W, name + '.pem')).read()
 
 
+def leaf(name, issuer, aia=None):
+    ossl('req', '-newkey', 'rsa:2048', '-nodes', '-keyout', name + '.key', '-out', name + '.csr', '-subj', '/CN=monitor.example')
+    with open(os.path.join(W, name + '.ext'), 'w') as f:
+        f.write('basicConstraints=CA:FALSE\nsubjectAltName=DNS:monitor.example\n' +
+                ('authorityInfoAccess=caIssuers;URI:%s\n' % aia if aia else ''))
+    ossl('x509', '-req', '-in', name + '.csr', '-CA', issuer + '.pem', '-CAkey', issuer + '.key', '-CAcreateserial',
+         '-out', name + '.pem', '-days', '90', '-extfile', name + '.ext')
+    return open(os.path.join(W, name + '.pem')).read(), open(os.path.join(W, name + '.key')).read()
+
+
+root = ca('root', 'Test Root G2')
+inter = ca('int', 'Test TLS RSA CA G1', 'root')
 ossl('x509', '-in', 'int.pem', '-outform', 'DER', '-out', 'www/int.cer')
 ossl('crl2pkcs7', '-nocrl', '-certfile', 'int.pem', '-outform', 'DER', '-out', 'www/int.p7c')
 with open(os.path.join(SERVE, 'int.pem'), 'w') as f:
-    f.write(open(os.path.join(W, 'int.pem')).read())
-ossl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'other.key', '-out', 'www/other.pem', '-days', '30',
-     '-subj', '/CN=Somebody Else CA', '-addext', 'basicConstraints=critical,CA:TRUE')
-root = open(os.path.join(W, 'root.pem')).read()
-inter = open(os.path.join(W, 'int.pem')).read()
-key = open(os.path.join(W, 'leaf.key')).read()
+    f.write(inter)
+other = ca('other', 'Somebody Else CA')
+with open(os.path.join(SERVE, 'other.pem'), 'w') as f:
+    f.write(other)
 # the system's roots, as this test has them: the test root among them
 SYS = os.path.join(W, 'system-bundle.pem')
 with open(SYS, 'w') as f:
     f.write(root)
 ua.CHAIN_SYSTEM = (SYS,)
-base = 'http://127.0.0.1:%d/' % PORT
 
 for kind in ('int.cer', 'int.pem', 'int.p7c'):
-    leaf = leaf_with(base + kind, 'leaf-%s.pem' % kind)
-    chain, c = ua.chain_complete(leaf, [], [])
+    lf, _k = leaf('leaf-' + kind.replace('.', '-'), 'int', base + kind)
+    chain, st = ua.chain_complete(lf, [], '')
     check('the leaf alone, the issuer at its CA Issuers as %s: completed' % kind,
-          c['ok'] and len(chain) == 1 and c['fetched'] == ['Test TLS RSA CA G1'] and c['top'] == 'Test Root G2', c)
-leaf = leaf_with(base + 'int.cer', 'leaf.pem')
-chain, c = ua.chain_complete(leaf, [inter], [])
-check('the chain given: kept, nothing fetched', c['ok'] and not c['fetched'] and c['count'] == 2, c)
-check('… said: complete (2 certificates up to Test Root G2)', ua.chain_words(c) == 'complete (2 certificates up to Test Root G2)',
-      ua.chain_words(c))
-leaf_down = leaf_with('http://127.0.0.1:1/int.cer', 'leaf-down.pem')
-chain, c = ua.chain_complete(leaf_down, [], [])
-check('the CA Issuers address does not answer: incomplete, the intermediate named', not c['ok'] and chain == [] and
-      c['missing'] == 'Test TLS RSA CA G1' and 'could not be fetched' in c['error'], c)
-check('… said: incomplete - the intermediate Test TLS RSA CA G1 is not sent',
-      ua.chain_words(c) == 'incomplete - the intermediate Test TLS RSA CA G1 is not sent', ua.chain_words(c))
-leaf_other = leaf_with(base + 'other.pem', 'leaf-other.pem')
-chain, c = ua.chain_complete(leaf_other, [], [])
-check('the address gives another authority: nothing taken', not c['ok'] and chain == [] and 'another authority' in c['error'], c)
-# a chain to a root the system does not trust: what was fetched is not kept
-ua.CHAIN_SYSTEM = (os.path.join(W, 'nothing.pem'),)
-with open(ua.CHAIN_SYSTEM[0], 'w') as f:
-    f.write(open(os.path.join(SERVE, 'other.pem')).read())
-chain, c = ua.chain_complete(leaf, [], [])
-check('a root the system does not trust: the fetched link not kept', not c['ok'] and chain == [] and not c['fetched'], c)
-chain, c = ua.chain_complete(leaf, [], [root])
-check('… with the company\'s root given beside it: completed against it', c['ok'] and len(chain) == 1, c)
-ua.CHAIN_SYSTEM = (SYS,)
+          st['ok'] is True and len(chain) == 1 and st['fetched'] == ['Test TLS RSA CA G1'], st)
+check('… said: complete - 2 certificates up to Test Root G2 (fetched: … - it was not sent with the certificate)',
+      st['words'] == 'complete - 2 certificates up to Test Root G2 (fetched: Test TLS RSA CA G1 - it was not sent with '
+                     'the certificate)', st['words'])
+lf, key = leaf('leaf', 'int', base + 'int.cer')
+chain, st = ua.chain_complete(lf, [inter], '')
+check('the chain given: complete, nothing fetched', st['ok'] is True and not st['fetched'] and
+      st['words'] == 'complete - 2 certificates up to Test Root G2', st)
+lfd, keyd = leaf('leaf-down', 'int', 'http://127.0.0.1:1/int.cer')
+chain, st = ua.chain_complete(lfd, [], '')
+check('the CA Issuers address does not answer: incomplete, the authority named, why',
+      st['ok'] is False and chain == [] and st['missing'] == 'Test TLS RSA CA G1' and 'could not be fetched' in st['words'], st)
+check('… openssl\'s words without the temporary files', 'upsmon-chain-' not in json.dumps(st), st['words'])
+lfn, _k = leaf('leaf-noaia', 'int')
+chain, st = ua.chain_complete(lfn, [], '')
+check('no CA Issuers address: incomplete, said so', st['ok'] is False and 'names no CA Issuers address' in st['words'], st['words'])
+lfo, _k = leaf('leaf-other', 'int', base + 'other.pem')
+chain, st = ua.chain_complete(lfo, [], '')
+check('the address holds another authority: nothing taken', st['ok'] is False and chain == [] and 'does not hold' in st['words'], st)
+# a private CA: root (not the system's) -> intermediate (AIA -> its root) -> leaf
+proot = ca('proot', 'Company Root CA')
+with open(os.path.join(SERVE, 'proot.pem'), 'w') as f:
+    f.write(proot)
+pint = ca('pint', 'Company Issuing CA', 'proot', base + 'proot.pem')
+with open(os.path.join(SERVE, 'pint.pem'), 'w') as f:
+    f.write(pint)
+plf, pkey = leaf('pleaf', 'pint', base + 'pint.pem')
+chain, st = ua.chain_complete(plf, [], '')
+check('a private CA: it leads to its root, which the system does not trust - said so',
+      st['ok'] is False and st.get('private_root') == 'Company Root CA' and 'a root the system does not trust' in st['words']
+      and len(chain) == 1, st)
+chain, st = ua.chain_complete(plf, [pint], proot)
+check('… with its root given: complete, "a private root: only clients that trust it take it"',
+      st['ok'] is True and st['words'].endswith('a private root: only clients that trust it take it'), st['words'])
 # self-signed
 ossl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', 'ss.key', '-out', 'ss.pem', '-days', '30', '-subj', '/CN=ups.local')
-chain, c = ua.chain_complete(open(os.path.join(W, 'ss.pem')).read(), [], [])
-check('self-signed: said so, nothing fetched', c['self_signed'] and not c['fetched'], c)
-# the upload path: cert_bundle with the leaf alone, and with the chain in the wrong order + the root
-got = ua.cert_bundle(leaf, key)
-check('upload of the leaf alone: the chain completed, nginx gets cert + intermediate',
-      got['chain'].strip() == inter.strip() and got['chain_check']['ok'] and got['chain_check']['fetched'], got['chain_check'])
-got = ua.cert_bundle(root + inter + leaf, key)
-check('upload with root and intermediate in any order: the intermediate in the chain, the root left out',
-      got['chain'].strip() == inter.strip() and 'Test Root G2' in json.dumps(got['root_info']) and got['chain_check']['ok']
-      and not got['chain_check']['fetched'], got['chain_check'])
-# the certificate in place, completed from the card
+chain, st = ua.chain_complete(open(os.path.join(W, 'ss.pem')).read(), [], '')
+check('self-signed: ok is null, its words', st['ok'] is None and st['words'].startswith('self-signed - no chain'), st)
+# the upload path
+got = ua.cert_bundle(lf, key)
+check('upload of the leaf alone: completed, nginx gets cert + intermediate',
+      got['chain'].strip() == inter.strip() and got['chain_state']['ok'] and got['chain_state']['fetched'], got['chain_state'])
+got = ua.cert_bundle(root + inter + lf, key)
+check('upload with root and intermediate in any order: the root left out of the chain',
+      got['chain'].strip() == inter.strip() and 'Test Root G2' in json.dumps(got['root_info']) and got['chain_state']['ok'], got['chain_state'])
+# the certificate in place: Complete the chain, then Upload the missing authority
 store = ua.Storage()
-prof = {'cert': leaf, 'chain': '', 'root': '', 'key': 'x', 'info': ua.cert_info(leaf)}
-ua.tls_save(store, ua.node_name(), prof, 'tester')
-c, said = ua.tls_chain_complete(store, ua.node_name(), 'tester')
-p2 = ua.tls_profile(store, ua.node_name())
-check('Complete the chain on the certificate in place: saved, said', c['ok'] and p2['chain'].strip() == inter.strip() and
-      said and p2['chain_check']['ok'], (c, said))
-check('… an event', 'complete (2 certificates up to Test Root G2)' in json.dumps(store.db.rows('SELECT * FROM events')), None)
-# upsmon asks itself once nginx has it: a server sending the leaf alone, then leaf + chain
-import socket, time
+me = ua.node_name()
+ua.tls_save(store, me, {'cert': lfd, 'chain': '', 'root': '', 'key': 'x', 'info': ua.cert_info(lfd)}, 'tester')
+st, prof = ua.tls_chain_complete(store, me, 'tester')
+check('Complete the chain, the address down: incomplete, said', st['ok'] is False and 'Test TLS RSA CA G1' in st['words'], st)
+for txt, words in (('-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----', 'no private key'),
+                   ('hello', 'no certificate in it'), (other, 'none of these is the authority')):
+    try:
+        ua.tls_chain_add(store, me, txt, 'tester')
+        check('Upload the missing authority refuses: %s' % words, False, 'taken')
+    except ValueError as e:
+        check('Upload the missing authority refuses: %s' % words, words in str(e), str(e))
+st, prof = ua.tls_chain_add(store, me, inter, 'tester')
+check('Upload the missing authority (the intermediate): complete, nginx gets it',
+      st['ok'] is True and ua.tls_profile(store, me)['chain'].strip() == inter.strip(), st)
+try:
+    ua.tls_chain_add(store, me, inter, 'tester')
+    check('the same again: "every certificate in it is there already"', False)
+except ValueError as e:
+    check('the same again: "every certificate in it is there already"', 'there already' in str(e), str(e))
+# a private CA without its root, then its root uploaded by the dialog
+ua.tls_save(store, me, {'cert': plf, 'chain': pint, 'root': '', 'key': 'x', 'info': ua.cert_info(plf)}, 'tester')
+st, prof = ua.tls_chain_complete(store, me, 'tester')
+check('a private CA kept without its root: not complete', st['ok'] is False, st)
+st, prof = ua.tls_chain_add(store, me, proot, 'tester')
+p2 = ua.tls_profile(store, me)
+check('… its root uploaded: kept as the root (never in the chain), complete with a private root',
+      st['ok'] is True and 'private root' in st['words'] and p2['root'].strip() == proot.strip() and
+      p2['chain'].strip() == pint.strip() and p2['root_info'][0]['cn'] == 'Company Root CA', st)
+check('… events written', 'added Company Root CA to the chain' in json.dumps(store.db.rows('SELECT * FROM events')), None)
+# the file nginx has now (cert_now): leaf alone, then with its chain
+f1 = os.path.join(W, 'nginx1.pem')
+with open(f1, 'w') as f:
+    f.write(lf)
+n1 = ua.cert_now(f1)
+with open(f1 + '2', 'w') as f:
+    f.write(lf + inter)
+n2 = ua.cert_now(f1 + '2')
+check('the file nginx has: the leaf alone - chain_ok false; with the intermediate - true',
+      n1['chain_ok'] is False and n2['chain_ok'] is True, (n1.get('chain_ok'), n1.get('chain_why'), n2.get('chain_ok')))
+
+
 def free_port():
-    x = socket.socket(); x.bind(('127.0.0.1', 0)); n = x.getsockname()[1]; x.close(); return n
+    x = socket.socket()
+    x.bind(('127.0.0.1', 0))
+    n = x.getsockname()[1]
+    x.close()
+    return n
+
+
+ua.tls_save(store, me, {'cert': lf, 'chain': '', 'root': '', 'key': 'x', 'info': ua.cert_info(lf)}, 'tester')
 for with_chain in (False, True):
     port = free_port()
-    args = ['openssl', 's_server', '-accept', str(port), '-cert', os.path.join(W, 'leaf.pem'), '-key', os.path.join(W, 'leaf.key'), '-quiet']
+    args = ['openssl', 's_server', '-accept', str(port), '-cert', os.path.join(W, 'leaf.pem'),
+            '-key', os.path.join(W, 'leaf.key'), '-quiet']
     if with_chain:
         args += ['-cert_chain', os.path.join(W, 'int.pem')]
     srvp = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1.2)
     os.environ['UPSMON_SELFCHECK_PORT'] = str(port)
     ua.SELF_CHECK.update(hash=None, busy=False)
-    ua.web_self_check(store, ua.node_name(), 'h%s' % with_chain)
+    ua.web_self_check(store, me, 'h%s' % with_chain)
     for _ in range(40):
         time.sleep(0.5)
         if not ua.SELF_CHECK['busy']:
             break
-    row = json.loads(store.get_meta('web:selfcheck:' + ua.node_name()) or '{}')
+    row = json.loads(store.get_meta('web:selfcheck:' + me) or '{}')
     srvp.kill()
     if with_chain:
-        check('served with its chain: 2 sent, a plain client trusts them', row.get('ok') and row.get('sent') == 2, row)
+        check('served with its chain: "checked as a client that fetches nothing: the whole chain is sent"',
+              row.get('ok') is True and 'the whole chain is sent' in row.get('words', ''), row)
     else:
-        check('served alone: 1 sent, refused - and an event', not row.get('ok') and row.get('sent') == 1 and
-              'does not trust them' in json.dumps(store.db.rows('SELECT * FROM events')), row)
+        check('served alone: refused - and an event', row.get('ok') is False and 'refuses what nginx sends' in row.get('words', '')
+              and 'refuses what nginx sends' in json.dumps(store.db.rows('SELECT * FROM events')), row)
 srv.shutdown()
 print('%d ok, %d failed' % (ok, bad))
 sys.exit(1 if bad else 0)
