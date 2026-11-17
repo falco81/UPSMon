@@ -54,6 +54,11 @@ MOST_FILES = 5000
 INSTALL_LIMIT_S = 20 * 60      # under TimeoutStartSec=25min and the daemon's 30 (1.0.59)
 TOP = re.compile(r'^upsmon-([0-9]+(?:\.[0-9]+){2,3})\Z')
 FLOOR_FILE = os.path.join(LIB_DIR, 'downgrade-floor')
+# How far an upgrade is, for the pages (4.8.0): beside them, read by PHP from
+# the disk while the daemon, nginx and PHP restart. install.sh --upgrade writes
+# each of its steps there; this writes what comes before it (the package taken
+# and checked), its own failures, and the end.
+PAGES_FILE = os.environ.get('UPSMON_UPGRADE_PAGES_FILE', '/var/www/upsmon/.upgrade.json')
 
 
 class Refused(Exception):
@@ -320,6 +325,54 @@ def status(**fields):
     write_safely(os.path.join(UPGRADE_DIR, 'status.json'), json.dumps(fields))
 
 
+def pages_read():
+    """The progress file of the pages as it is, or {}."""
+    try:
+        fd = os.open(PAGES_FILE, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as f:
+            if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+                return {}
+            d = json.loads(f.read(16384).decode('utf-8'))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def pages_tell(state, ident, **fields):
+    """Write how far the upgrade is into PAGES_FILE (4.8.0): root's, 0644, a
+    temporary file beside it renamed over it. Only where the pages are, and
+    never a reason for the upgrade to fail."""
+    try:
+        folder = os.path.dirname(PAGES_FILE)
+        st = os.lstat(folder)
+        if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+            return
+        old = pages_read()
+        same = old.get('id') == ident and ident
+        d = dict(old) if same else {}
+        d.update({'state': state, 'id': ident, 'at': time.time()})
+        d.setdefault('started', time.time())
+        d.setdefault('part', 0)
+        d.setdefault('parts', 0)
+        d.setdefault('words', '')
+        d.setdefault('said', '')
+        d.setdefault('downgrade', False)
+        d.update({k: v for k, v in fields.items() if v is not None})
+        fd, tmp = tempfile.mkstemp(prefix='.upgrade.json.', dir=folder)
+        try:
+            with os.fdopen(fd, 'w') as out:
+                json.dump(d, out)
+            os.chmod(tmp, 0o644)
+            os.replace(tmp, PAGES_FILE)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    except (OSError, ValueError, TypeError):
+        pass
+
+
 def root_floor():
     """The oldest version this machine may go back to, or None."""
     try:
@@ -393,6 +446,8 @@ def put_in(package, ident='', want_sha='', by='the command line', log_to=None,
         env = {'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
                'LANG': 'C.UTF-8', 'UPSMON_UPGRADE_FROM_PAGES': '1', 'TERM': 'dumb',
                'UPSMON_UPGRADE_BY': str(by)[:100]}
+        if re.match(r'^[A-Za-z0-9._:-]{1,64}\Z', ident or ''):
+            env['UPSMON_UPGRADE_ID'] = ident
         say('running %s/install.sh --upgrade --yes' % info['top'])
         p = subprocess.Popen(['bash', os.path.join(src, 'install.sh'), '--upgrade', '--yes'],
                              cwd=src, env=env, stdin=subprocess.DEVNULL,
@@ -521,18 +576,36 @@ def serve_request():
         if not re.match(r'^upsmon-[0-9.]+\.tar\.gz\Z', name):
             raise Refused('the request names no package')
         status(id=ident, state='running', version=r.get('version'), pid=os.getpid())
+        want = str(r.get('version') or '')
+        pages_tell('running', ident, version=want if re.match(r'^[0-9.]{1,20}\Z', want) else '',
+                   by=str(r.get('by') or 'the pages')[:100], started=time.time(),
+                   **{'from': installed_version() or '', 'downgrade': r.get('downgrade') is True,
+                      'words': 'root checks the package', 'part': 0, 'parts': 0, 'said': ''})
         rc, info, _ = put_in(os.path.join(UPGRADE_DIR, name), ident,
                              str(r.get('sha') or ''), r.get('by') or 'the pages', log_to,
                              downgrade=r.get('downgrade') is True)
         status(id=ident, state='done' if rc == 0 else 'failed', rc=rc,
                version=info['version'], tail=log_lines[-40:])
+        now = pages_read()
+        if rc == 0:
+            if not (now.get('id') == ident and now.get('state') == 'done'):
+                pages_tell('done', ident, version=info['version'], part=now.get('parts') or 0,
+                           words='upsmon %s runs' % info['version'])
+        elif not (now.get('id') == ident and now.get('state') == 'failed'):
+            pages_tell('failed', ident, said='install.sh --upgrade ended with %d' % rc)
     except Refused as e:
         log_to('refused: %s' % e)
         status(id=ident, state='failed', rc=-1, said=str(e), tail=log_lines[-40:])
+        if ident:
+            now = pages_read()
+            if not (now.get('id') == ident and now.get('state') == 'failed'):
+                pages_tell('failed', ident, said=str(e)[:300])
     except Exception as e:                       # noqa: BLE001 - said, never lost
         log_to('broke: %s' % e)
         status(id=ident, state='failed', rc=-2, said='the upgrade broke: %s' % e,
                tail=log_lines[-40:])
+        if ident:
+            pages_tell('failed', ident, said=('the upgrade broke: %s' % e)[:300])
     finally:
         last_flush[0] = 0
         try:

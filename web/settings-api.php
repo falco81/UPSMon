@@ -17,6 +17,8 @@
  */
 declare(strict_types=1);
 
+require_once __DIR__ . '/upsmon-upgrading.php';
+
 // Included by index.php and admin/index.php, never a page of its own. The nginx
 // vhost shipped with this refuses it by name, but a site's own vhost may not,
 // and a file that answers when asked is a file somebody will one day put a
@@ -233,6 +235,11 @@ function ups_relay(string $path, string $method = 'GET', array|object|null $payl
     header('Cache-Control: no-store');
 
     if (ups_token() === null) {
+        $up = ups_upgrading(ups_upgrade_session());
+        if ($up !== null) {
+            ups_upgrade_503($up);
+            return;
+        }
         http_response_code(503);
         /* Where the token lives is for whoever is on the machine; from
            anywhere else it is a daemon that is not answering. */
@@ -244,6 +251,11 @@ function ups_relay(string $path, string $method = 'GET', array|object|null $payl
     }
     [$status, $body] = ups_call($path, $method, $payload, $timeout);
     if ($status === 0) {
+        $up = ups_upgrading(ups_upgrade_session());
+        if ($up !== null) {
+            ups_upgrade_503($up);
+            return;
+        }
         http_response_code(503);
         echo json_encode(['ok' => false, 'error' =>
             'the daemon is not answering — is upsmon.service running?']);

@@ -4415,6 +4415,10 @@
    "source": "Tonight’s will be",
    "text": "Dnešní noční bude"
   },
+  "os2898": {
+   "source": "Took",
+   "text": "Trvalo"
+  },
   "os2902": {
    "source": "Tried",
    "text": "Zkoušeno"
@@ -7581,6 +7585,10 @@
   },
   "os4814": {
    "source": "updating",
+   "text": "aktualizuje se"
+  },
+  "os4815": {
+   "source": "upgrading",
    "text": "aktualizuje se"
   },
   "os4816": {
@@ -11402,6 +11410,134 @@
   "s471011": {
    "source": "no certificate in it (-----BEGIN CERTIFICATE-----, or a .cer file)",
    "text": "není v tom žádný certifikát (-----BEGIN CERTIFICATE-----, nebo soubor .cer)"
+  },
+  "s480001": {
+   "source": "upsmon is being upgraded",
+   "text": "upsmon se aktualizuje"
+  },
+  "s480002": {
+   "source": "What install.sh said is in Settings → Upgrades.",
+   "text": "Co vypsal install.sh, je v Nastavení → Upgrady."
+  },
+  "s480003": {
+   "source": "Open Upgrades",
+   "text": "Otevřít Upgrady"
+  },
+  "s480004": {
+   "source": "Load it again",
+   "text": "Načíst znovu"
+  },
+  "s480005": {
+   "source": "Hide",
+   "text": "Skrýt"
+  },
+  "s480006": {
+   "source": "This page has changes not saved, so it was not loaded again - save them, then load it.",
+   "text": "Tato stránka má neuložené změny, proto se nenačetla znovu – uložte je a pak ji načtěte."
+  },
+  "s480007": {
+   "source": "This page is still the one of the version before.",
+   "text": "Tato stránka je ještě z předchozí verze."
+  },
+  "s480008": {
+   "source": "upsmon.service and these pages restart once during it - the readings of the UPS pause for a few seconds. This page follows it and loads the new version by itself.",
+   "text": "upsmon.service a tyto stránky se během ní jednou restartují – čtení UPS se na pár sekund přeruší. Stránka průběh sleduje a novou verzi načte sama."
+  },
+  "s480009": {
+   "source": "upsmon.service and these pages restart once during it. This page follows it and is ready to sign in again by itself.",
+   "text": "upsmon.service a tyto stránky se během ní jednou restartují. Stránka průběh sleduje a k přihlášení bude připravená sama."
+  },
+  "s480010": {
+   "source": "upsmon.service and these pages restart once during it.",
+   "text": "upsmon.service a tyto stránky se během ní jednou restartují."
+  },
+  "s480011": {
+   "source": "The daemon is restarting with the new version - asked again every two seconds.",
+   "text": "Démon se restartuje s novou verzí – dotaz se opakuje každé dvě sekundy."
+  },
+  "s480012": {
+   "source": "The daemon is restarting with the new version - this is read from the disk, asked again every two seconds.",
+   "text": "Démon se restartuje s novou verzí – průběh se čte z disku, dotaz se opakuje každé dvě sekundy."
+  },
+  "s480013": {
+   "source": "The upgrade failed - what install.sh said is below once the daemon answers.",
+   "text": "Aktualizace selhala – co vypsal install.sh, bude níže, jakmile démon odpoví."
+  },
+  "s480014": {
+   "source": " - the daemon and these pages restart once during it; the readings pause for a few seconds.",
+   "text": " – démon a tyto stránky se během ní jednou restartují; čtení se na pár sekund přeruší."
+  },
+  "s480015": {
+   "source": " - the daemon is restarting with the new version; the readings pause for a few seconds.",
+   "text": " – démon se restartuje s novou verzí; čtení se na pár sekund přeruší."
+  },
+  "s480016": {
+   "source": "- the daemon is restarting with the new version; the readings pause for a few seconds.",
+   "text": "– démon se restartuje s novou verzí; čtení se na pár sekund přeruší."
+  },
+  "s480017": {
+   "source": "This page follows it and loads the new version by itself.",
+   "text": "Stránka průběh sleduje a novou verzi načte sama."
+  },
+  "s480018": {
+   "source": "Checking this machine",
+   "text": "Kontrola tohoto stroje"
+  },
+  "s480019": {
+   "source": "Upgrading",
+   "text": "Aktualizace"
+  },
+  "s480020": {
+   "source": "Installing packages",
+   "text": "Instalace balíčků"
+  },
+  "s480021": {
+   "source": "PHP, and php2shell",
+   "text": "PHP a php2shell"
+  },
+  "s480022": {
+   "source": "Creating the service accounts",
+   "text": "Vytváření účtů služeb"
+  },
+  "s480023": {
+   "source": "Python",
+   "text": "Python"
+  },
+  "s480024": {
+   "source": "Installing the program",
+   "text": "Instalace programu"
+  },
+  "s480025": {
+   "source": "Installing the service",
+   "text": "Instalace služby"
+  },
+  "s480026": {
+   "source": "Installing the pages",
+   "text": "Instalace stránek"
+  },
+  "s480027": {
+   "source": "TLS certificate",
+   "text": "Certifikát TLS"
+  },
+  "s480028": {
+   "source": "Configuring nginx",
+   "text": "Nastavení nginx"
+  },
+  "s480029": {
+   "source": "Starting the daemon",
+   "text": "Spuštění démona"
+  },
+  "s480030": {
+   "source": "The first account of Settings",
+   "text": "První účet Nastavení"
+  },
+  "s480031": {
+   "source": "root checks the package",
+   "text": "root kontroluje balíček"
+  },
+  "s480032": {
+   "source": "asked by",
+   "text": "spustil"
   }
  },
  "patterns": {
@@ -13053,6 +13189,10 @@
    "source": "{0} - left in maintenance: it runs {1}, which did not pass its checks",
    "text": "{0} – ponecháno v údržbě: běží na {1}, která neprošla kontrolami"
   },
+  "op1043": {
+   "source": "{0} - not answering",
+   "text": "{0} – neodpovídá"
+  },
   "op1046": {
    "source": "{0} - the last 8 tries",
    "text": "{0} – posledních 8 pokusů"
@@ -14340,6 +14480,70 @@
   "p471014": {
    "source": "{0} does not hold the authority {1}",
    "text": "{0} neobsahuje autoritu {1}"
+  },
+  "p480001": {
+   "source": "upsmon is being upgraded to {0}",
+   "text": "upsmon se aktualizuje na {0}"
+  },
+  "p480002": {
+   "source": "upsmon is being taken back to {0}",
+   "text": "upsmon se vrací na {0}"
+  },
+  "p480003": {
+   "source": "The upgrade to upsmon {0} failed",
+   "text": "Aktualizace na upsmon {0} selhala"
+  },
+  "p480004": {
+   "source": "upsmon {0} is in - loading the pages of the new version…",
+   "text": "upsmon {0} je nasazený – načítají se stránky nové verze…"
+  },
+  "p480005": {
+   "source": "upsmon {0} is in - loading the new version…",
+   "text": "upsmon {0} je nasazený – načítá se nová verze…"
+  },
+  "p480006": {
+   "source": "upsmon {0} is in",
+   "text": "upsmon {0} je nasazený"
+  },
+  "p480007": {
+   "source": "upsmon {0} runs",
+   "text": "běží upsmon {0}"
+  },
+  "p480008": {
+   "source": "from {0}",
+   "text": "z {0}"
+  },
+  "p480009": {
+   "source": "asked by {0}",
+   "text": "spustil {0}"
+  },
+  "p480010": {
+   "source": "{0} so far",
+   "text": "zatím {0}"
+  },
+  "p480011": {
+   "source": "it took {0}",
+   "text": "trvalo to {0}"
+  },
+  "p480012": {
+   "source": "step {0} of {1}",
+   "text": "krok {0} z {1}"
+  },
+  "p480013": {
+   "source": "The daemon is restarting with the new version - not answering for {0}, asked again every two seconds",
+   "text": "Démon se restartuje s novou verzí – neodpovídá {0}, dotaz se opakuje každé dvě sekundy"
+  },
+  "p480014": {
+   "source": "nginx and PHP are restarting - these pages cannot be reached for {0}, asked again every two seconds",
+   "text": "nginx a PHP se restartují – stránky nejsou dostupné {0}, dotaz se opakuje každé dvě sekundy"
+  },
+  "p480015": {
+   "source": "{0} on the pages",
+   "text": "{0} ze stránek"
+  },
+  "p480016": {
+   "source": "install.sh --upgrade on {0}",
+   "text": "install.sh --upgrade na {0}"
   }
  },
  "rich": {

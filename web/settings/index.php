@@ -31,6 +31,44 @@ if (isset($_GET['api'])) {
     if ($what === 'lang' && !$post) {
         ups_serve_lang();
     }
+    /* How far an upgrade is (4.8.0) - read from the disk, so it answers while
+       the daemon restarts: the band under the header and the sign-in page ask
+       every two seconds. Who asked, what went wrong and the upgrade's id only
+       with a session cookie; "api": whether the daemon answers now. */
+    if ($what === 'upgrade-state' && !$post) {
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        $health = ups_token() !== null ? ups_get('/api/health', 3.0) : null;
+        echo json_encode(['ok' => true, 'upgrading' => ups_upgrading(ups_upgrade_session()),
+                          'pages' => UPS_VERSION, 'api' => is_array($health)],
+                         JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+    /* The status with how far an upgrade is (4.8.0), so the band is there at
+       once - before anything restarts. Nothing changes when none runs. */
+    if ($what === 'status' && !$post && ($up = ups_upgrading(true)) !== null && ups_token() !== null) {
+        $query = $_GET;
+        unset($query['api']);
+        [$status, $body] = ups_call('/api/status' . ($query ? '?' . http_build_query($query) : ''), 'GET', null, 60.0);
+        if ($status === 0) {
+            ups_upgrade_503($up);
+            exit;
+        }
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        http_response_code($status);
+        /* Put in as text, before the last brace: decoded and encoded again,
+           an empty {} of the daemon's answer would come out as []. */
+        $b = rtrim($body);
+        if ($status === 200 && strlen($b) > 2 && $b[0] === '{' && substr($b, -1) === '}'
+            && is_array(json_decode($b, true))) {
+            echo substr($b, 0, -1) . ',"upgrading":'
+                . json_encode($up, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '}';
+        } else {
+            echo $body;
+        }
+        exit;
+    }
     if ($what === 'software' && !$post) {
         /* What every node runs on (1.0.99) - and of the pages, what this
            PHP itself is: php-fpm's, not the command line's. */
@@ -330,6 +368,10 @@ if (!$me && !ups_local()) {
                'users' => 1, 'passkeys' => !empty($health['passkeys'])];
 }
 $initial = $me ? (ups_get('/api/status', 8.0) ?: null) : null;
+/* An upgrade under way or ended a moment ago (4.8.0), read from the disk:
+   the sign-in page says so instead of "the daemon is not answering". */
+$upg     = ups_upgrading($me ? true : ups_upgrade_session());
+$upg_on  = $upg !== null && $upg['state'] === 'running';
 $host    = (string) ($_SERVER['HTTP_HOST'] ?? php_uname('n'));
 $site    = (string) ($initial['site'] ?? '');
 $title   = ($site !== '' ? $site . ' · ' : '') . 'upsmon · Settings';
@@ -363,6 +405,16 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
         On the server:<br>
         <span class="mono">usermod -a -G upsmon <?= h($web_user) ?></span><br>
         <span class="mono">systemctl restart php-fpm nginx</span>
+      </div>
+    <?php elseif ($upg_on || ($upg !== null && $upg['state'] === 'failed' && !$alive)): ?>
+      <!-- Being upgraded (4.8.0): drawn here from the file, then followed by the script. -->
+      <div id="upband" class="offline upband<?= $upg['state'] === 'failed' ? ' failed' : '' ?>" role="status">
+        <div class="upband-head"><b><?= $upg['state'] === 'failed'
+          ? 'The upgrade to upsmon ' . h($upg['version']) . ' failed'
+          : ($upg['downgrade'] ? 'upsmon is being taken back to ' : 'upsmon is being upgraded to ') . h($upg['version']) ?></b></div>
+        <?php if ($upg['words'] !== ''): ?><div class="upband-how"><?= h($upg['words']) ?></div><?php endif; ?>
+        <div class="upband-line"><?= $alive ? 'upsmon.service and these pages restart once during it.'
+          : 'The daemon is restarting with the new version - asked again every two seconds.' ?></div>
       </div>
     <?php elseif (!$alive): ?>
       <div class="offline">The daemon is not answering. Nobody can sign in until
@@ -408,6 +460,17 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
 </div>
 </div>
 <script nonce="<?= h($nonce) ?>" src="/assets/core.js?v=<?= h(UPS_VERSION) ?>"></script>
+<?php if ($upg !== null && $upg['state'] !== 'done'): ?>
+<script nonce="<?= h($nonce) ?>">
+/* Being upgraded (4.8.0): the band follows it, and the page is loaded again
+   once the daemon answers after having been away. */
+try {
+  UPG.signin = true;
+  if (<?= $alive ? 'true' : 'false' ?>) UPG.heard = Date.now(); else { UPG.away = Date.now(); UPG.wasDown = true; }
+  upgradeTake(<?= json_encode($upg, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>);
+} catch (e) { }
+</script>
+<?php endif; ?>
 <script nonce="<?= h($nonce) ?>">
 (function () {
   var form = $('signin-form'), said = $('in-said'), go = $('in-go');
@@ -509,6 +572,7 @@ if ($me && ($_COOKIE['upsmon_lang'] ?? '') !== $lang) {
 </header>
 
 <div id="offline" class="offline" hidden></div>
+<div id="upband" class="offline upband" role="status" hidden></div>
 <div id="phpsafety" class="offline" hidden></div>
 <div id="problems" class="offline warnish" hidden></div>
 <div id="trials" class="trials" hidden></div>
@@ -1032,6 +1096,12 @@ var PHP_SAFETY = <?= ($me['role'] ?? '') === 'fulladmin' ? json_encode(ups_php_s
 <script nonce="<?= h($nonce) ?>" src="/assets/core.js?v=<?= h(UPS_VERSION) ?>"></script>
 <script nonce="<?= h($nonce) ?>" src="/assets/cols.js?v=<?= h(UPS_VERSION) ?>"></script>
 <script nonce="<?= h($nonce) ?>" src="/assets/settings.js?v=<?= h(UPS_VERSION) ?>"></script>
+<?php if ($upg !== null): ?>
+<script nonce="<?= h($nonce) ?>">
+/* An upgrade under way when the page was drawn (4.8.0): the band at once. */
+try { UPG.heard = Date.now(); upgradeTake(<?= json_encode($upg, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>); } catch (e) { }
+</script>
+<?php endif; ?>
 </body>
 </html>
 

@@ -13,6 +13,8 @@
  */
 declare(strict_types=1);
 
+require_once __DIR__ . '/upsmon-upgrading.php';
+
 const UPSMON_HOST  = '127.0.0.1';
 const UPSMON_PORT  = 9848;
 const UPSMON_TOKEN = '/run/upsmon/api-token';
@@ -125,6 +127,13 @@ function upsmon_relay(string $path, string $method = 'GET', ?array $payload = nu
 
     [$status, $body] = upsmon_call($path, $method, $payload, $timeout);
     if ($status === 0) {
+        /* Being upgraded (4.8.0): the daemon restarts on purpose - said as
+           such, with how far it is, not as "not responding". */
+        $up = ups_upgrading(false);
+        if ($up !== null) {
+            ups_upgrade_503($up);
+            return;
+        }
         http_response_code(503);
         echo json_encode(['ok' => false, 'error' =>
             'the monitoring daemon is not responding — is upsmon.service running?']);

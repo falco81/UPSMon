@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.7.1'
+readonly INSTALLER_VERSION='4.8.0'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -111,12 +111,119 @@ else
     C_OK=''; C_WARN=''; C_BAD=''; C_DIM=''; C_HEAD=''; C_OFF=''
 fi
 
-step()  { printf '\n%s==> %s%s\n' "$C_HEAD" "$1" "$C_OFF"; }
+step()  {
+    printf '\n%s==> %s%s\n' "$C_HEAD" "$1" "$C_OFF"
+    # An upgrade says each step to the pages too (4.8.0): step N of M.
+    if [[ -n "$UPG_FILE" ]]; then
+        UPG_PART=$((UPG_PART + 1))
+        UPG_WORDS=$1
+        if (( UPG_PART > UPG_PARTS )); then UPG_PARTS=$UPG_PART; fi
+        upgrade_tell running
+    fi
+    return 0
+}
 say()   { printf '    %s\n' "$1"; }
 note()  { printf '    %s%s%s\n' "$C_DIM" "$1" "$C_OFF"; }
 good()  { printf '    %s%s%s\n' "$C_OK" "$1" "$C_OFF"; }
 warn()  { printf '    %s%s%s\n' "$C_WARN" "$1" "$C_OFF"; }
-fail()  { printf '\n%sERROR: %s%s\n' "$C_BAD" "$1" "$C_OFF" >&2; exit 1; }
+fail()  { printf '\n%sERROR: %s%s\n' "$C_BAD" "$1" "$C_OFF" >&2; UPG_SAID=$1; exit 1; }
+
+# --- how far an upgrade is, for the pages (4.8.0) ----------------------------
+# The daemon, its API, nginx and PHP restart during an upgrade; the pages read
+# $WEB_DIR/.upgrade.json straight from the disk (not through the daemon), so
+# they can say "being upgraded, step N of M" instead of "not answering". Root's,
+# 0644, written to a temporary file beside it and renamed - never half written;
+# a dot name, which nginx never serves. Nothing secret in it. Written only by
+# --upgrade (from the pages or by hand) and never on a dry run; a write that
+# fails changes nothing of the upgrade.
+UPG_FILE=''
+UPG_PART=0
+UPG_PARTS=0
+UPG_WORDS=''
+UPG_STARTED=0
+UPG_FROM=''
+UPG_TO=''
+UPG_ID=''
+UPG_BY=''
+UPG_DOWN=false
+UPG_SAID=''
+UPG_ENDED=''
+upgrade_json() {
+    local s=${1:0:300}
+    s=$(printf '%s' "$s" | tr -d '\000-\037\177') || s=''
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    printf '"%s"' "$s"
+}
+upgrade_tell() {
+    [[ -n "$UPG_FILE" ]] || return 0
+    local state=$1 said=${2:-} dir tmp
+    dir=${UPG_FILE%/*}
+    [[ -d "$dir" && ! -L "$dir" && ! -L "$UPG_FILE" ]] || return 0
+    tmp=$(mktemp "$dir/.upgrade.json.XXXXXX" 2>/dev/null) || return 0
+    if printf '{"state": "%s", "id": %s, "version": %s, "from": %s, "by": %s, "part": %d, "parts": %d, "words": %s, "started": %d, "at": %d, "said": %s, "downgrade": %s}\n' \
+            "$state" "$(upgrade_json "$UPG_ID")" "$(upgrade_json "$UPG_TO")" "$(upgrade_json "$UPG_FROM")" \
+            "$(upgrade_json "$UPG_BY")" "$UPG_PART" "$UPG_PARTS" "$(upgrade_json "$UPG_WORDS")" \
+            "$UPG_STARTED" "$(date +%s)" "$(upgrade_json "$said")" "$UPG_DOWN" > "$tmp" 2>/dev/null; then
+        chmod 0644 "$tmp" 2>/dev/null || true
+        mv -f "$tmp" "$UPG_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
+    else
+        rm -f "$tmp" 2>/dev/null || true
+    fi
+    return 0
+}
+upgrade_begin() {
+    [[ -z "$DRY_RUN" && $EUID -eq 0 && -d "$WEB_DIR" && ! -L "$WEB_DIR" ]] || return 0
+    UPG_FROM=$(sed -n "s/^__version__ = '\([0-9.]*\)'.*/\1/p" "$LIB_DIR/upsmon.py" 2>/dev/null || true)
+    UPG_TO=$(sed -n "s/^__version__ = '\([0-9.]*\)'.*/\1/p" "$SOURCE_DIR/upsmon.py" 2>/dev/null || true)
+    UPG_ID=${UPSMON_UPGRADE_ID:-}
+    [[ "$UPG_ID" =~ ^[A-Za-z0-9._:-]{1,64}$ ]] || UPG_ID="sh-$(date +%s)-$$"
+    UPG_BY=${UPSMON_UPGRADE_BY:-}
+    [[ -n "$UPG_BY" ]] || UPG_BY="install.sh --upgrade on $(hostname 2>/dev/null || echo this machine)"
+    if [[ -n "$UPG_FROM" && -n "$UPG_TO" && "$UPG_FROM" != "$UPG_TO" ]] \
+            && [[ "$(printf '%s\n%s\n' "$UPG_FROM" "$UPG_TO" | sort -V | head -n 1)" == "$UPG_TO" ]]; then
+        UPG_DOWN=true
+    fi
+    UPG_STARTED=$(date +%s)
+    # The steps of --upgrade: eight, and five more with the pages (PHP, the
+    # pages, the certificate, nginx, SELinux); one more is counted if it comes.
+    UPG_PARTS=8
+    [[ -n "$WITH_WEB" ]] && UPG_PARTS=13
+    UPG_FILE="$WEB_DIR/.upgrade.json"
+    # However it ends: failed unless it said done - also when it is stopped
+    # (Ctrl-C, a hangup, the helper's deadline): never left "running".
+    trap 'upgrade_exit $?' EXIT
+    trap 'exit 130' INT
+    trap 'exit 129' HUP
+    trap 'exit 143' TERM
+    return 0
+}
+upgrade_exit() {
+    local rc=$1
+    [[ -n "$UPG_FILE" && -z "$UPG_ENDED" ]] || return 0
+    UPG_ENDED=yes
+    if [[ $rc -eq 0 ]]; then
+        upgrade_tell done
+        return 0
+    fi
+    local why="install.sh --upgrade stopped (exit $rc)"
+    case $rc in
+        130) why="install.sh --upgrade was interrupted (Ctrl-C)";;
+        129) why="install.sh --upgrade was stopped (its terminal went away)";;
+        143) why="install.sh --upgrade was stopped (TERM)";;
+    esac
+    [[ -n "$UPG_WORDS" ]] && why="$why during \"$UPG_WORDS\""
+    [[ -n "$UPG_SAID" ]] && why="$why: $UPG_SAID"
+    upgrade_tell failed "$why"
+    return 0
+}
+# The person said no before anything was changed: no upgrade to tell of.
+upgrade_forget() {
+    [[ -n "$UPG_FILE" ]] || return 0
+    rm -f "$UPG_FILE" 2>/dev/null || true
+    UPG_ENDED=yes
+    return 0
+}
 
 run() {
     if [[ -n "$DRY_RUN" ]]; then
@@ -1343,7 +1450,7 @@ install_web() {
 
     run install -d -m 755 "$WEB_DIR" "$WEB_DIR/settings" "$WEB_DIR/assets" "$WEB_DIR/lang"
     local file
-    for file in index.php upsmon-api.php upsmon-page.php upsmon-lang.php settings-api.php acme.php acme-push.php \
+    for file in index.php upsmon-api.php upsmon-page.php upsmon-lang.php upsmon-upgrading.php settings-api.php acme.php acme-push.php \
                 favicon.svg favicon.ico favicon-32.png apple-touch-icon.png settings/index.php; do
         [[ -f "$SOURCE_DIR/web/$file" ]] || continue
         run install -m 644 "$SOURCE_DIR/web/$file" "$WEB_DIR/$file"
@@ -1806,7 +1913,7 @@ do_upgrade() {
     # it was read and ticked there already.
     if ! notices_show "$SOURCE_DIR/deploy/notices.json" "$previous" "$NEW_VERSION" before \
             && [[ -z "${UPSMON_UPGRADE_FROM_PAGES:-}" ]]; then
-        confirm "Read it, and go on?" || { say "nothing changed"; exit 1; }
+        confirm "Read it, and go on?" || { say "nothing changed"; upgrade_forget; exit 1; }
     fi
     if [[ "$previous" == 3.* ]]; then
         note "from the standalone 3.x: the dashboard stays as it was, Settings comes"
@@ -1878,7 +1985,9 @@ main() {
 
     case $MODE in
         uninstall) [[ $EUID -eq 0 ]] || fail "run this with sudo"; do_uninstall; exit 0;;
-        upgrade)   preflight; do_upgrade; exit 0;;
+        upgrade)   upgrade_begin; preflight; do_upgrade
+                   UPG_PART=$UPG_PARTS; UPG_WORDS="upsmon $NEW_VERSION runs"
+                   upgrade_exit 0; exit 0;;
     esac
 
     preflight

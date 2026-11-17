@@ -28,7 +28,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEEP = 10
-LEAVE_OUT = {'.git', '.github', 'release', '__pycache__', '.gitignore'}
+LEAVE_OUT = {'.git', '.github', 'release', '__pycache__', '.gitignore', '.upgrade.json'}
 
 
 def version_of(path):

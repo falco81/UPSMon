@@ -108,6 +108,7 @@ function paintHeader(s) {
   pill.className = 'pill ' + kind;
   pill.lastChild.textContent = inMaint ? 'in maintenance' : ({ok: 'UPS all good', warn: 'UPS needs attention',
     crit: 'UPS problem'}[level] || 'UPS: no data');
+  if (upgradeExpected()) { pill.className = 'pill warn'; pill.lastChild.textContent = 'in maintenance'; }
   pill.title = (u.name ? 'UPS ' + u.name + ': ' : '') + (u.status_text || u.status || 'the daemon has no reading of the UPS')
     + (u.charge !== undefined && u.charge !== null && u.charge !== '' ? ' · battery ' + u.charge + ' %' : '')
     + (u.load !== undefined && u.load !== null && u.load !== '' ? ' · load ' + u.load + ' %' : '');
@@ -127,6 +128,7 @@ function tick() {
   if (!LIVE || document.hidden) return;
   api('status').then(function (s) {
     $('offline').hidden = true;
+    try { upgradeHeard(s.upgrading || null, true); } catch (e) { }
     var moved = s.serial !== SERIAL || REDRAW_OWED;
     SERIAL = s.serial;
     paintHeader(s);
@@ -146,6 +148,12 @@ function tick() {
     }
   }).catch(function (e) {
     var o = $('offline');
+    /* Being upgraded (4.8.0): expected - the band under the header says how far. */
+    if (e && (e.upgrading || upgradeExpected())) {
+      o.hidden = true;
+      if (!e.upgrading || typeof e.upgrading !== 'object') upgradeLost();
+      return;
+    }
     o.hidden = false;
     o.textContent = 'The daemon is not answering: ' + (e.message || e);
   });
@@ -3562,7 +3570,7 @@ function upBar(pc, kind, words, wide) {
 }
 /* The version these pages came with: what the script was asked for as. */
 var VERSION_LOADED = (function () {
-  var sc = document.querySelector('script[src*="admin.js"]');
+  var sc = document.querySelector('script[src*="settings.js"]') || document.querySelector('script[src*="admin.js"]');
   var m = sc && /[?&]v=([0-9.]+)/.exec(sc.getAttribute('src') || '');
   return m ? m[1] : '';
 }());
@@ -3575,7 +3583,7 @@ function loadUpgrade(live) {
   api('upgrade', undefined, running ? 8 : 0).then(function (d) {
     if (mine !== UP.ask) return;          /* a newer question is on its way */
     UP.misses = 0;
-    if ($('up-retry')) $('up-retry').textContent = '';
+    if ($('up-retry')) clear($('up-retry'));
     if (!VERSION_LOADED) VERSION_LOADED = d.version;
     if (live) liveRun(function () { drawUpgrade(d); }); else drawUpgrade(d);
   }).catch(function (e) {
@@ -3585,6 +3593,11 @@ function loadUpgrade(live) {
        (1.0.73) - not only while the last answer said "running", and without
        a limit. Said once, in a line of its own that is always there. */
     UP.misses = (UP.misses || 0) + 1;
+    if (e && (e.upgrading || upgradeExpected()) && UPG.u) {
+      upFromDisk(UPG.u);
+      upgradeAgain(2000);
+      return;
+    }
     if (running || e.unreachable || UP.misses <= 3) {
       if ($('up-retry')) $('up-retry').textContent = ('A node is restarting or the VIP address is moving to the other node - asking again…');
       upgradeAgain(Math.min(2000 * UP.misses, 6000));
@@ -3594,11 +3607,25 @@ function loadUpgrade(live) {
     upgradeAgain(15000);
   });
 }
+/* The daemon away during an upgrade (4.8.0): the card The upgrade shows how
+   far it is from .upgrade.json, as PHP reads it from the disk. */
+function upFromDisk(u) {
+  var card = $('up-plan-card'), r = $('up-retry');
+  if (!card || !r) return;
+  card.hidden = false;
+  clear(r);
+  var pc = upgradePercent(u);
+  var words = num(pc) + ' %' + (u.words ? ' · ' + u.words : '') + (u.parts && u.part ? ' · ' + Math.min(u.part, u.parts) + '/' + u.parts : '');
+  r.appendChild(upBar(pc, u.state === 'failed' ? 'bad' : (u.state === 'done' ? 'good' : ''), words, false));
+  r.appendChild(el('span', '', u.state === 'failed' ? 'The upgrade failed - what install.sh said is below once the daemon answers.'
+    : 'The daemon is restarting with the new version - this is read from the disk, asked again every two seconds.'));
+}
 /* Whether an upgrade is under way, as far as this page knows (1.0.73): the
    plan says so, or a step is not finished, or it ended a short while ago -
    behind the VIP address the next answer may come from the node whose copy
    is a moment behind. */
 function upRunning() {
+  if (upgradeExpected()) return true;      /* the band knows one runs (4.8.0) */
   var p = UP.last && UP.last.plan;
   if (!p) return false;
   if (p.state === 'running') return true;

@@ -4,6 +4,29 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.8.0 - 2026-11-17
+
+The upgrade on the pages, as the upgrade-UI kit describes it: the pages stay with an
+upgrade that restarts the daemon, nginx and PHP. See `docs/upgrade-ui.md`.
+
+- **`/var/www/upsmon/.upgrade.json`** - how far an upgrade is, written by install.sh
+  --upgrade (each step, `done`, `failed` from its EXIT trap, also when it is interrupted or
+  stopped) and by the root helper (the package taken and checked, its own failures, the
+  end); root's, 0644, renamed into place, never served by nginx. PHP reads it from the
+  disk, with limits (30 min running, 10 min ended) and every field checked.
+- While the daemon is away during an upgrade every call answers **503 "being upgraded"**
+  with the progress, not "the daemon is not answering"; `?api=upgrade-state` answers
+  without the daemon; the status carries it while the daemon answers.
+- **Settings**: a blue band under the header - the version, from, asked by, how long, a
+  bar, the step N of M, and what is away (the daemon, or nginx and PHP) for how long; the
+  pill *in maintenance*; no red bar, no red toasts while it runs. When it is done the page
+  loads the new version once (not over changes not saved). A failure is a red band with
+  the reason and *Open Upgrades*, hidden with ×. Settings → Upgrades shows the progress
+  from the disk while the daemon is away.
+- **The sign-in page** shows the band (without who asked) and loads itself again once the
+  daemon answers; **the dashboard** a blue band and *In maintenance*, loaded once when done.
+- In Czech too. Tests: `tests/upgrade-ui/t_sim.js` (25 checks).
+
 ## 4.7.1 - 2026-11-12
 
 The whole chain as plexmon 2.9.8 describes it, for every application of ours.

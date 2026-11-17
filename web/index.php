@@ -57,7 +57,39 @@ if (isset($_GET['api'])) {
     }
 
     if ($what === 'status') {
+        /* With how far an upgrade is (4.8.0), when one runs or ended a
+           moment ago - put in as text, the daemon's answer otherwise as it is. */
+        $up = ups_upgrading(false);
+        if ($up !== null) {
+            [$status, $body] = upsmon_call('/api/status');
+            if ($status === 0) {
+                ups_upgrade_503($up);
+                exit;
+            }
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+            http_response_code($status);
+            $b = rtrim($body);
+            if ($status === 200 && strlen($b) > 2 && $b[0] === '{' && substr($b, -1) === '}'
+                && is_array(json_decode($b, true))) {
+                echo substr($b, 0, -1) . ',"upgrading":'
+                    . json_encode($up, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '}';
+            } else {
+                echo $body;
+            }
+            exit;
+        }
         upsmon_relay('/api/status');
+        exit;
+    }
+    /* How far an upgrade is (4.8.0), read from the disk - answers while the
+       daemon restarts. Nothing of who asked or why it failed here. */
+    if ($what === 'upgrade-state') {
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+        [$hs] = upsmon_call('/api/health', 'GET', null, 3.0);
+        echo json_encode(['ok' => true, 'upgrading' => ups_upgrading(false), 'api' => $hs === 200],
+                         JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         exit;
     }
     if ($what === 'health') {
@@ -196,6 +228,8 @@ if (isset($_GET['api'])) {
 // ---- first paint ----------------------------------------------------------
 $snapshot = upsmon_get('/api/status', 6.0);
 $health   = upsmon_get('/api/health', 6.0);
+$upgrade  = ups_upgrading(false);
+$upgrade_on = $upgrade !== null && $upgrade['state'] === 'running';
 
 function h($value): string
 {
@@ -567,6 +601,10 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
   .maint-banner.nt-danger .dot{background:var(--crit)}
   .maint-banner.nt-danger b{color:var(--crit)}
   .maint-banner a{color:var(--info)}
+  /* being upgraded (4.8.0): blue, as the band of Settings */
+  .maint-banner.upg{border-color:rgba(88,166,255,.5);background:var(--info-bg, rgba(88,166,255,.12))}
+  .maint-banner.upg .dot{background:var(--info)}
+  .maint-banner.upg b{color:var(--info)}
 </style>
 </head>
 <body>
@@ -587,7 +625,13 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
   </div>
 </header>
 
-<?php if (!$snapshot): ?>
+<?php if (!$snapshot && $upgrade_on): ?>
+<div class="maint-banner upg" role="status">
+  <span class="dot"></span><div><b><?= h(($upgrade['downgrade'] ? 'upsmon is being taken back to ' : 'upsmon is being upgraded to ') . $upgrade['version']) ?></b>
+  - the daemon is restarting with the new version; the readings pause for a few seconds.
+  <span class="sub">This page follows it and loads the new version by itself.</span></div>
+</div>
+<?php elseif (!$snapshot): ?>
 <div class="offline">
   The monitoring daemon is not responding. Check <span class="mono">systemctl status upsmon</span>.
 </div>
@@ -598,6 +642,7 @@ $levelText = ['ok' => 'All good', 'warn' => 'Needs attention',
 <?php endif; ?>
 
 <div class="maint-banner" id="maint-banner" role="status" hidden></div>
+<div class="maint-banner" id="upg-banner" role="status" hidden></div>
 <div class="maint-banner" id="nt-banner" role="alert" hidden></div>
 <div class="tabs" role="tablist">
   <button role="tab" aria-selected="true"  data-tab="overview">Overview</button>
@@ -3285,8 +3330,76 @@ function drawNotices(n) {
   box.hidden = false;
 }
 
+/* Being upgraded (4.8.0): the daemon, nginx and PHP restart on purpose - a
+   band says how far it is (read from the disk by PHP), the pill says
+   maintenance, and once it is done the page loads the new version once. */
+var DUPG = {u: null, saw: "", reloading: false};
+function dashUpgradeLine(u) {
+  var bits = [];
+  var parts = Number(u.parts || 0), part = Number(u.part || 0);
+  var pc = u.state === "done" ? 100 : !parts ? 2 : Math.max(2, Math.min(99, Math.round(100 * Math.max(0, part - 1) / parts)));
+  bits.push(pc + " %");
+  if (u.words) bits.push(u.words);
+  if (parts && part) bits.push("step " + Math.min(part, parts) + " of " + parts);
+  return bits;
+}
+function drawUpgrading(u, apiUp) {
+  var box = $("upg-banner");
+  if (u && u.state === "running") DUPG.saw = String(u.version || "?");
+  DUPG.u = u || null;
+  if (DUPG.saw && apiUp && !DUPG.reloading && (!u || u.state === "done")) {
+    var seen = "";
+    try { seen = sessionStorage.getItem("upsmon-dash-upgraded") || ""; } catch (e) { }
+    if (seen !== DUPG.saw) {
+      DUPG.reloading = true;
+      try { sessionStorage.setItem("upsmon-dash-upgraded", DUPG.saw); } catch (e) { }
+      setTimeout(function () { location.reload(); }, 1000);
+    }
+  }
+  if (!box) return;
+  var running = !!(u && u.state === "running");
+  if (!running && !DUPG.reloading && !(DUPG.saw && !apiUp)) { box.hidden = true; return; }
+  box.textContent = "";
+  box.className = "maint-banner upg";
+  var dot = document.createElement("span"); dot.className = "dot"; box.appendChild(dot);
+  var words = document.createElement("div");
+  var b = document.createElement("b");
+  var v = (u && u.version) || DUPG.saw || "";
+  b.textContent = DUPG.reloading ? "upsmon " + v + " is in - loading the new version…"
+    : (u && u.downgrade ? "upsmon is being taken back to " : "upsmon is being upgraded to ") + v;
+  words.appendChild(b);
+  if (!DUPG.reloading) {
+    words.appendChild(document.createTextNode(apiUp
+      ? " - the daemon and these pages restart once during it; the readings pause for a few seconds."
+      : " - the daemon is restarting with the new version; the readings pause for a few seconds."));
+  }
+  if (u && !DUPG.reloading) {
+    var sub = document.createElement("span"); sub.className = "sub";
+    dashUpgradeLine(u).forEach(function (t, i) {
+      if (i) sub.appendChild(document.createTextNode(" · "));
+      var s = document.createElement("span"); s.textContent = t;
+      if (i === 0) s.setAttribute("data-no-i18n", "");
+      sub.appendChild(s);
+    });
+    words.appendChild(sub);
+  }
+  box.appendChild(words);
+  box.hidden = false;
+}
+function upgradingPill() {
+  var verdict = $("verdict");
+  verdict.className = "pill warn";
+  verdict.innerHTML = '<span class="dot"></span>';
+  verdict.appendChild(document.createTextNode("In maintenance"));
+  setFavicon("warn");
+}
+
 function refresh() {
   return api("status").then(function (snap) {
+    var upg = snap && snap.upgrading && typeof snap.upgrading === "object" ? snap.upgrading : null;
+    var answered = !!(snap && snap.ok !== false);
+    drawUpgrading(upg, answered);
+    if (!answered && (upg || DUPG.saw)) { upgradingPill(); return; }
     drawMaintenance(snap && snap.maintenance);
     drawNotices(snap && snap.notices);
     if (!snap || snap.online === false) {
@@ -3304,6 +3417,7 @@ function refresh() {
       renderSensorVariables(snap.sensors);
     }
   }).catch(function () {
+    if (DUPG.saw) { drawUpgrading(DUPG.u, false); upgradingPill(); return; }
     var verdict = $("verdict");
     verdict.className = "pill unknown";
     verdict.innerHTML = '<span class="dot"></span>Dashboard offline';

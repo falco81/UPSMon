@@ -199,6 +199,9 @@ function apiLatest(key, what, body) {
 }
 function oops(e) {
   if (e && e.stopped) return;           /* somebody stopped it: not a fault */
+  /* An upgrade restarting the daemon, nginx and PHP (4.8.0): expected, said
+     by the band under the header - not a red toast for every pane. */
+  if (e && (e.upgrading || (e.unreachable && typeof upgradeExpected === 'function' && upgradeExpected()))) return;
   /* An account that must set its own password first: every page answers
      "change your password first" - said once, by its own form (1.0.103). */
   if (typeof ME === 'object' && ME && ME.must_change && e && e.status === 403) return;
@@ -1161,6 +1164,7 @@ function api(what, body, wait) {
     var err = new Error(late ? 'the server did not answer in ' + limit + ' s'
                              : 'the server could not be reached');
     err.unreachable = true;
+    if (typeof upgradeExpected === 'function' && upgradeExpected()) err.upgrading = true;
     throw err;
   }).then(function (r) {
     clearTimeout(timer);
@@ -1188,10 +1192,19 @@ function api(what, body, wait) {
         if (r.status === 502 || r.status === 503 || r.status === 504) {
           var down = new Error('the server is not answering just now - try again in a moment');
           down.unreachable = true;     /* nginx with nothing behind it - a restart */
+          if (typeof upgradeExpected === 'function' && upgradeExpected()) down.upgrading = true;
           throw down;
         }
         if (r.status === 413) throw new Error('that is more than the server takes');
         throw new Error('the page got something that is not an answer');
+      }
+      if (r.status === 503 && data && data.upgrading && typeof data.upgrading === 'object') {
+        var ug = new Error('being upgraded');
+        ug.unreachable = true;
+        ug.upgrading = data.upgrading;
+        ug.status = 503;
+        try { if (typeof upgradeHeard === 'function') upgradeHeard(data.upgrading, false); } catch (x) { }
+        throw ug;
       }
       if (!r.ok || data.ok === false) {
         var err = new Error(data.error || ('HTTP ' + r.status));
@@ -2451,3 +2464,254 @@ document.addEventListener('touchstart', function (e) {
   if (t && t.closest && t.closest('[data-explains], .sethelp, #sethelp')) return;
   try { if (typeof hideHelp === 'function') hideHelp(); } catch (x) { }
 }, {passive: true});
+
+/* ---- the upgrade band (4.8.0) -----------------------------------------------
+   An upgrade restarts the daemon (its API), nginx and PHP. Whoever does it -
+   the root helper and install.sh --upgrade - writes how far it is into
+   .upgrade.json beside the pages, and PHP reads that from the disk: while the
+   daemon answers it comes with the status, while it does not every call
+   answers 503 {upgrading}, and ?api=upgrade-state works without the daemon at
+   all. Here: one band under the header that follows it - no red bar, no red
+   toasts while it is expected - and the pages of the new version loaded once
+   when it is done. The sign-in page uses the same (with UPG.signin). */
+var UPG = {u: null, heard: 0, away: 0, pagesAway: 0, sawRunning: '', reloading: false,
+           timer: null, asking: false, skew: 0, signin: false, wasDown: false, blocked: false};
+var UPG_KEY_RELOAD = 'upsmon-upgrade-reloaded', UPG_KEY_HIDDEN = 'upsmon-upgrade-hidden';
+function upgStore(kind, key, value) {
+  try {
+    var st = kind === 'session' ? window.sessionStorage : window.localStorage;
+    if (value === undefined) return st.getItem(key) || '';
+    st.setItem(key, value);
+  } catch (e) { }
+  return '';
+}
+function upgradeKey(u) { return u ? String(u.id || u.version || '?') : ''; }
+/* An upgrade under way, as far as this page knows: errors that come from the
+   restarts are expected then, and said by the band - not as faults. */
+function upgradeExpected() {
+  return !!(UPG.u && UPG.u.state === 'running');
+}
+/* An answer that carried the progress: from the status (the daemon answers,
+   apiUp) or from a 503 "being upgraded" (it does not). */
+function upgradeHeard(u, apiUp) {
+  var now = Date.now();
+  UPG.pagesAway = 0;
+  if (apiUp) { UPG.heard = now; UPG.away = 0; }
+  else { if (!UPG.away) UPG.away = now; UPG.wasDown = true; }
+  upgradeTake(u || null);
+}
+/* The pages themselves could not be reached (nginx or PHP restarting) while
+   an upgrade was expected: said by the band, asked again every two seconds. */
+function upgradeLost() {
+  var now = Date.now();
+  if (!UPG.pagesAway) UPG.pagesAway = now;
+  if (!UPG.away) UPG.away = now;
+  UPG.wasDown = true;
+  upgradeDraw();
+  upgradePace();
+}
+function upgradeTake(u) {
+  if (u && typeof u !== 'object') u = null;
+  if (u && u.now) UPG.skew = Date.now() / 1000 - Number(u.now);
+  if (u && u.state === 'running') UPG.sawRunning = upgradeKey(u);
+  UPG.u = u;
+  upgradeEnd();
+  upgradeDraw();
+  upgradePace();
+}
+function upgradeNow() { return Date.now() / 1000 - (UPG.skew || 0); }
+function upgradeTook(s) {
+  s = Math.max(0, Math.round(s));
+  if (s < 60) return s + ' s';
+  var m = Math.floor(s / 60);
+  if (m < 60) return m + ' min ' + (s % 60) + ' s';
+  return Math.floor(m / 60) + ' h ' + (m % 60) + ' min';
+}
+/* How far: the steps done of all of them (install.sh counts its own). */
+function upgradePercent(u) {
+  if (!u) return 0;
+  if (u.state === 'done') return 100;
+  var parts = Number(u.parts || 0), part = Number(u.part || 0);
+  if (!parts) return 2;
+  return Math.max(2, Math.min(99, Math.round(100 * Math.max(0, part - 1) / parts)));
+}
+function upgradeUnsaved() {
+  return !!((typeof DIRTY === 'object' && DIRTY && Object.keys(DIRTY).length) ||
+            (typeof PENDING === 'object' && PENDING && Object.keys(PENDING).length));
+}
+/* The end: done after this page saw it running, and the daemon answers again
+   - the pages of the new version are loaded once (never in a loop, never over
+   changes not saved). On the sign-in page: as soon as the daemon answers. */
+function upgradeEnd() {
+  if (UPG.reloading) return;
+  var u = UPG.u, apiUp = UPG.heard && !UPG.away;
+  if (!apiUp) return;
+  var key = UPG.sawRunning || upgradeKey(u);
+  var ended = UPG.sawRunning && (!u || u.state === 'done');
+  if (UPG.signin) {
+    if (!(UPG.wasDown || ended)) return;
+  } else if (!ended) {
+    return;
+  }
+  if (!UPG.signin && key && upgStore('session', UPG_KEY_RELOAD) === key) { UPG.blocked = 'again'; return; }
+  if (!UPG.signin && upgradeUnsaved()) { UPG.blocked = 'unsaved'; return; }
+  UPG.reloading = true;
+  if (key) upgStore('session', UPG_KEY_RELOAD, key);
+  setTimeout(function () { location.reload(); }, 1200);
+}
+/* Asked every two seconds while an upgrade is known or the daemon is away. */
+function upgradePace() {
+  clearTimeout(UPG.timer);
+  var want = upgradeExpected() || (UPG.away && UPG.u) || UPG.pagesAway ||
+             (UPG.sawRunning && !UPG.reloading && !(UPG.u && UPG.u.state === 'failed') && !UPG.blocked);
+  if (!want || UPG.reloading) return;
+  UPG.timer = setTimeout(upgradeAsk, 2000);
+}
+function upgradeAsk() {
+  if (UPG.asking) return;
+  if (document.hidden && !UPG.signin) { UPG.timer = setTimeout(upgradeAsk, 2000); return; }
+  UPG.asking = true;
+  var opts = {credentials: 'same-origin', cache: 'no-store'}, timer = null;
+  if (typeof AbortController === 'function') {
+    var ac = new AbortController();
+    opts.signal = ac.signal;
+    timer = setTimeout(function () { ac.abort(); }, 6000);
+  }
+  fetch('?api=upgrade-state', opts).then(function (r) {
+    if (!r.ok) throw new Error('HTTP ' + r.status);      /* nginx with no PHP behind it */
+    return r.json();
+  }).then(function (d) {
+    clearTimeout(timer);
+    UPG.asking = false;
+    var now = Date.now();
+    UPG.pagesAway = 0;
+    if (d && d.api) { UPG.heard = now; UPG.away = 0; }
+    else { if (!UPG.away) UPG.away = now; UPG.wasDown = true; }
+    upgradeTake(d && d.upgrading && typeof d.upgrading === 'object' ? d.upgrading : null);
+  }).catch(function () {
+    clearTimeout(timer);
+    UPG.asking = false;
+    upgradeLost();
+  });
+}
+function upgradeOpenLog() {
+  try {
+    if (typeof showTab === 'function') showTab('settings');
+    if (typeof showPane === 'function') showPane('upgrade');
+  } catch (e) { location.href = '/settings/#settings/upgrade'; }
+}
+/* The band itself: #upband under the header (and on the sign-in page). */
+function upgradeDraw() {
+  var band = $('upband');
+  if (!band) return;
+  var u = UPG.u;
+  var show = !!u && (u.state === 'running' || (u.state === 'done' && UPG.sawRunning) ||
+             (u.state === 'failed' && upgStore('local', UPG_KEY_HIDDEN) !== upgradeKey(u)));
+  if (!show && UPG.sawRunning && (UPG.away || UPG.pagesAway)) show = true;     /* the file went with nginx/PHP */
+  if (!show) {
+    band.hidden = true;
+    clear(band);
+    document.documentElement.classList.remove('upgrading');
+    return;
+  }
+  var failed = u && u.state === 'failed', done = u && u.state === 'done';
+  document.documentElement.classList.toggle('upgrading', !failed);
+  band.className = 'offline upband' + (failed ? ' failed' : done ? ' done' : '');
+  band.setAttribute('role', failed ? 'alert' : 'status');
+  clear(band);
+  var v = (u && u.version) || '';
+  var head = el('div', 'upband-head');
+  var title = failed ? 'The upgrade to upsmon ' + v + ' failed'
+    : done ? (UPG.blocked ? 'upsmon ' + v + ' is in' : 'upsmon ' + v + ' is in - loading the pages of the new version…')
+    : (u && u.downgrade) ? 'upsmon is being taken back to ' + v
+    : v ? 'upsmon is being upgraded to ' + v : 'upsmon is being upgraded';
+  head.appendChild(el('b', '', title));
+  var sub = el('span', 'upband-sub');
+  head.appendChild(sub);
+  if (failed) {
+    var x = el('button', 'upband-x', '×');
+    x.type = 'button';
+    x.setAttribute('aria-label', 'Hide');
+    x.onclick = function () { upgStore('local', UPG_KEY_HIDDEN, upgradeKey(u)); upgradeDraw(); };
+    head.appendChild(x);
+  }
+  band.appendChild(head);
+  var bits = [];
+  if (u && u.from) bits.push(el('span', '', 'from ' + u.from));
+  if (u && u.by) {
+    /* The label and the name apart: a weak pattern takes no several words. */
+    var who = el('span', '');
+    who.appendChild(el('span', '', 'asked by'));
+    who.appendChild(document.createTextNode(' '));
+    who.appendChild(el('span', '', u.by));
+    bits.push(who);
+  }
+  if (u && u.started) {
+    var took = (failed || done ? Number(u.at || 0) : upgradeNow()) - Number(u.started);
+    if (took >= 0) bits.push(el('span', '', (failed || done ? 'it took ' : '') + upgradeTook(took) + (failed || done ? '' : ' so far')));
+  }
+  bits.forEach(function (b, i) { if (i) sub.appendChild(document.createTextNode(' · ')); sub.appendChild(b); });
+  {
+    var pc = failed ? 100 : upgradePercent(u);
+    var bar = el('div', 'upband-bar' + (done ? ' ok' : failed ? ' bad' : ''));
+    var fill = el('span', '');
+    fill.style.width = pc + '%';
+    bar.appendChild(fill);
+    band.appendChild(bar);
+    var how = el('div', 'upband-how');
+    how.appendChild(noI18n(el('span', 'upband-pc', pc + ' %')));
+    if (failed && u.said) { how.appendChild(document.createTextNode(' · ')); how.appendChild(noI18n(el('span', '', u.said))); }
+    else if (u && u.words) { how.appendChild(document.createTextNode(' · ')); how.appendChild(el('span', '', u.words)); }
+    if (!failed && u && u.parts && u.part) {
+      how.appendChild(document.createTextNode(' · '));
+      how.appendChild(el('span', '', 'step ' + Math.min(u.part, u.parts) + ' of ' + u.parts));
+    }
+    band.appendChild(how);
+  }
+  var line = el('div', 'upband-line');
+  var now = Date.now();
+  if (failed) {
+    var more = el('div', '');
+    more.appendChild(el('span', '', 'What install.sh said is in Settings → Upgrades.'));
+    if (!UPG.signin) {
+      more.appendChild(document.createTextNode(' '));
+      var a = el('a', 'fgo', 'Open Upgrades');
+      a.href = '#settings/upgrade';
+      a.onclick = function (e) { e.preventDefault(); upgradeOpenLog(); };
+      more.appendChild(a);
+    }
+    line.appendChild(more);
+  } else if (done && UPG.blocked) {
+    line.appendChild(el('span', '', UPG.blocked === 'unsaved'
+      ? 'This page has changes not saved, so it was not loaded again - save them, then load it.'
+      : 'This page is still the one of the version before.'));
+    line.appendChild(document.createTextNode(' '));
+    var again = el('a', 'fgo', 'Load it again');
+    again.href = '#';
+    again.onclick = function (e) { e.preventDefault(); upgStore('session', UPG_KEY_RELOAD, ''); location.reload(); };
+    line.appendChild(again);
+  } else if (UPG.pagesAway) {
+    line.appendChild(el('span', 'warnish', 'nginx and PHP are restarting - these pages cannot be reached for '
+      + upgradeTook((now - UPG.pagesAway) / 1000) + ', asked again every two seconds'));
+  } else if (UPG.away) {
+    line.appendChild(el('span', 'warnish', 'The daemon is restarting with the new version - not answering for '
+      + upgradeTook((now - UPG.away) / 1000) + ', asked again every two seconds'));
+  } else if (!done) {
+    line.appendChild(el('span', '', UPG.signin
+      ? 'upsmon.service and these pages restart once during it. This page follows it and is ready to sign in again by itself.'
+      : 'upsmon.service and these pages restart once during it - the readings of the UPS pause for a few seconds. This page follows it and loads the new version by itself.'));
+  }
+  if (line.childNodes.length) band.appendChild(line);
+  band.hidden = false;
+  /* While it runs: no red "not answering" bar, and the pill says maintenance. */
+  if (!failed && !done) {
+    if ($('offline')) $('offline').hidden = true;
+    var pill = $('state-pill');
+    if (pill && pill.lastChild) { pill.className = 'pill warn'; pill.lastChild.textContent = 'in maintenance'; }
+  }
+}
+/* Every second the times in the band go on (only while it is shown). */
+setInterval(function () {
+  var band = $('upband');
+  if (band && !band.hidden && UPG.u && UPG.u.state === 'running') upgradeDraw();
+}, 1000);
