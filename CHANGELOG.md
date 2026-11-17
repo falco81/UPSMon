@@ -4,6 +4,33 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.9.0 - 2026-11-17
+
+SELinux as the SELinux kit describes it: what SELinux refuses, sorted by what puts it right, and
+a button that puts right what may safely be put right. See `docs/selinux-and-trusted-roots.md`.
+
+- **What SELinux refuses** (Settings → SELinux): every AVC, USER_AVC and SELINUX_ERR since the
+  start, read with the records of its event (the program, the whole path, the port), grouped,
+  put to `audit2why` and sorted - *a label* (restorecon), *a boolean* (setsebool -P, never one
+  that allows far more), *a port* (semanage port -a, never another service's), *a rule of
+  upsmon's* (one rule in upsmon's own local module `upsmon_local`), *not for a button* (with
+  why: security-sensitive targets, executing and transitions, capabilities, unsafe classes,
+  writes to generic types), *not upsmon's* (other programs - shown, never put right; they no
+  longer hold enforcing back). A finding's id is the same at every look.
+- **Put in what is selected (N)**: ticked by default, select all per group, a confirm that lists
+  exactly what root will do. The page sends only the ids - root finds them again and works out
+  every fix itself; every step in Events; works under enforcing too. What was put right is
+  "Put right just now"; refused again after it, it comes back.
+- **upsmon's local rules** with *Take it away* (the last one: `semodule -r upsmon_local`).
+- `upsmon_server.cil`: `nnp_transition` into the domains of the tools the daemon runs under
+  NoNewPrivileges (ip, ssh/sftp/scp, ssh-keygen; chronyc, hostname, ping), each `optional` -
+  checked with `secilc`.
+- The report: `os/` for the whole machine (every process, boolean, port type, module, local
+  changes, `semanage export`, listening sockets), and the local module.
+- Command line: `upsmon --selinux-look`, `--selinux-fix ID... | all`, `--selinux-rules
+  [--take-away ID]`. `install.sh --uninstall` takes `upsmon_local` away too.
+- In Czech too. Tests: `tests/selinux-find/` (38 + 14 checks); the 4.6.0 ones pass unchanged.
+
 ## 4.8.0 - 2026-11-17
 
 The upgrade on the pages, as the upgrade-UI kit describes it: the pages stay with an

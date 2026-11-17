@@ -24,14 +24,14 @@ let ok = 0, bad = 0; const check = (n, c, g) => { if (c) { ok++; console.log('OK
   const heads = await p.evaluate(() => [...document.querySelectorAll('#modal .pk-list th')].map(x => x.textContent.trim()));
   check('the columns', heads.length === 5, heads);
   await (await (await addBtn()).asElement()).scrollIntoViewIfNeeded();
-  await p.screenshot({ path: process.argv[2] + '-1.png' });
+  if (process.argv[2]) await p.screenshot({ path: process.argv[2] + '-1.png' });
   const pen = row + ' td.rowtools button:first-child';
   await p.click(pen);
   const st = await p.evaluate(r => { const i = document.querySelector(r + ' input.pk-name-in'); return i && {focus: document.activeElement === i, sel: i.selectionEnd - i.selectionStart, len: i.value.length, v: i.value}; }, row);
   check('the pencil: a box, focused, all the name selected', st && st.focus && st.sel === st.len && st.len > 3, st);
   const w = await p.evaluate(r => document.querySelector(r + ' input.pk-name-in').getBoundingClientRect().width, row);
   check('the box about 190 px wide (' + Math.round(w) + ')', w > 150 && w <= 192, w);
-  await p.screenshot({ path: process.argv[2] + '-2.png' });
+  if (process.argv[2]) await p.screenshot({ path: process.argv[2] + '-2.png' });
   await p.keyboard.type('Můj iPad'); await p.keyboard.press('Escape'); await p.waitForTimeout(600);
   const esc = await nm();
   check('Esc: nothing changed, the dialog still open', esc === st.v && await p.isVisible('#modal') && !(await p.$(row + ' input')), esc);

@@ -3583,6 +3583,10 @@
    "source": "Take it out",
    "text": "Odebrat"
   },
+  "os2317": {
+   "source": "Take the rule away",
+   "text": "Odebrat pravidlo"
+  },
   "os2320": {
    "source": "Take them all away",
    "text": "Odebrat všechny"
@@ -11538,6 +11542,186 @@
   "s480032": {
    "source": "asked by",
    "text": "spustil"
+  },
+  "s490001": {
+   "source": "What SELinux refuses",
+   "text": "Co SELinux odmítá"
+  },
+  "s490002": {
+   "source": "since the machine started",
+   "text": "od spuštění stroje"
+  },
+  "s490003": {
+   "source": "since upsmon's needs were put in",
+   "text": "od nasazení toho, co upsmon potřebuje"
+  },
+  "s490004": {
+   "source": "SELinux refused nothing of upsmon's on this server",
+   "text": "SELinux na tomto serveru upsmonu nic neodmítl"
+  },
+  "s490005": {
+   "source": "Nothing since the machine started.",
+   "text": "Nic od spuštění stroje."
+  },
+  "s490006": {
+   "source": "Nothing since upsmon's needs were put in.",
+   "text": "Nic od nasazení toho, co upsmon potřebuje."
+  },
+  "s490007": {
+   "source": "Put right just now",
+   "text": "Právě napraveno"
+  },
+  "s490008": {
+   "source": "A label",
+   "text": "Štítek"
+  },
+  "s490009": {
+   "source": "A boolean",
+   "text": "Přepínač (boolean)"
+  },
+  "s490010": {
+   "source": "A port",
+   "text": "Port"
+  },
+  "s490011": {
+   "source": "A rule of upsmon's",
+   "text": "Pravidlo upsmonu"
+  },
+  "s490012": {
+   "source": "Not for a button",
+   "text": "Ne na tlačítko"
+  },
+  "s490013": {
+   "source": "Not upsmon's",
+   "text": "Nepatří upsmonu"
+  },
+  "s490014": {
+   "source": "The file is not labelled as the policy says it should be - restorecon puts it right.",
+   "text": "Soubor nemá štítek, jaký mu politika určuje – restorecon to napraví."
+  },
+  "s490015": {
+   "source": "A switch of the policy that is off - setsebool switches it on.",
+   "text": "Vypnutý přepínač politiky – setsebool ho zapne."
+  },
+  "s490016": {
+   "source": "A port with no type of its own - given the type of the program that uses it.",
+   "text": "Port bez vlastního typu – dostane typ programu, který ho používá."
+  },
+  "s490017": {
+   "source": "Nothing of the policy allows it: exactly this, and nothing more, goes into upsmon's own local module (upsmon_local).",
+   "text": "Politika to nijak nepovoluje: přesně tohle a nic víc přijde do vlastního lokálního modulu upsmonu (upsmon_local)."
+  },
+  "s490018": {
+   "source": "upsmon's, but what it would take is too much to allow from here - each says why, and what an admin could look at.",
+   "text": "Patří upsmonu, ale povolit to odsud by bylo příliš – u každého je proč a na co se může podívat správce."
+  },
+  "s490019": {
+   "source": "Other programs of this machine - shown, never put right here.",
+   "text": "Jiné programy tohoto stroje – jen ukázané, odsud se nikdy nenapravují."
+  },
+  "s490020": {
+   "source": "Select all",
+   "text": "Vybrat vše"
+  },
+  "s490021": {
+   "source": "once",
+   "text": "jednou"
+  },
+  "s490022": {
+   "source": "(permissive: let through, written down)",
+   "text": "(permissive: propuštěno, zapsáno)"
+  },
+  "s490023": {
+   "source": "nothing of the policy allows it: a rule of upsmon's own local module allows exactly this",
+   "text": "politika to nijak nepovoluje: přesně tohle povolí pravidlo vlastního lokálního modulu upsmonu"
+  },
+  "s490024": {
+   "source": "put right just now - it goes at the next look",
+   "text": "právě napraveno – zmizí při příštím pohledu"
+  },
+  "s490025": {
+   "source": "the policy loaded now allows it",
+   "text": "nahraná politika to už povoluje"
+  },
+  "s490026": {
+   "source": "Under enforcing too - nothing has to be switched off for it. What was put right is looked at again at once.",
+   "text": "I v režimu enforcing – nic se kvůli tomu nemusí vypínat. Co se napraví, hned se znovu prověří."
+  },
+  "s490027": {
+   "source": "Root does exactly this - nothing else - and looks again at once:",
+   "text": "Root udělá přesně tohle – nic jiného – a hned se znovu podívá:"
+  },
+  "s490028": {
+   "source": "The rules go into upsmon's own local module upsmon_local - each can be taken away again below. Every step is written in Events. It works under enforcing too.",
+   "text": "Pravidla přijdou do vlastního lokálního modulu upsmonu upsmon_local – každé lze níže zase odebrat. Každý krok se zapíše do Událostí. Funguje to i v režimu enforcing."
+  },
+  "s490029": {
+   "source": "label",
+   "text": "štítek"
+  },
+  "s490030": {
+   "source": "boolean",
+   "text": "přepínač"
+  },
+  "s490031": {
+   "source": "port",
+   "text": "port"
+  },
+  "s490032": {
+   "source": "rule",
+   "text": "pravidlo"
+  },
+  "s490033": {
+   "source": "upsmon's local rules",
+   "text": "Lokální pravidla upsmonu"
+  },
+  "s490034": {
+   "source": "upsmon_local, in the policy",
+   "text": "upsmon_local, v politice"
+  },
+  "s490035": {
+   "source": "Take the rule away?",
+   "text": "Odebrat pravidlo?"
+  },
+  "s490036": {
+   "source": "upsmon_local is written again without it - it was the last one: the module goes out of the policy. What it allowed is refused again under enforcing.",
+   "text": "upsmon_local se zapíše znovu bez něj – bylo poslední: modul z politiky odejde. Co povolovalo, bude v režimu enforcing zase odmítnuto."
+  },
+  "s490037": {
+   "source": "upsmon_local is written again without it. What it allowed is refused again under enforcing.",
+   "text": "upsmon_local se zapíše znovu bez něj. Co povolovalo, bude v režimu enforcing zase odmítnuto."
+  },
+  "s490038": {
+   "source": "putting it right…",
+   "text": "napravuje se…"
+  },
+  "s490039": {
+   "source": "taking the rule away…",
+   "text": "odebírá se pravidlo…"
+  },
+  "s490040": {
+   "source": "asked: root puts it right within seconds and looks again",
+   "text": "požádáno: root to během pár sekund napraví a znovu se podívá"
+  },
+  "s490041": {
+   "source": "asked: the rule is taken away within seconds",
+   "text": "požádáno: pravidlo se během pár sekund odebere"
+  },
+  "s490042": {
+   "source": "SELinux could not work out a context (SELINUX_ERR) - a matter of the policy itself, for the report",
+   "text": "SELinux nedokázal určit kontext (SELINUX_ERR) – věc samotné politiky, do reportu"
+  },
+  "s490043": {
+   "source": "a constraint of the policy (users, roles, levels) refuses it, not a missing rule - for the report",
+   "text": "odmítá to omezení politiky (uživatelé, role, úrovně), ne chybějící pravidlo – do reportu"
+  },
+  "s490044": {
+   "source": "Put right just now - it goes at the next look",
+   "text": "Právě napraveno – zmizí při příštím pohledu"
+  },
+  "s490045": {
+   "source": "SELinux refused nothing on this server",
+   "text": "SELinux na tomto serveru nic neodmítl"
   }
  },
  "patterns": {
@@ -12724,6 +12908,10 @@
   "op0667": {
    "source": "restarting {0}, one at a time",
    "text": "restartuje se {0}, jeden po druhém"
+  },
+  "op0671": {
+   "source": "right: {0}",
+   "text": "správně: {0}"
   },
   "op0672": {
    "source": "root could not put it in: {0}",
@@ -14544,6 +14732,78 @@
   "p480016": {
    "source": "install.sh --upgrade on {0}",
    "text": "install.sh --upgrade na {0}"
+  },
+  "p490001": {
+   "source": "{0} times",
+   "text": "{0}×"
+  },
+  "p490002": {
+   "source": "last {0}",
+   "text": "naposledy {0}"
+  },
+  "p490003": {
+   "source": "Put in what is selected ({0})",
+   "text": "Nasadit vybrané ({0})"
+  },
+  "p490004": {
+   "source": "Put in what is selected on {0}?",
+   "text": "Nasadit vybrané na {0}?"
+  },
+  "p490005": {
+   "source": "{0} more - in the report",
+   "text": "dalších {0} – v reportu"
+  },
+  "p490006": {
+   "source": "put in {0} by {1}",
+   "text": "nasazeno {0}, {1}"
+  },
+  "p490007": {
+   "source": "{0} is labelled {1} - the policy says {2}",
+   "text": "{0} má štítek {1} – politika říká {2}"
+  },
+  "p490008": {
+   "source": "the boolean {0} is off - switching it on allows this",
+   "text": "přepínač {0} je vypnutý – jeho zapnutí to povolí"
+  },
+  "p490009": {
+   "source": "not upsmon's: {0} is another program of this machine - look at it with whoever looks after it",
+   "text": "nepatří upsmonu: {0} je jiný program tohoto stroje – proberte to s tím, kdo se o něj stará"
+  },
+  "p490010": {
+   "source": "{0} is security-sensitive ({1}) - never allowed from here",
+   "text": "{0} je citlivé z hlediska bezpečnosti ({1}) – odsud se nikdy nepovolí"
+  },
+  "p490011": {
+   "source": "only a boolean that allows far more would allow it ({0}) - never switched on from here",
+   "text": "povolil by to jen přepínač, který povoluje mnohem víc ({0}) – odsud se nikdy nezapne"
+  },
+  "p490012": {
+   "source": "{0} refused on a path or port not known as upsmon's - not put right from here",
+   "text": "{0}: odmítnuto na cestě či portu, které nejsou známé jako upsmonu – odsud se nenapravuje"
+  },
+  "p490013": {
+   "source": "port {0} is {1}'s in the policy - never taken from it here",
+   "text": "port {0} patří v politice {1} – odsud se mu nikdy nebere"
+  },
+  "p490014": {
+   "source": "{0} thing(s) SELinux refused can be put right here - \"Put in what is selected\" above.",
+   "text": "{0} věc(í), které SELinux odmítl, lze napravit tady – „Nasadit vybrané“ výše."
+  },
+  "p490015": {
+   "source": "{0} thing(s) are not for a button - each says why; the report is for whoever looks after upsmon's module.",
+   "text": "{0} věc(í) není na tlačítko – u každé je proč; report je pro toho, kdo se stará o modul upsmonu."
+  },
+  "p490016": {
+   "source": "{0} would let it run, change or reach far more than this - never allowed from here",
+   "text": "{0} by mu dovolilo spouštět, měnit nebo dosáhnout mnohem dál než na tohle – odsud se nikdy nepovolí"
+  },
+  "p490017": {
+   "source": "writing to {0} (a type many files share) would allow far more than this - never allowed from here; the file should have a label of its own",
+   "text": "zápis do {0} (typ, který sdílí mnoho souborů) by povolil mnohem víc než tohle – odsud se nikdy nepovolí; soubor by měl mít vlastní štítek"
+  },
+  "p490018": {
+   "source": "the class {0} is the system's own - never allowed from here",
+   "text": "třída {0} patří systému – odsud se nikdy nepovolí"
   }
  },
  "rich": {

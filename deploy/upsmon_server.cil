@@ -23,3 +23,23 @@
 (optional upsmon_server_systemd_runtime
     (allow init_t httpd_var_run_t (dir (getattr setattr search open read)))
     (allow init_t httpd_var_run_t (file (getattr setattr))))
+
+; upsmon.service runs with NoNewPrivileges=yes. A program the daemon runs that has a domain of
+; its own is started in it by a transition - which NoNewPrivileges forbids unless the policy says
+; the transition may go (nnp_transition); under enforcing such a program would not run at all.
+; The daemon runs ip (ifconfig_t: the addresses of this machine), ssh, sftp and scp (ssh_t: remote
+; backups to SFTP / SCP), ssh-keygen (ssh_keygen_t: their keys); chronyc, hostname and ping as
+; other applications of ours do. Only the transition, only into these domains, each in a block of
+; its own (a policy without one of the types still takes the rest). (4.9.0)
+(optional upsmon_server_nnp_ifconfig
+    (allow unconfined_service_t ifconfig_t (process2 (nnp_transition nosuid_transition))))
+(optional upsmon_server_nnp_ssh
+    (allow unconfined_service_t ssh_t (process2 (nnp_transition nosuid_transition))))
+(optional upsmon_server_nnp_ssh_keygen
+    (allow unconfined_service_t ssh_keygen_t (process2 (nnp_transition nosuid_transition))))
+(optional upsmon_server_nnp_chronyc
+    (allow unconfined_service_t chronyc_t (process2 (nnp_transition nosuid_transition))))
+(optional upsmon_server_nnp_hostname
+    (allow unconfined_service_t hostname_t (process2 (nnp_transition nosuid_transition))))
+(optional upsmon_server_nnp_ping
+    (allow unconfined_service_t ping_t (process2 (nnp_transition nosuid_transition))))

@@ -1,4 +1,4 @@
-# SELinux a důvěryhodné kořeny systému (upsmon 4.6.0)
+# SELinux a důvěryhodné kořeny systému (upsmon 4.6.0, nálezy a opravy 4.9.0)
 
 Převzato z OTP 1.0.265 (návod „SELinux support and the system's trusted roots“) pro jeden
 server bez clusteru. Obojí mění operační systém, proto to dělá root helper
@@ -47,11 +47,62 @@ Enforcing se odmítne, dokud něco chybí, něco bylo zamítnuto nebo neběží 
   poprvé podívá 2 minuty po startu, pak každých 30 minut a hned, když se o krok požádá.
   Každý krok se zkouší jen jednou.
 
+### Co SELinux odmítá, roztříděné podle toho, co to napraví (4.9.0)
+
+Pod kontrolami je sekce **Co SELinux odmítá**. Root (helper) při každém pohledu přečte
+každé `AVC`, `USER_AVC` a `SELINUX_ERR` od startu stroje (`ausearch -ts boot`) i se záznamy
+jeho události (SYSCALL: program; PATH: celá cesta; port). Seskupí je podle (zdrojový typ,
+cílový typ, třída, oprávnění, program, cesta nebo port), každou skupinu dá `audit2why` a zařadí
+do jednoho druhu. Id nálezu je hash toho, co bylo odmítnuto (12 hex znaků) – stejné odmítnutí
+má při každém pohledu stejné id.
+
+| Druh | Význam | Co ho napraví |
+|---|---|---|
+| povoleno teď | nahraná politika to už povoluje | – (nepočítá se, nezobrazí se) |
+| **Přepínač (boolean)** | `audit2why` jmenuje boolean | `setsebool -P NÁZEV 1` – nikdy boolean, který povoluje mnohem víc (`*exec*`, `unconfined`, `*_manage_all*`, `*_read_all*`, `ptrace`, `deny_*`…) |
+| **Štítek** | soubor upsmonu nemá štítek, jaký říká `matchpathcon` | `restorecon -R -v CESTA` (jen cesty upsmonu) |
+| **Port** | nginx, sshd, chronyd nebo avahi na portu upsmonu bez vlastního typu | `semanage port -a -t TYP -p PROTO PORT` – nikdy port, který patří typu jiné služby |
+| **Pravidlo upsmonu** | politika to nijak nepovoluje a je bezpečné povolit přesně tohle | jedno pravidlo ve **druhém lokálním modulu** `upsmon_local`: `(optional upsmon_local_ID (allow SRC TGT (TŘÍDA (OPRÁVNĚNÍ))))` |
+| **Ne na tlačítko** | patří upsmonu, ale povolit to odsud by bylo příliš | jen zobrazeno s důvodem: citlivý cíl (`shadow_t`, `security_t`, politika, `kernel_t`, klíče, audit, `sudo_*`, domovy…), spouštění a přechody (`execute`, `entrypoint`, `transition`, `ptrace`, `relabel*`…), schopnosti (`sys_admin`, `dac_override`…), nebezpečné třídy, zápis do obecných typů (`etc_t`, `usr_t`, `var_t`, `tmp_t`…), omezení politiky (constraint) |
+| **Nepatří upsmonu** | jiný program stroje | jen zobrazeno, nikdy se odsud nenapravuje |
+
+**Komu odmítnutí patří:** démonu (`unconfined_service_t`, program z `/usr/local/lib/upsmon`
+nebo „upsmon“ v jeho záznamech), nástrojům, které démon spouští s `NoNewPrivileges`
+(`chronyc_t`, `ifconfig_t`, `ssh_t`, `ssh_keygen_t`, `hostname_t`, `ping_t`), a omezeným službám,
+se kterými upsmon pracuje (`httpd_t`, `init_t`, `logrotate_t`…) – u nich jen na cestách upsmonu
+(`/var/www/upsmon`, `/run/upsmon`, `/var/lib/upsmon`, `/etc/upsmon`, jeho soubory nginx,
+php-fpm, logrotate…) nebo na jeho portech; s cestou ani portem, které nejsou známé, se počítají
+k upsmonu (jako dřív). Odmítnutí jiných programů enforcing neblokuje.
+
+**Nasadit vybrané (N):**
+
+- Všechno, co lze napravit, přijde zaškrtnuté; skupiny mají „vybrat vše“, tlačítko počítá.
+- **Stránka posílá jen id.** Root nálezy najde znovu v auditním logu a každou opravu si
+  odvodí sám – požadavek nikdy nenese pravidlo, cestu ani příkaz.
+- Potvrzení vypíše **přesně**, co root udělá.
+- Root: `setsebool -P`, `restorecon`, `semanage port`, lokální modul přepsaný ze seznamu
+  a nahraný (`semodule -i`, kopie `.in-policy`); každý krok jde do Událostí; hned se znovu
+  podívá. Funguje i v režimu enforcing.
+- Co bylo napraveno, se zapíše s časem (`/var/lib/upsmon-root/selinux-fixed.json`):
+  odmítnutí z doby předtím se už nepočítá („Právě napraveno“), odmítnutí potom se vrátí.
+- **Lokální pravidla upsmonu** vypisuje každé pravidlo s tlačítkem **Odebrat**
+  (`/var/lib/upsmon-root/selinux-local.json`, `upsmon_local.cil`); poslední odebrané:
+  `semodule -r upsmon_local`.
+- Přepnout na enforcing zůstává zamčené, dokud zbývá něco k napravení nebo „ne na tlačítko“.
+
+`upsmon_server.cil` má od 4.9.0 navíc `nnp_transition` do domén nástrojů, které démon
+spouští (`ip`, `ssh`/`sftp`/`scp`, `ssh-keygen`; i `chronyc`, `hostname`, `ping`), každý
+přechod v bloku `optional` – politika bez některého typu vezme zbytek.
+
 ### Report
 
 **Stáhnout report** nebo `upsmon --selinux-report [SOUBOR]` připraví tar.gz s obsahem:
 `check.json`, zamítnutí (raw, `-i`, `audit2why`, návrh `audit2allow`), štítky souborů proti
-`matchpathcon`, domény procesů, porty, booleany, moduly a verze systému.
+`matchpathcon`, domény procesů, porty, booleany, moduly (i `upsmon_local`) a verze systému.
+Od 4.9.0 i složka `os/` za celý stroj: každý proces s doménou, každý boolean
+(`getsebool -a`), každý typ portu (`semanage port -l`), každý modul (`semodule -lfull`),
+co se na stroji změnilo (`semanage boolean/port/fcontext/login/user/module/permissive -l -C`),
+`semanage export` a naslouchající sokety se štítky (`ss -lntupZ`).
 
 - Při jeho vytváření se nic nemění.
 - Neobsahuje heslo, klíč ani token. Auditní log ale obsahuje příkazové řádky jiných programů,
@@ -68,7 +119,8 @@ Při každé instalaci i aktualizaci:
 - `selinux_module`: zkopíruje `upsmon_server.cil`. Kde je SELinux zapnutý, provede
   `semodule -i`, ale jen když se modul změnil proti `upsmon_server.cil.in-policy`. Pak
   `restorecon /run/upsmon` a kontrola `matchpathcon`.
-- `--uninstall` provede `semodule -r upsmon_server`. Režim a booleany patří stroji a zůstanou.
+- `--uninstall` provede `semodule -r upsmon_server` a `semodule -r upsmon_local`. Režim,
+  booleany a štítky portů patří stroji a zůstanou.
 
 ### CLI
 
@@ -77,6 +129,9 @@ upsmon --selinux-check            # stav; exit 1, když něco chybí
 upsmon --selinux-check --json
 upsmon --selinux prepare          # check | prepare | apply | enforce | permissive (zeptá se; --yes)
 upsmon --selinux-report [FILE]    # /root/upsmon-selinux-report-STROJ-DATUM.tar.gz
+upsmon --selinux-look             # co SELinux odmítá, po druzích, s id a opravami (--json)
+upsmon --selinux-fix ID... | all  # vypíše, co root udělá, zeptá se (--yes)
+upsmon --selinux-rules [--take-away ID]   # lokální pravidla upsmonu
 ```
 
 ## Důvěryhodné kořeny systému: Nastavení → Certifikáty a TLS
@@ -122,3 +177,8 @@ upsmon --os-roots-remove 7d8401dfbd268db3     # otisk, nejméně 12 znaků
 - `CADIR=… node tests/selinux-osroots/t_ui.js`: stránky na testovací instanci. Autority se
   přidají a odeberou doopravdy (Ubuntu: systémový seznam 122 → 124 → 122).
 - `node tests/selinux-osroots/t_report.js`: report ze stránky.
+- `python3 tests/selinux-find/t_find.py`: třídění nálezů z fixtur skutečného výstupu
+  `ausearch` (hex), opravy, lokální modul (přeložený `secilc`, je-li na stroji), odebrání
+  pravidel, report (38 kontrol).
+- `node tests/selinux-find/t_ui.js`: karta na testovací instanci se zástupnými nástroji
+  (viz `tests/selinux-find/README.md`).

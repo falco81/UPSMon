@@ -22,7 +22,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-readonly INSTALLER_VERSION='4.8.0'
+readonly INSTALLER_VERSION='4.9.0'
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly LIB_DIR=/usr/local/lib/upsmon
@@ -1957,6 +1957,10 @@ do_uninstall() {
     # upsmon's SELinux module goes with it; the mode, booleans and ports are the machine's and stay.
     if command -v semodule >/dev/null 2>&1 && semodule -l 2>/dev/null | awk '$1=="upsmon_server"{f=1} END{exit !f}'; then
         run semodule -r upsmon_server >/dev/null 2>&1 || warn "SELinux: semodule -r upsmon_server failed"
+    fi
+    # The local rules put in from Settings -> SELinux (4.9.0) go with it.
+    if command -v semodule >/dev/null 2>&1 && semodule -l 2>/dev/null | awk '$1=="upsmon_local"{f=1} END{exit !f}'; then
+        run semodule -r upsmon_local >/dev/null 2>&1 || warn "SELinux: semodule -r upsmon_local failed"
     fi
     run rm -f "$UNIT" /etc/logrotate.d/upsmon /etc/systemd/system/upsmon-web.path \
         /etc/systemd/system/upsmon-web.service /etc/systemd/system/upsmon-upgrade.path \

@@ -1439,28 +1439,20 @@ def se_allowed_now(lines):
             by_id[m.group(1)] = key
     if not by_id:
         return []
-    got = _se_run(['audit2why'], 300, light=True, data=''.join(lines[k] + '\n' for k in by_id.values()))
-    if got is None or got.returncode != 0:
-        return []
-    now, cur = set(), None
-    for line in (got.stdout or '').splitlines():
-        m = re.search(r'msg=audit\(([0-9.]+:\d+)\)', line)
-        if m and 'avc:' in line:
-            cur = by_id.get(m.group(1))
-            continue
-        if cur is not None and 'would be allowed by active policy' in line:
-            now.add(cur)
+    # One audit2why for each look, shared with the findings (4.9.0).
+    blocks = se_why_blocks([lines[k] for k in by_id.values()])
+    now = {key for mid, key in by_id.items() if 'would be allowed by active policy' in blocks.get(mid, '')}
     return sorted(now)
 
 
 def se_denials(since=0.0):
     """What SELinux refused since the machine started - or since upsmon's needs were last put
     in - for the programs upsmon works with."""
-    got = _se_run(['ausearch', '-m', 'AVC,USER_AVC', '-ts', 'boot'], 120, light=True)
-    if got is None:
+    raw = se_ausearch()
+    if raw is None:
         return {'tool': False, 'total': 0, 'groups': [], 'since': since}
     groups, lines, total = {}, {}, 0
-    for line in (got.stdout or '').splitlines():
+    for line in raw.splitlines():
         if 'avc:' not in line or 'denied' not in line:
             continue
         when = re.search(r'msg=audit\((\d+)(?:\.\d+)?:', line)
@@ -1477,7 +1469,13 @@ def se_denials(since=0.0):
         st = (sc.group(1).split(':') + ['', '', ''])[2]
         tt = (tc.group(1).split(':') + ['', '', ''])[2]
         what = ' '.join(x for x in (comm.group(1) if comm else '', name.group(1) if name else '') if x)
-        if st not in SE_DOMAINS and 'upsmon' not in line:
+        if st not in SE_DOMAINS and st not in SE_TOOL_DOMAINS and 'upsmon' not in line:
+            continue
+        # Another program's (the findings say so), or put right after it happened (4.9.0).
+        mid = re.search(r'msg=audit\(([0-9.]+:\d+)\)', line)
+        if mid and mid.group(1) in SE_AUSEARCH.get('other', ()):
+            continue
+        if when and se_fixed_skip(st, tt, cl.group(1), perms.group(1), int(when.group(1))):
             continue
         total += 1
         key = (st, tt, cl.group(1), perms.group(1).strip())
@@ -1526,6 +1524,7 @@ def se_want_checked(r, left_out=None):
 
 
 def se_check(r):
+    SE_AUSEARCH.clear()                    # a new look: ausearch and audit2why asked again
     left = []
     bools, ports = se_want_checked(r, left)
     mode = se_mode()
@@ -1555,6 +1554,13 @@ def se_check(r):
         out['ports'].append(dict(p, labelled=(se_port_has(known, p['type'], p['proto'], p['port'])
                                              if known is not None else None)))
     if on:
+        # What SELinux refuses, sorted by what puts it right (4.9.0) - first: it says which
+        # refusals are another program's, and those are not counted below.
+        try:
+            out['findings'] = se_find(se_app_ports(r), se_applied_at())
+        except Exception as e:                          # noqa: BLE001 - the rest of the look goes on
+            out['findings'] = {'tool': False, 'items': [], 'counts': {}, 'error': str(e)[:200]}
+        out['local_rules'] = se_local_rules()
         out['denials'] = se_denials(se_applied_at())
         out['auditd'] = se_auditd()
     probs = out['problems']
@@ -1699,6 +1705,14 @@ def se_do(r):
             raise Refused('setenforce 1: %s' % ((got.stderr or '') if got else '')[-200:])
         se_config_set('enforcing')
         said.append('SELinux is enforcing, and stays so after a restart')
+    elif do == 'fix':
+        if mode not in ('Enforcing', 'Permissive'):
+            raise Refused('SELinux is %s - nothing is refused to put right' % mode.lower())
+        se_fix(r, said)
+    elif do == 'rule_drop':
+        if mode not in ('Enforcing', 'Permissive'):
+            raise Refused('SELinux is %s - its rules cannot be changed now' % mode.lower())
+        se_rule_drop(r, said)
     elif do == 'permissive':
         if mode == 'Disabled':
             raise Refused('SELinux is disabled - "prepare" makes it permissive')
@@ -1709,10 +1723,522 @@ def se_do(r):
         se_config_set('permissive')
         said.append('SELinux is permissive, and stays so after a restart')
     else:
-        raise Refused('check, prepare, apply, enforce or permissive')
+        raise Refused('check, prepare, apply, enforce, permissive, fix or rule_drop')
     out = se_check(r)
     out['said'] = said
     return out
+
+
+# ---- What SELinux refuses, sorted by what puts it right (4.9.0, as the SELinux kit) --------
+# Every AVC, USER_AVC and SELINUX_ERR since the machine started, read with the records of its
+# event (SYSCALL: the program; PATH: the whole path; the port), grouped by (source, target,
+# class, permissions, program, path or port), each group put to audit2why and sorted into one
+# kind. A finding's id is a hash of what was refused - the same refusal has the same id at
+# every look. The page sends only ids; root finds them again here and works out every fix
+# itself - a request never carries a rule, a path or a command.
+SE_LOCAL_MODULE = 'upsmon_local'
+SE_LOCAL_LIST = 'selinux-local.json'          # root's folder: the local rules, {id: {...}}
+SE_FIXED = 'selinux-fixed.json'               # root's folder: what was put right, {id: {...}}
+SE_FIXED_SHOW_S = 86400                       # "Put right just now" shown a day
+SE_FIND_MOST = 80
+SE_ID_RE = re.compile(r'^[0-9a-f]{12}\Z')
+SE_NAME_RE = re.compile(r'^[a-z][a-z0-9_]{0,80}\Z')
+# The tools upsmon.service (NoNewPrivileges=yes) runs that have a domain of their own.
+SE_TOOL_DOMAINS = ('chronyc_t', 'ifconfig_t', 'hostname_t', 'ssh_keygen_t', 'ssh_t', 'ping_t')
+# upsmon's paths: a confined service's refusal is upsmon's only on one of them.
+SE_APP_PATHS = ('/usr/local/lib/upsmon', '/usr/local/bin/upsmon', '/var/lib/upsmon', '/var/lib/upsmon-root',
+                '/var/www/upsmon', '/run/upsmon', '/var/run/upsmon', '/etc/upsmon', '/var/log/upsmon',
+                '/etc/nginx/conf.d/upsmon.conf', '/etc/nginx/certs', '/etc/php-fpm.d/upsmon.conf',
+                '/run/php-fpm/upsmon.sock', '/etc/logrotate.d/upsmon', '/etc/systemd/system/upsmon.service',
+                '/etc/upsmon-console-login', '/etc/profile.d/zz-upsmon-console.sh')
+SE_RUN_FILES = ('admin-token', 'api-token', 'admin-port', 'api-port')
+# A port with no type of its own, and the type of the confined program that uses it.
+SE_GENERIC_PORTS = ('unreserved_port_t', 'port_t', 'hi_reserved_port_t', 'reserved_port_t', 'ephemeral_port_t')
+SE_PORT_FOR = {'httpd_t': 'http_port_t', 'sshd_t': 'ssh_port_t', 'chronyd_t': 'ntp_port_t', 'avahi_t': 'howl_port_t'}
+# Never put right from a page: a boolean that allows far more, a security-sensitive target,
+# executing or changing domains, unsafe classes, writes to generic types.
+SE_BAD_BOOL = re.compile(r'exec|unconfined|_manage_all|_read_all|ptrace|^deny_|_all_|secure_mode|'
+                         r'_full_access|can_network_connect_db|domain_can_mmap|nis_enabled|'
+                         r'use_nfs_home|use_samba_home|_sys_script_anon_write', re.I)
+SE_BAD_TARGETS = ('shadow_t', 'security_t', 'policy_config_t', 'selinux_config_t', 'default_context_t',
+                  'file_context_t', 'load_policy_exec_t', 'semanage_store_t', 'semanage_exec_t',
+                  'kernel_t', 'proc_kcore_t', 'memory_device_t', 'kmsg_device_t', 'fixed_disk_device_t',
+                  'boot_t', 'bootloader_exec_t', 'user_home_t', 'user_home_dir_t', 'admin_home_t',
+                  'home_root_t', 'ssh_home_t', 'sshd_key_t', 'ssh_keysign_exec_t', 'passwd_file_t',
+                  'krb5_keytab_t', 'auth_cache_t', 'xdm_var_run_t', 'init_exec_t', 'systemd_passwd_var_run_t')
+SE_BAD_TARGET_PREFIX = ('sudo_', 'audit', 'selinux_', 'semanage_', 'setfiles_', 'load_policy_',
+                        'keyring', 'key_')
+SE_BAD_PERMS = ('execute', 'execute_no_trans', 'entrypoint', 'execmod', 'execmem', 'execstack', 'execheap',
+                'transition', 'dyntransition', 'ptrace', 'relabelfrom', 'relabelto', 'setcurrent', 'setexec',
+                'setfscreate', 'setkeycreate', 'setsockcreate', 'mounton', 'mount', 'remount', 'unmount',
+                'load_policy', 'setenforce', 'setbool', 'setsecparam', 'module_load', 'module_request',
+                'sys_module', 'sys_admin', 'sys_ptrace', 'sys_rawio', 'sys_boot', 'dac_override',
+                'dac_read_search', 'setuid', 'setgid', 'fowner', 'fsetid', 'net_admin', 'mac_admin',
+                'mac_override', 'setpcap', 'audit_control', 'audit_write', 'syslog', 'bpf', 'perfmon',
+                'checkpoint_restore', 'noatsecure', 'siginh', 'rlimitinh', 'sigkill', 'quotaon', 'swapon',
+                'reboot', 'halt', 'impersonate', 'manage_subnet', 'start', 'stop', 'enable', 'disable')
+SE_BAD_CLASSES = ('security', 'kernel_service', 'key', 'bpf', 'capability', 'capability2', 'cap_userns',
+                  'cap2_userns', 'system', 'filesystem', 'perf_event', 'lockdown', 'service', 'passwd',
+                  'netlink_audit_socket', 'netlink_selinux_socket')
+SE_GENERIC_TYPES = ('etc_t', 'usr_t', 'bin_t', 'sbin_t', 'lib_t', 'var_t', 'default_t', 'tmp_t', 'root_t',
+                    'device_t', 'proc_t', 'sysfs_t', 'var_lib_t', 'var_log_t', 'var_run_t', 'unlabeled_t',
+                    'file_t', 'home_root_t', 'mnt_t', 'src_t', 'man_t', 'locale_t', 'net_conf_t')
+SE_WRITE_PERMS = ('write', 'append', 'create', 'unlink', 'rename', 'add_name', 'remove_name', 'setattr',
+                  'rmdir', 'link', 'reparent', 'ioctl', 'lock')
+SE_KINDS = ('boolean', 'label', 'port', 'rule', 'nobutton', 'other', 'fixed')
+SE_FIXABLE = ('boolean', 'label', 'port', 'rule')
+SE_AUSEARCH = {}                               # one ausearch, one audit2why for each look
+
+
+def se_ausearch():
+    """Every refusal since the start, raw (one run per look, shared by the counts and the findings)."""
+    if 'out' not in SE_AUSEARCH:
+        got = _se_run(['ausearch', '-m', 'AVC,USER_AVC,SELINUX_ERR', '-ts', 'boot'], 120, light=True)
+        SE_AUSEARCH['out'] = None if got is None else (got.stdout or '')
+    return SE_AUSEARCH['out']
+
+
+def se_why_blocks(lines):
+    """audit2why for these AVC lines: {msg id: what it said}, each line asked once per look."""
+    cache = SE_AUSEARCH.setdefault('why', {})
+    want = {}
+    for line in lines:
+        m = re.search(r'msg=audit\(([0-9.]+:\d+)\)', line)
+        if m and m.group(1) not in cache:
+            want[m.group(1)] = line
+    if want:
+        got = _se_run(['audit2why'], 300, light=True, data=''.join(x + '\n' for x in want.values()))
+        for k in want:
+            cache[k] = ''
+        if got is not None and got.returncode == 0:
+            cur = None
+            for line in (got.stdout or '').splitlines():
+                m = re.search(r'msg=audit\(([0-9.]+:\d+)\)', line)
+                if m and ('avc:' in line or 'type=' in line):
+                    cur = m.group(1) if m.group(1) in want else None
+                    continue
+                if cur is not None:
+                    cache[cur] += line + '\n'
+    return cache
+
+
+def _se_unhex(v):
+    """A raw audit value: "quoted", or hex-encoded (a name with a space, a proctitle)."""
+    if v is None:
+        return ''
+    if v.startswith('"') and v.endswith('"') and len(v) >= 2:
+        return v[1:-1]
+    if re.match(r'^[0-9A-Fa-f]+\Z', v) and len(v) % 2 == 0 and len(v) >= 2:
+        try:
+            return bytes.fromhex(v).replace(b'\0', b' ').decode('utf-8', 'replace').strip()
+        except ValueError:
+            return v
+    return v
+
+
+def _se_field(line, key, unhex=True):
+    m = re.search(r'(?:^|\s)%s=("[^"]*"|\S+)' % re.escape(key), line)
+    if not m:
+        return ''
+    return _se_unhex(m.group(1)) if unhex else m.group(1).strip('"')
+
+
+def se_events(raw):
+    """The raw audit text as events: {serial: [lines]}, in their order."""
+    out = {}
+    for line in (raw or '').splitlines():
+        m = re.search(r'msg=audit\(([0-9.]+):(\d+)\)', line)
+        if m:
+            out.setdefault(m.group(1) + ':' + m.group(2), []).append(line)
+    return out
+
+
+def se_type_of(ctx):
+    parts = (ctx or '').split(':')
+    return parts[2] if len(parts) >= 3 else ''
+
+
+def se_app_path(path):
+    path = os.path.normpath(path) if path else ''
+    return bool(path) and any(path == p or path.startswith(p.rstrip('/') + '/') for p in SE_APP_PATHS)
+
+
+def se_matchpathcon(path):
+    """The type the policy says a path should have, or None."""
+    fake = os.environ.get('UPSMON_SELINUX_MATCH')          # tests: {path prefix: type}
+    if fake:
+        try:
+            m = json.load(open(fake)) or {}
+        except (OSError, ValueError):
+            return None
+        best = None
+        for k, v in m.items():
+            if path == k or path.startswith(k.rstrip('/') + '/'):
+                if best is None or len(k) > len(best[0]):
+                    best = (k, v)
+        return best[1] if best else None
+    got = _se_run(['matchpathcon', '-n', path], 20)
+    if got is None or got.returncode != 0:
+        return None
+    return se_type_of((got.stdout or '').strip()) or None
+
+
+def se_root_json(name):
+    try:
+        fd = os.open(os.path.join(ROOT_STATE_DIR, name), os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd) as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def se_finding_id(st, tt, cl, perms, prog, where):
+    return hashlib.sha256(json.dumps([st, tt, cl, sorted(perms), prog, where]).encode()).hexdigest()[:12]
+
+
+def se_why_not(st, tt, cl, perms):
+    """Why this is too much to allow from a page, or ''."""
+    if tt in SE_BAD_TARGETS or tt.startswith(SE_BAD_TARGET_PREFIX):
+        return '%s is security-sensitive (%s) - never allowed from here' % (tt, cl)
+    if cl in SE_BAD_CLASSES and not (cl == 'capability' and set(perms) <= {'net_bind_service'}):
+        return 'the class %s { %s } is the system\'s own - never allowed from here' % (cl, ' '.join(perms))
+    bad = [p for p in perms if p in SE_BAD_PERMS]
+    if bad:
+        return '%s { %s } would let it run, change or reach far more than this - never allowed from here' % (
+            cl, ' '.join(bad))
+    if tt in SE_GENERIC_TYPES and any(p in SE_WRITE_PERMS for p in perms):
+        return 'writing to %s (a type many files share) would allow far more than this - never allowed ' \
+               'from here; the file should have a label of its own' % tt
+    if not all(SE_NAME_RE.match(x) for x in [st, tt, cl] + list(perms)):
+        return 'a name that is no SELinux name'
+    return ''
+
+
+def se_find(app_ports=(), since=0.0):
+    """The findings: [{id, kind, ...}] and what they add up to."""
+    raw = se_ausearch()
+    if raw is None:
+        return {'tool': False, 'items': [], 'counts': {}, 'since': since}
+    fixed = se_root_json(SE_FIXED)
+    groups, serials = {}, {}
+    for serial, lines in se_events(raw).items():
+        avc = [x for x in lines if 'avc:' in x and 'denied' in x]
+        err = [x for x in lines if x.startswith('type=SELINUX_ERR') or 'type=SELINUX_ERR' in x[:40]]
+        sysc = next((x for x in lines if x.startswith('type=SYSCALL')), '')
+        paths = [x for x in lines if x.startswith('type=PATH')]
+        cwd = next((x for x in lines if x.startswith('type=CWD')), '')
+        title = next((x for x in lines if x.startswith('type=PROCTITLE')), '')
+        exe = _se_field(sysc, 'exe')
+        comm = _se_field(sysc, 'comm')
+        ptitle = _se_field(title, 'proctitle')[:200]
+        when = float(serial.split(':')[0])
+        for line in avc + err:
+            perms = re.search(r'denied\s+\{([^}]*)\}', line)
+            perms = sorted(set(perms.group(1).split())) if perms else ['transition']
+            sc, tc, cl = _se_field(line, 'scontext', False), _se_field(line, 'tcontext', False), \
+                _se_field(line, 'tclass', False)
+            if not (sc and tc and cl):
+                continue
+            st, tt = se_type_of(sc), se_type_of(tc)
+            prog = _se_field(line, 'comm') or comm or os.path.basename(exe) or '?'
+            name = _se_field(line, 'name')
+            path = _se_field(line, 'path')
+            if not path.startswith('/'):
+                full = [_se_field(p, 'name') for p in paths]
+                full = [x for x in full if x.startswith('/')]
+                if full:
+                    path = full[-1] if not name else next((x for x in full if x.endswith('/' + name)), full[-1])
+                elif name and cwd and _se_field(cwd, 'cwd').startswith('/') and '/' not in name:
+                    path = os.path.join(_se_field(cwd, 'cwd'), name)
+                elif name in SE_RUN_FILES:
+                    path = '/run/upsmon/' + name
+                else:
+                    path = path or name
+            port = ''
+            if cl.endswith('_socket'):
+                for k in ('dest', 'src', 'lport'):
+                    v = _se_field(line, k, False)
+                    if re.match(r'^\d{1,5}\Z', v):
+                        port = v
+                        break
+            proto = 'udp' if cl.startswith('udp') else 'tcp'
+            where = ('port %s/%s' % (port, proto)) if port else path
+            key = se_finding_id(st, tt, cl, perms, prog, where)
+            g = groups.get(key)
+            if g is None:
+                text = ' '.join(lines)
+                g = groups[key] = {'id': key, 'src': st, 'tgt': tt, 'class': cl, 'perms': perms, 'prog': prog[:60],
+                                   'exe': exe[:200], 'path': path[:300] if not port else '', 'port': int(port) if port else 0,
+                                   'proto': proto if port else '', 'count': 0, 'first': when, 'last': when,
+                                   'permissive': 'permissive=1' in line, 'line': line,
+                                   'upsmon': 'upsmon' in (text + ptitle).lower(), 'err': line in err}
+            serials.setdefault(key, set()).add(serial)
+            g['count'] += 1
+            g['first'] = min(g['first'], when)
+            g['last'] = max(g['last'], when)
+            g['permissive'] = g['permissive'] or 'permissive=1' in line
+    why = se_why_blocks([g['line'] for g in groups.values() if not g['err']])
+    try:
+        ports_now = se_ports() if any(g['port'] for g in groups.values()) else {}
+    except Exception:                                  # noqa: BLE001
+        ports_now = None
+    items = []
+    for g in groups.values():
+        m = re.search(r'msg=audit\(([0-9.]+:\d+)\)', g['line'])
+        said = why.get(m.group(1), '') if m else ''
+        g.update(se_sort(g, said, app_ports, ports_now))
+        f = fixed.get(g['id'])
+        if g['kind'] == 'allowed':
+            continue
+        if since and g['last'] < since and g['kind'] != 'other':
+            continue                                   # before upsmon's needs were put in
+        if isinstance(f, dict) and g['last'] <= float(f.get('at') or 0):
+            if time.time() - float(f.get('at') or 0) > SE_FIXED_SHOW_S:
+                continue
+            g['kind'], g['why'] = 'fixed', 'Put right just now - it goes at the next look'
+        g.pop('line', None)
+        g.pop('err', None)
+        items.append(g)
+    order = {k: i for i, k in enumerate(('fixed',) + SE_FIXABLE + ('nobutton', 'other'))}
+    items.sort(key=lambda x: (order.get(x['kind'], 9), -x['count'], x['id']))
+    # Another program's refusals and what was put right since do not count against enforcing.
+    SE_AUSEARCH['other'] = set()
+    for x in items:
+        if x['kind'] in ('other', 'fixed'):
+            SE_AUSEARCH['other'].update(serials.get(x['id'], ()))
+    counts = {}
+    for x in items:
+        counts[x['kind']] = counts.get(x['kind'], 0) + 1
+    return {'tool': True, 'items': items[:SE_FIND_MOST], 'counts': counts, 'since': since,
+            'fixable': sum(counts.get(k, 0) for k in SE_FIXABLE), 'nobutton': counts.get('nobutton', 0),
+            'other': counts.get('other', 0), 'fixed': counts.get('fixed', 0), 'more': max(0, len(items) - SE_FIND_MOST)}
+
+
+def se_sort(g, said, app_ports, ports_now):
+    """One finding's kind, why, and the fix root would put in."""
+    st, tt, cl, perms = g['src'], g['tgt'], g['class'], g['perms']
+    low = said.lower()
+    if 'would be allowed by active policy' in low or 'allowed by active policy' in low:
+        return {'kind': 'allowed', 'why': 'the policy loaded now allows it', 'fix': ''}
+    path, port = g['path'], g['port']
+    known = bool(path.startswith('/')) or bool(port)
+    app_place = (se_app_path(path) if path.startswith('/') else False) or (port and port in app_ports)
+    daemon = st == 'unconfined_service_t' and (g['upsmon'] or g['exe'].startswith('/usr/local/lib/upsmon'))
+    tool = (st in SE_TOOL_DOMAINS and (tt == 'unconfined_service_t' or g['upsmon'])) or \
+        (st == 'unconfined_service_t' and tt in SE_TOOL_DOMAINS and g['upsmon'])
+    confined = st in SE_DOMAINS and st != 'unconfined_service_t'
+    if not (daemon or tool or g['upsmon'] or (confined and (app_place or not known))):
+        who = '%s (%s)' % (g['prog'], st)
+        return {'kind': 'other', 'why': 'not upsmon\'s: %s is another program of this machine - look at it '
+                                        'with whoever looks after it' % who, 'fix': ''}
+    if g['err']:
+        return {'kind': 'nobutton', 'why': 'SELinux could not work out a context (SELINUX_ERR) - a matter of '
+                                           'the policy itself, for the report', 'fix': ''}
+    if 'constraint' in low:
+        return {'kind': 'nobutton', 'why': 'a constraint of the policy (users, roles, levels) refuses it, not a '
+                                           'missing rule - for the report', 'fix': ''}
+    bools = re.findall(r'setsebool -P\s+(\S+)\s+(?:1|on|true)', said)
+    if bools:
+        safe = [b for b in bools if SE_NAME_RE.match(b) and not SE_BAD_BOOL.search(b)]
+        if len(set(safe)) == 1:
+            return {'kind': 'boolean', 'boolean': safe[0], 'fix': 'setsebool -P %s 1' % safe[0],
+                    'why': 'the boolean %s is off - switching it on allows this' % safe[0]}
+        return {'kind': 'nobutton', 'why': 'only a boolean that allows far more would allow it (%s) - never '
+                                           'switched on from here' % ', '.join(sorted(set(bools))[:3]), 'fix': ''}
+    bad = se_why_not(st, tt, cl, perms)
+    if path.startswith('/') and se_app_path(path) and cl in ('file', 'dir', 'lnk_file', 'sock_file', 'fifo_file'):
+        want = se_matchpathcon(path)
+        if want and want != tt and not (want == 'httpd_var_run_t' and tt == 'httpd_runtime_t'):
+            folder = path if cl == 'dir' else os.path.dirname(path)
+            if not se_app_path(folder):
+                folder = path
+            return {'kind': 'label', 'fix': 'restorecon -R -v %s' % folder, 'label_path': folder,
+                    'why': '%s is labelled %s - the policy says %s' % (path, tt, want)}
+    if port and tt in SE_GENERIC_PORTS and cl in ('tcp_socket', 'udp_socket') and \
+            set(perms) <= {'name_bind', 'name_connect'} and st in SE_PORT_FOR:
+        ptype = SE_PORT_FOR[st]
+        others = [k for (k, pr), spans in (ports_now or {}).items()
+                  if pr == g['proto'] and k not in SE_GENERIC_PORTS and any(lo <= port <= hi for lo, hi in spans)]
+        if ports_now is not None and not others:
+            return {'kind': 'port', 'port_type': ptype, 'fix': 'semanage port -a -t %s -p %s %d' % (ptype, g['proto'], port),
+                    'why': 'port %d/%s has no type of its own - %s may %s it once it is %s' % (
+                        port, g['proto'], st, 'bind' if 'name_bind' in perms else 'connect to', ptype)}
+        if others:
+            return {'kind': 'nobutton', 'why': 'port %d/%s is %s\'s in the policy - never taken from it here' % (
+                port, g['proto'], others[0]), 'fix': ''}
+    if bad:
+        return {'kind': 'nobutton', 'why': bad, 'fix': ''}
+    if confined and not (app_place or daemon or tool or g['upsmon']):
+        return {'kind': 'nobutton', 'fix': '',
+                'why': '%s (%s) refused on a path or port not known as upsmon\'s - not put right from here' % (
+                    g['prog'], st)}
+    rule = '(allow %s %s (%s (%s)))' % (st, tt, cl, ' '.join(perms))
+    return {'kind': 'rule', 'fix': rule, 'rule': rule,
+            'why': 'nothing of the policy allows it: a rule of upsmon\'s own local module allows exactly this'}
+
+
+def se_local_rules():
+    """upsmon's local rules, for the card: [{id, rule, why, prog, at, by}]."""
+    d = se_root_json(SE_LOCAL_LIST)
+    out = []
+    for k, v in sorted(d.items(), key=lambda kv: float((kv[1] or {}).get('at') or 0)):
+        if SE_ID_RE.match(k) and isinstance(v, dict):
+            out.append({'id': k, 'rule': str(v.get('rule') or ''), 'why': str(v.get('why') or '')[:200],
+                        'prog': str(v.get('prog') or '')[:60], 'at': v.get('at'), 'by': str(v.get('by') or '')[:80]})
+    return out
+
+
+def se_local_write(rules, said):
+    """upsmon_local.cil written again from the list and put into the policy (or taken away)."""
+    cil = os.path.join(ROOT_STATE_DIR, SE_LOCAL_MODULE + '.cil')
+    if not rules:
+        if se_module_listed(SE_LOCAL_MODULE):
+            got = _se_run(['semodule', '-r', SE_LOCAL_MODULE], 300)
+            if got is None or got.returncode != 0:
+                raise Refused('semodule -r %s: %s' % (SE_LOCAL_MODULE, ((got.stderr or '') if got else '').strip()[-200:]))
+            said.append('upsmon\'s local module (%s) taken out of the policy - no rule left in it' % SE_LOCAL_MODULE)
+        for p in (cil, cil + '.in-policy'):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+        return
+    text = ['; upsmon\'s local rules (%s) - put in from Settings -> SELinux (Put in what is selected)' % SE_LOCAL_MODULE,
+            '; or upsmon --selinux-fix, each exactly what SELinux refused here and nothing more. Taken away',
+            '; one by one on the same card (or upsmon --selinux-rules --take-away ID); the module goes with',
+            '; install.sh --uninstall. Written by root; never edited by hand: the next change writes it again.', '']
+    for k, v in sorted(rules.items()):
+        r = v.get('src'), v.get('tgt'), v.get('class'), v.get('perms') or []
+        if not (SE_ID_RE.match(k) and all(SE_NAME_RE.match(str(x or '')) for x in r[:3]) and r[3] and
+                all(SE_NAME_RE.match(str(p)) for p in r[3])):
+            continue
+        text.append('; %s - %s (%s)' % (k, re.sub(r'[\r\n]', ' ', str(v.get('why') or ''))[:160],
+                                        time.strftime('%Y-%m-%d %H:%M', time.localtime(float(v.get('at') or 0)))))
+        text.append('(optional %s_%s' % (SE_LOCAL_MODULE, k))
+        text.append('    (allow %s %s (%s (%s))))' % (r[0], r[1], r[2], ' '.join(r[3])))
+    os.makedirs(ROOT_STATE_DIR, mode=0o700, exist_ok=True)
+    write_root(cil, '\n'.join(text) + '\n', 0o600)
+    got = _se_run(['semodule', '-i', cil], 300)
+    if got is None or got.returncode != 0:
+        raise Refused('semodule -i %s: %s' % (cil, ((got.stderr or got.stdout) if got else 'semodule is not there').strip()[-300:]))
+    try:
+        shutil.copyfile(cil, cil + '.in-policy')
+    except OSError:
+        pass
+    said.append('upsmon\'s local module (%s) put into the policy - %d rule(s) in it' % (SE_LOCAL_MODULE, len(rules)))
+
+
+def se_module_listed(name):
+    got = _se_run(['semodule', '-l'], 120, light=True)
+    return got is not None and got.returncode == 0 and any(l.split()[:1] == [name] for l in got.stdout.splitlines())
+
+
+def se_by(r):
+    return re.sub(r'[\x00-\x1f\x7f]', '', str(r.get('by') or 'root'))[:80] or 'root'
+
+
+def se_fix(r, said):
+    """Put right the findings named by id - each fix worked out here again, never taken from the request."""
+    ids = r.get('ids')
+    if ids == 'all':
+        ids = None
+    elif not isinstance(ids, list) or not ids or len(ids) > 64 or not all(isinstance(i, str) and SE_ID_RE.match(i) for i in ids):
+        raise Refused('name the findings to put right by their ids (12 hex digits)')
+    app_ports = se_app_ports(r)
+    found = se_find(app_ports, se_applied_at())
+    by_id = {x['id']: x for x in found['items']}
+    if ids is None:
+        ids = [x['id'] for x in found['items'] if x['kind'] in SE_FIXABLE]
+        if not ids:
+            said.append('nothing that can be put right from here')
+            return
+    rules = se_root_json(SE_LOCAL_LIST)
+    fixed = se_root_json(SE_FIXED)
+    new_rules, done, now = False, [], time.time()
+    for i in ids:
+        x = by_id.get(i)
+        if x is None:
+            said.append('%s: not refused any more (or not since upsmon\'s needs were put in)' % i)
+            continue
+        if x['kind'] not in SE_FIXABLE:
+            said.append('%s: not one that is put right from here (%s)' % (i, x.get('why') or x['kind']))
+            continue
+        if x['kind'] == 'boolean':
+            got = _se_run(['setsebool', '-P', x['boolean'], '1'], 300)
+            if got is None or got.returncode != 0:
+                raise Refused('setsebool -P %s 1: %s' % (x['boolean'], ((got.stderr or '') if got else '').strip()[-200:]))
+            said.append('boolean %s on (%s)' % (x['boolean'], i))
+        elif x['kind'] == 'label':
+            p = x['label_path']
+            if not (se_app_path(p) and os.path.exists(p)):
+                said.append('%s: %s is not there any more' % (i, p))
+            else:
+                got = _se_run(['restorecon', '-R', '-v', p], 300)
+                if got is None or got.returncode != 0:
+                    raise Refused('restorecon -R -v %s: %s' % (p, ((got.stderr or '') if got else '').strip()[-200:]))
+                said.append('%s labelled again as the policy says (%s)' % (p, i))
+        elif x['kind'] == 'port':
+            got = _se_run(['semanage', 'port', '-a', '-t', x['port_type'], '-p', x['proto'], str(x['port'])], 300)
+            if got is not None and got.returncode != 0 and 'already defined' in (got.stderr or ''):
+                raise Refused('port %d/%s is another service\'s in the policy - never taken from it here' % (x['port'], x['proto']))
+            if got is None or got.returncode != 0:
+                raise Refused('semanage port %d/%s: %s' % (x['port'], x['proto'], ((got.stderr or '') if got else '').strip()[-200:]))
+            said.append('port %d/%s labelled %s (%s)' % (x['port'], x['proto'], x['port_type'], i))
+        elif x['kind'] == 'rule':
+            rules[i] = {'src': x['src'], 'tgt': x['tgt'], 'class': x['class'], 'perms': x['perms'],
+                        'rule': x['rule'], 'why': '%s: %s' % (x['prog'], x['why']), 'prog': x['prog'],
+                        'at': now, 'by': se_by(r)}
+            new_rules = True
+            said.append('rule %s: %s' % (i, x['rule']))
+        done.append(i)
+        fixed[i] = {'at': now, 'src': x['src'], 'tgt': x['tgt'], 'class': x['class'], 'perms': x['perms']}
+    if new_rules:
+        se_local_write(rules, said)
+        root_state_write(SE_LOCAL_LIST, json.dumps(rules))
+    for k in list(fixed):
+        if now - float((fixed[k] or {}).get('at') or 0) > 30 * 86400:
+            del fixed[k]
+    if done:
+        root_state_write(SE_FIXED, json.dumps(fixed))
+
+
+def se_rule_drop(r, said):
+    rid = str(r.get('rule') or '')
+    if not SE_ID_RE.match(rid):
+        raise Refused('name the rule to take away by its id (12 hex digits)')
+    rules = se_root_json(SE_LOCAL_LIST)
+    if rid not in rules:
+        raise Refused('there is no local rule %s' % rid)
+    gone = rules.pop(rid)
+    se_local_write(rules, said)
+    root_state_write(SE_LOCAL_LIST, json.dumps(rules))
+    fixed = se_root_json(SE_FIXED)
+    if fixed.pop(rid, None) is not None:
+        root_state_write(SE_FIXED, json.dumps(fixed))
+    said.append('rule %s taken away: %s' % (rid, (gone or {}).get('rule') or ''))
+
+
+def se_app_ports(r):
+    out = []
+    for p in (r.get('app_ports') or [])[:16]:
+        try:
+            n = int(p)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= 65535:
+            out.append(n)
+    return tuple(out) or (443, 80, 9848, 9849)
+
+
+def se_fixed_skip(st, tt, cl, perms, when):
+    """Whether a refusal was put right after it happened (the counts of se_denials)."""
+    fixed = SE_AUSEARCH.get('fixed')
+    if fixed is None:
+        fixed = SE_AUSEARCH['fixed'] = list(se_root_json(SE_FIXED).values())
+    ps = sorted(set(perms.split()))
+    return any(isinstance(f, dict) and f.get('src') == st and f.get('tgt') == tt and f.get('class') == cl and
+               sorted(f.get('perms') or []) == ps and when <= float(f.get('at') or 0) for f in fixed)
 
 
 def write_here_bytes(name, data):
@@ -1817,6 +2343,20 @@ def se_report_parts(r):
     parts['modules.txt'] = '==== upsmon\n' + '\n'.join(x for x in mods.splitlines() if 'upsmon' in x.lower()) + \
         '\n\n==== %s\n%s\n==== in the policy\n%s\n' % (SE_CIL, _read_or(SE_CIL) or '(not there)',
                                                      _read_or(SE_CIL + '.in-policy') or '(none put in yet)')
+    loc = os.path.join(ROOT_STATE_DIR, SE_LOCAL_MODULE + '.cil')
+    parts['modules.txt'] += '\n==== %s (the local rules put in from the pages)\n%s\n' % (
+        loc, _read_or(loc) or '(none)')
+    # The whole machine's SELinux (4.9.0): every process, boolean, port type, module, and what
+    # was changed on this machine - for whoever looks after the policy as a whole.
+    parts['os/processes.txt'] = _se_out(['ps', '-eo', 'label,user,pid,ppid,comm,args'], 60, light=False)
+    parts['os/booleans.txt'] = bools
+    parts['os/ports.txt'] = ports
+    parts['os/modules.txt'] = _se_out(['semodule', '-lfull'], 300)
+    parts['os/local-changes.txt'] = '\n'.join(
+        '==== semanage %s -l -C\n%s' % (what, _se_out(['semanage', what, '-l', '-C'], 300))
+        for what in ('boolean', 'port', 'fcontext', 'login', 'user', 'module', 'permissive'))
+    parts['os/semanage-export.txt'] = _se_out(['semanage', 'export'], 300)
+    parts['os/listening.txt'] = _se_out(['ss', '-lntupZ'], 60, light=False)
     parts['README.txt'] = (
         'upsmon - what SELinux says on this machine, for whoever writes upsmon\'s module (upsmon_server).\n'
         'Made %s. Nothing was changed to make it.\n\n'
@@ -1825,7 +2365,10 @@ def se_report_parts(r):
         'audit2why.txt   why; audit2allow.te: what would allow it - a hint, not to be loaded\n'
         'labels.txt      the labels of upsmon\'s files and what the policy says they should be\n'
         'processes.txt   the domains the programs run in; ports.txt, booleans.txt, modules.txt\n'
-        'system.txt      the system, the policy and the packages; upsmon.json: what upsmon uses here\n\n'
+        'system.txt      the system, the policy and the packages; upsmon.json: what upsmon uses here\n'
+        'os/             the whole machine: every process with its domain, every boolean, port type and\n'
+        '                module, what was changed here (semanage -l -C, semanage export), the sockets\n'
+        '                listening with their labels\n\n'
         'No password, key or token of upsmon is in it. The audit log holds the command lines of the\n'
         'programs refused something: upsmon never puts a secret on one - other programs on this\n'
         'machine may. Look through avc*.txt before sending it on.\n' % time.strftime('%Y-%m-%d %H:%M:%S'))

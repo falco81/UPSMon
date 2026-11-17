@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.8.0'
+__version__ = '4.9.0'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -15465,7 +15465,8 @@ def notices_print(rows, pal, lang='en', head=None):
 # disabled stays so. The first look two minutes after the start, not at once: the helper's
 # semanage and ausearch take a core for seconds.
 SE_WORK = {'busy': False, 'seen': time.time() - 1800 + 120, 'tried': ''}
-SE_ACTIONS = ('check', 'prepare', 'enforce', 'permissive', 'report')
+SE_ACTIONS = ('check', 'prepare', 'enforce', 'permissive', 'report', 'fix', 'rule_drop')
+SE_ID_RE = re.compile(r'^[0-9a-f]{12}\Z')
 SE_REPORT_KEEP_S = 3600
 SE_REPORT_MOST = 4 * 1024 * 1024
 SE_EVERY = 1800
@@ -15487,7 +15488,15 @@ def selinux_want(store):
     bools = [{'name': 'httpd_can_network_connect',
               'why': 'the pages ask the daemon on 127.0.0.1:%s and :%s' % (
                   CONFIG.get('admin_port') or 9849, (FILE_CONFIG or {}).get('api_port') or 9848)}]
-    return {'booleans': bools, 'ports': [], 'node': node_name(), 'facts': selinux_facts(store)}
+    # upsmon's own ports (4.9.0): a refusal of nginx or php-fpm on one of them is upsmon's.
+    app = []
+    for v in (CONFIG.get('admin_port') or 9849, (FILE_CONFIG or {}).get('api_port') or 9848, 443, 80):
+        try:
+            if 1 <= int(v) <= 65535 and int(v) not in app:
+                app.append(int(v))
+        except (TypeError, ValueError):
+            pass
+    return {'booleans': bools, 'ports': [], 'node': node_name(), 'facts': selinux_facts(store), 'app_ports': app}
 
 
 def selinux_facts(store):
@@ -15515,26 +15524,40 @@ def selinux_view(store):
     return {'nodes': [node], 'reports': reps}
 
 
-def selinux_ask(store, action, by):
+def selinux_ask(store, action, by, ids=None, rule=None):
     if action not in SE_ACTIONS:
         raise ValueError('check, prepare, enforce or permissive')
+    extra = {}
+    if action == 'fix':
+        # Only the ids of the findings (4.9.0): root finds them again in the audit log and
+        # works out every fix itself - never a rule, a path or a command from here.
+        if not isinstance(ids, list) or not ids or len(ids) > 64 or \
+                not all(isinstance(i, str) and SE_ID_RE.match(i) for i in ids):
+            raise ValueError('choose what to put right (the ids of the findings)')
+        extra['ids'] = sorted(set(ids))
+    elif action == 'rule_drop':
+        if not isinstance(rule, str) or not SE_ID_RE.match(rule):
+            raise ValueError('which rule to take away (its id)')
+        extra['rule'] = rule
     # A step asked and not done yet is not put aside by a look or a report: its one row was
     # written over, and "enforcing" never happened.
     was = _meta_json(store, 'selinux:want') or {}
     now = _meta_json(store, 'selinux:now') or {}
-    if action in ('check', 'report') and was.get('do') in ('prepare', 'enforce', 'permissive') and \
+    if action in ('check', 'report') and was.get('do') in ('prepare', 'enforce', 'permissive', 'fix', 'rule_drop') and \
             was.get('id') != now.get('done') and time.time() - _se_num(was.get('at')) < 3600:
         if action == 'check':
             return
         raise ValueError('the step asked is not done yet (%s) - ask for the report after it' % was.get('do'))
-    store.set_meta('selinux:want', json.dumps({'id': secrets.token_hex(6), 'do': action, 'by': by,
-                                               'at': time.time()}))
+    store.set_meta('selinux:want', json.dumps(dict(extra, id=secrets.token_hex(6), do=action, by=by,
+                                                   at=time.time())))
     if action == 'report':
         store.add_event('settings', '%s asked for the SELinux report' % by, 'info', who=by)
     elif action != 'check':
         store.add_event('settings', '%s asked SELinux: %s' % (by, {
             'prepare': 'made ready, permissive (or what upsmon needs put in)', 'enforce': 'enforcing',
-            'permissive': 'permissive again'}[action]), 'warn', who=by)
+            'permissive': 'permissive again',
+            'fix': 'put right what is selected (%d)' % len(extra.get('ids') or []),
+            'rule_drop': 'take away the local rule %s' % extra.get('rule')}[action]), 'warn', who=by)
 
 
 def selinux_tick(engine):
@@ -15561,8 +15584,12 @@ def selinux_tick(engine):
             data = _se_obj(now.get('data')) if do != 'check' else {}
             said = []
             try:
-                data = root_ask('selinux.ask', 'selinux.json', dict(selinux_want(store), do=do),
-                                120 if do == 'check' else 600)
+                ask = dict(selinux_want(store), do=do)
+                if do == 'fix':
+                    ask['ids'], ask['by'] = want.get('ids') or [], str(want.get('by') or '')[:80]
+                elif do == 'rule_drop':
+                    ask['rule'] = want.get('rule') or ''
+                data = root_ask('selinux.ask', 'selinux.json', ask, 120 if do == 'check' else 600)
                 said = data.pop('said', []) if isinstance(data, dict) else []
             except ValueError as e:
                 err = str(e)[:400]
@@ -15586,7 +15613,11 @@ def selinux_tick(engine):
                         pass
                 store.set_meta('selinux:report', json.dumps(r))
                 data = _se_obj(now.get('data'))
-            if do not in ('check', 'report'):
+            if do in ('fix', 'rule_drop') and not err:
+                # Every step in Events (4.9.0), one each.
+                for s in said[:40] or ['nothing to do']:
+                    store.add_event('settings', 'SELinux: %s' % s, 'warn')
+            elif do not in ('check', 'report'):
                 store.add_event('settings', 'SELinux: %s' % (err or '; '.join(said) or 'done'),
                                 'bad' if err else 'warn')
                 if not err:
@@ -15634,14 +15665,16 @@ def _selinux_do(h):
             return {'name': 'upsmon-selinux-report-%s-%s.tar.gz' % (
                         re.sub(r'[^A-Za-z0-9._-]', '', node_name()) or 'upsmon', time.strftime('%Y%m%d-%H%M')),
                     'file': base64.b64encode(data).decode('ascii'), 'mime': 'application/gzip', 'missing': []}
-        selinux_ask(h.store, action, s['name'])
+        selinux_ask(h.store, action, s['name'], ids=b.get('ids'), rule=b.get('rule'))
     except ValueError as e:
         raise ApiError(400, str(e))
     return {'message': {'check': 'asked: it looks within seconds',
                         'prepare': 'asked: SELinux is made ready within seconds',
                         'enforce': 'asked: SELinux switches to enforcing within seconds',
                         'permissive': 'asked: SELinux switches to permissive within seconds',
-                        'report': 'asked: the report is made within a minute'}[action], 'busy': []}
+                        'report': 'asked: the report is made within a minute',
+                        'fix': 'asked: root puts it right within seconds and looks again',
+                        'rule_drop': 'asked: the rule is taken away within seconds'}[action], 'busy': []}
 
 
 # ---------------------------------------------------------------------------
@@ -16104,6 +16137,8 @@ def cli_selinux(args, pal, store):
         print('  look through avc*.txt in it before sending it on: the audit log holds the command '
               'lines of the programs SELinux refused something to')
         return 0
+    if args.selinux_look or args.selinux_fix or args.selinux_rules:
+        return cli_selinux_find(args, pal, store)
     step = args.selinux or 'check'
     if step == 'check':
         got = _selinux_helper(['--selinux-check'] + (['--json'] if args.json else []), want, 300)
@@ -16120,6 +16155,112 @@ def cli_selinux(args, pal, store):
     sys.stdout.write(got.stdout)
     sys.stderr.write(got.stderr)
     return got.returncode
+
+
+SE_KIND_WORDS = {'fixed': 'Put right just now', 'boolean': 'A boolean', 'label': 'A label', 'port': 'A port',
+                 'rule': 'A rule of upsmon\'s', 'nobutton': 'Not for a button', 'other': 'Not upsmon\'s'}
+
+
+def cli_selinux_look(c, pal):
+    """The findings, grouped by kind, with ids and fixes - for a person."""
+    f = (c or {}).get('findings') or {}
+    print('SELinux: %s' % (c or {}).get('mode', '?'))
+    if not f.get('tool'):
+        print(pal.dim('  what SELinux refuses cannot be read here (ausearch is not there, or SELinux is off)'))
+        return
+    items = f.get('items') or []
+    if not items:
+        print(pal.ok_line('SELinux refused nothing of upsmon\'s' + (' since its needs were put in' if f.get('since') else
+                                                                    ' since the machine started')))
+    for kind in ('fixed', 'boolean', 'label', 'port', 'rule', 'nobutton', 'other'):
+        group = [x for x in items if x.get('kind') == kind]
+        if not group:
+            continue
+        print()
+        print(pal.bold('%s (%d)' % (SE_KIND_WORDS[kind], len(group))))
+        for x in group:
+            where = ('port %s/%s' % (x['port'], x['proto'])) if x.get('port') else (x.get('path') or '')
+            print('  %s  %s  %s -> %s %s { %s }  %dx' % (x['id'], x['prog'], x['src'], x['tgt'], x['class'],
+                                                     ' '.join(x['perms']), x['count']))
+            if where:
+                print('                %s' % where)
+            if x.get('fix'):
+                print('                -> %s' % x['fix'])
+            print(pal.dim('                %s' % x.get('why', '')))
+    rules = (c or {}).get('local_rules') or []
+    if rules:
+        print()
+        print(pal.bold('upsmon\'s local rules (%d) - upsmon_local' % len(rules)))
+        for r in rules:
+            print('  %s  %s' % (r['id'], r['rule']))
+            print(pal.dim('                %s - put in %s by %s' % (
+                r.get('why', ''), time.strftime('%Y-%m-%d %H:%M', time.localtime(float(r.get('at') or 0))), r.get('by') or '?')))
+    if f.get('fixable'):
+        print()
+        print('%d can be put right: upsmon --selinux-fix ID... (or: upsmon --selinux-fix all)' % f['fixable'])
+
+
+def cli_selinux_find(args, pal, store):
+    """upsmon --selinux-look, --selinux-fix ID..., --selinux-rules [--take-away ID] (4.9.0)."""
+    base = selinux_want(store)
+    got = _selinux_helper(['--selinux-check', '--json'], json.dumps(base), 300)
+    try:
+        c = json.loads(got.stdout or '{}')
+    except ValueError:
+        sys.stderr.write(got.stderr or got.stdout)
+        return 1
+    if args.selinux_look and not args.selinux_fix:
+        if args.json:
+            print(json.dumps({'findings': c.get('findings'), 'local_rules': c.get('local_rules')}, indent=1))
+        else:
+            cli_selinux_look(c, pal)
+        return 0
+    if args.selinux_rules and not args.take_away:
+        rules = c.get('local_rules') or []
+        if args.json:
+            print(json.dumps(rules, indent=1))
+            return 0
+        if not rules:
+            print('no local rule of upsmon\'s')
+        for r in rules:
+            print('%s  %s\n    %s' % (r['id'], r['rule'], r.get('why', '')))
+        return 0
+    if args.selinux_rules and args.take_away:
+        rid = args.take_away.strip().lower()
+        r = next((x for x in c.get('local_rules') or [] if x['id'] == rid), None)
+        if r is None:
+            raise SystemExit('upsmon: there is no local rule %s (upsmon --selinux-rules)' % rid)
+        cli_sure(args, 'The local rule %s %s taken away from upsmon_local' % (rid, r['rule']))
+        got = _selinux_helper(['--selinux-do', 'rule_drop'], json.dumps(dict(base, rule=rid)))
+    else:
+        items = {x['id']: x for x in ((c.get('findings') or {}).get('items') or [])}
+        want = [x.strip().lower() for x in args.selinux_fix]
+        if want == ['all']:
+            pick = [x for x in items.values() if x['kind'] in ('boolean', 'label', 'port', 'rule')]
+        else:
+            bad = [i for i in want if i not in items]
+            if bad:
+                raise SystemExit('upsmon: not refused now: %s (upsmon --selinux-look)' % ', '.join(bad))
+            pick = [items[i] for i in want]
+            no = [x for x in pick if x['kind'] not in ('boolean', 'label', 'port', 'rule')]
+            if no:
+                raise SystemExit('upsmon: not one that is put right from here: %s - %s' % (no[0]['id'], no[0].get('why')))
+        if not pick:
+            print('nothing that can be put right from here')
+            return 0
+        print('Root does exactly this - nothing else - and looks again at once:')
+        for x in pick:
+            print('  %-6s %s' % (x['kind'], x['fix']))
+            print(pal.dim('         %s: %s -> %s %s { %s }' % (x['prog'], x['src'], x['tgt'], x['class'], ' '.join(x['perms']))))
+        cli_sure(args, 'These %d put right' % len(pick))
+        got = _selinux_helper(['--selinux-do', 'fix'], json.dumps(dict(base, ids=[x['id'] for x in pick],
+                                                                      by='the command line')))
+    store.add_event('settings', 'the command line asked SELinux: %s (%s)' % (
+        'take away a local rule' if args.selinux_rules else 'put right %d' % len(pick),
+        'done' if got.returncode in (0, 1) and not got.stderr.strip() else 'not done'), 'warn', who='the command line')
+    sys.stdout.write(got.stdout)
+    sys.stderr.write(got.stderr)
+    return 0 if not got.stderr.strip() else 1
 
 
 def cli_os_roots(args, pal, store, out):
@@ -18088,6 +18229,12 @@ def add_cli_arguments(parser):
            'enforce, permissive - asks first (--yes)')
     a('--selinux-report', nargs='?', const='', metavar='FILE',
       help='what SELinux says here, for whoever writes upsmon\'s module - nothing is changed')
+    a('--selinux-look', action='store_true',
+      help='what SELinux refuses here, sorted by what puts it right - with ids and fixes')
+    a('--selinux-fix', nargs='+', metavar='ID',
+      help='put right the findings with these ids (or: all) - lists what root will do, asks first (--yes)')
+    a('--selinux-rules', action='store_true', help='upsmon\'s local SELinux rules (upsmon_local)')
+    a('--take-away', metavar='ID', help='with --selinux-rules: take that local rule away')
     a('--os-roots', action='store_true', help='the system\'s trusted roots upsmon added, and how the system has them')
     a('--os-roots-add', metavar='FILE', help='a certificate authority of your own (.pem, .crt, .cer) into the system\'s trust')
     a('--os-roots-remove', metavar='SHA256', help='that one out of the system\'s trust (12 characters of its fingerprint at least)')
@@ -18114,7 +18261,7 @@ CLI_FLAGS = ('users', 'add_user', 'passwd', 'set_role', 'del_user', 'disable_use
              'copies', 'restore', 'restore_bundle', 'rbackup_now', 'rbackup_status', 'db_check',
              'time', 'updates', 'restart_server', 'poweroff_server', 'restarts', 'cert_export', 'proxy_test', 'passkeys', 'passkey_forget',
              'notices', 'notice_done', 'notices_check', 'notices_clear_done',
-             'selinux_check', 'selinux', 'selinux_report', 'os_roots', 'os_roots_add', 'os_roots_remove')
+             'selinux_check', 'selinux', 'selinux_report', 'selinux_look', 'selinux_fix', 'selinux_rules', 'os_roots', 'os_roots_add', 'os_roots_remove')
 
 
 def cli_wanted(args):
@@ -18683,7 +18830,8 @@ def cli_main(args, ups_status=None):
                       (n.get('row') or {}).get('state') or '-', (n.get('row') or {}).get('said') or '')
                      for n in v['nodes']], ['server', 'started', 'restart', 'said'], [22, 20, 12, 60]))
         return 0
-    if args.selinux_check or args.selinux or args.selinux_report is not None:
+    if args.selinux_check or args.selinux or args.selinux_report is not None or args.selinux_look or \
+            args.selinux_fix or args.selinux_rules:
         return cli_selinux(args, pal, store)
     if args.os_roots or args.os_roots_add or args.os_roots_remove:
         return cli_os_roots(args, pal, store, out)
