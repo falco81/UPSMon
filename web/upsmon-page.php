@@ -87,7 +87,7 @@ function ups_guard_post(): void
     // ...and a new version of upsmon sent from the pages, the same way (1.0.37).
     $restore = in_array(($_GET['api'] ?? ''), ['db-restore', 'upgrade-package', 'rbackup-upload'], true)
         && strpos($kind, 'application/octet-stream') === 0
-        && (string) ($_SERVER['HTTP_X_OTP_RESTORE'] ?? '') === '1';
+        && (string) ($_SERVER['HTTP_X_UPSMON_RESTORE'] ?? '') === '1';
     if ($told > 8 * 1024 * 1024 && !$restore) {
         http_response_code(413);
         header('Content-Type: application/json; charset=utf-8');

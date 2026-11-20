@@ -1111,7 +1111,7 @@ var API_WAIT_GET = 20, API_WAIT_POST = 150;
 var SIGNED_OUT_CHECK = null;
 function signedOutForSure() {
   if (SIGNED_OUT_CHECK) return SIGNED_OUT_CHECK;
-  var admin = /\/admin\//.test(location.pathname);
+  var admin = /\/(admin|settings)\//.test(location.pathname);
   var ask = function () {
     return fetch('?api=' + (admin ? 'whoami' : 'me'), {credentials: 'same-origin'}).then(function (r) {
       if (r.status === 401) return 'gone';

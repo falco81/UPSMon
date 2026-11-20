@@ -2304,13 +2304,13 @@ function askBeforeRestoring(says, what, go) {
    full administrator sends it before it takes a byte. Where that place is
    not set up (an nginx without auth_request) it answers 404, and the file
    goes the old way. */
-var BIG_PATH = true;
+var BIG_PATH = false;
 function bigFetch(query, file) {
   var opts = {method: 'POST', body: file, credentials: 'same-origin',
               headers: {'X-Upsmon-Restore': '1', 'Content-Type': 'application/octet-stream'}};
   if (!BIG_PATH) return fetch(query, opts);
   return fetch('/admin/upload/' + query, opts).then(function (r) {
-    if (r.status !== 404) return r;
+    if ([404, 413, 403, 405].indexOf(r.status) < 0) return r;
     BIG_PATH = false;
     return fetch(query, opts);
   });
