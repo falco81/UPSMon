@@ -1198,7 +1198,7 @@ function api(what, body, wait) {
         if (r.status === 413) throw new Error('that is more than the server takes');
         throw new Error('the page got something that is not an answer');
       }
-      if (r.status === 503 && data && data.upgrading && typeof data.upgrading === 'object') {
+      if (r.status === 503 && data && data.upgrading && typeof data.upgrading === 'object' && data.upgrading.state === 'running') {
         var ug = new Error('being upgraded');
         ug.unreachable = true;
         ug.upgrading = data.upgrading;
@@ -2485,7 +2485,9 @@ function upgStore(kind, key, value) {
   } catch (e) { }
   return '';
 }
-function upgradeKey(u) { return u ? String(u.id || u.version || '?') : ''; }
+/* One upgrade, the same whether the record came with a session or without (4.9.1): its
+   version and when it began - the id is only told to a page signed in. */
+function upgradeKey(u) { return u ? String(u.version || '?') + ':' + String(u.started || '') : ''; }
 /* An upgrade under way, as far as this page knows: errors that come from the
    restarts are expected then, and said by the band - not as faults. */
 function upgradeExpected() {
@@ -2513,7 +2515,14 @@ function upgradeLost() {
 function upgradeTake(u) {
   if (u && typeof u !== 'object') u = null;
   if (u && u.now) UPG.skew = Date.now() / 1000 - Number(u.now);
+  /* Who asked and why it failed come only with the status while the daemon answers: kept
+     for the same upgrade when a record without them comes (4.9.1). */
+  if (u && UPG.u && upgradeKey(u) === upgradeKey(UPG.u)) {
+    if (!u.by && UPG.u.by) u.by = UPG.u.by;
+    if (!u.said && UPG.u.said) u.said = UPG.u.said;
+  }
   if (u && u.state === 'running') UPG.sawRunning = upgradeKey(u);
+  if (u) UPG.last = u.state;
   UPG.u = u;
   upgradeEnd();
   upgradeDraw();
@@ -2547,7 +2556,9 @@ function upgradeEnd() {
   var u = UPG.u, apiUp = UPG.heard && !UPG.away;
   if (!apiUp) return;
   var key = UPG.sawRunning || upgradeKey(u);
-  var ended = UPG.sawRunning && (!u || u.state === 'done');
+  /* Done - or the record gone while it was last seen running (4.9.1: not after a failure,
+     whose record only ran out). */
+  var ended = UPG.sawRunning && ((u && u.state === 'done') || (!u && UPG.last === 'running'));
   if (UPG.signin) {
     if (!(UPG.wasDown || ended)) return;
   } else if (!ended) {
@@ -2555,6 +2566,13 @@ function upgradeEnd() {
   }
   if (!UPG.signin && key && upgStore('session', UPG_KEY_RELOAD) === key) { UPG.blocked = 'again'; return; }
   if (!UPG.signin && upgradeUnsaved()) { UPG.blocked = 'unsaved'; return; }
+  /* The sign-in page: at most once in half a minute (4.9.1) - never a page that loads itself
+     again and again, and takes the password being typed with it. */
+  if (UPG.signin) {
+    var then = Number(upgStore('session', 'upsmon-signin-reloaded')) || 0;
+    if (Date.now() - then < 30000) return;
+    upgStore('session', 'upsmon-signin-reloaded', String(Date.now()));
+  }
   UPG.reloading = true;
   if (key) upgStore('session', UPG_KEY_RELOAD, key);
   setTimeout(function () { location.reload(); }, 1200);

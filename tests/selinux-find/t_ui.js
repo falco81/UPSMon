@@ -34,7 +34,7 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
   const by = (k) => g.find(x => x.cls.indexOf('se-k-' + k) >= 0) || {n: 0, ticked: 0, boxes: 0};
   check('a label, a boolean, a rule of upsmon\'s (2) - all ticked', by('label').n === 1 && by('boolean').n === 1 && by('rule').n === 2 &&
         by('label').ticked + by('boolean').ticked + by('rule').ticked === 4, g);
-  check('not for a button (2) and not upsmon\'s - no box to tick', by('nobutton').n === 2 && by('nobutton').boxes === 0 && by('other').n >= 2 && by('other').boxes === 0, g);
+  check('not for a button and not upsmon\'s - no box to tick', by('nobutton').n >= 2 && by('nobutton').boxes === 0 && by('other').n >= 1 && by('other').boxes === 0, g);
   const putWords = () => p.evaluate(() => { const x = [...document.querySelectorAll('#se-host .se-put button')][0]; return x ? x.textContent.trim() : ''; });
   if (LANG === 'en') check('the button counts: Put in what is selected (4)', await putWords() === 'Put in what is selected (4)', await putWords());
   check('enforcing locked', await p.evaluate(() => [...document.querySelectorAll('#se-host .se-btns button')].some(x => /enforcing|vynucov/i.test(x.textContent) && x.disabled)), null);

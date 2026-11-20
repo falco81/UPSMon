@@ -66,13 +66,26 @@ má při každém pohledu stejné id.
 | **Ne na tlačítko** | patří upsmonu, ale povolit to odsud by bylo příliš | jen zobrazeno s důvodem: citlivý cíl (`shadow_t`, `security_t`, politika, `kernel_t`, klíče, audit, `sudo_*`, domovy…), spouštění a přechody (`execute`, `entrypoint`, `transition`, `ptrace`, `relabel*`…), schopnosti (`sys_admin`, `dac_override`…), nebezpečné třídy, zápis do obecných typů (`etc_t`, `usr_t`, `var_t`, `tmp_t`…), omezení politiky (constraint) |
 | **Nepatří upsmonu** | jiný program stroje | jen zobrazeno, nikdy se odsud nenapravuje |
 
-**Komu odmítnutí patří:** démonu (`unconfined_service_t`, program z `/usr/local/lib/upsmon`
-nebo „upsmon“ v jeho záznamech), nástrojům, které démon spouští s `NoNewPrivileges`
-(`chronyc_t`, `ifconfig_t`, `ssh_t`, `ssh_keygen_t`, `hostname_t`, `ping_t`), a omezeným službám,
-se kterými upsmon pracuje (`httpd_t`, `init_t`, `logrotate_t`…) – u nich jen na cestách upsmonu
-(`/var/www/upsmon`, `/run/upsmon`, `/var/lib/upsmon`, `/etc/upsmon`, jeho soubory nginx,
-php-fpm, logrotate…) nebo na jeho portech; s cestou ani portem, které nejsou známé, se počítají
-k upsmonu (jako dřív). Odmítnutí jiných programů enforcing neblokuje.
+**Komu odmítnutí patří** (4.9.1) – jen podle toho, co zapsalo jádro, nikdy podle jména, které
+si program dá sám (comm, proctitle), ani podle slova v cestě:
+
+- démonu: `unconfined_service_t` s uid účtu `upsmon` (záznam SYSCALL);
+- jeho nástrojům (`chronyc_t`, `ifconfig_t`, `ssh_t`, `ssh_keygen_t`, `hostname_t`, `ping_t`)
+  s uid `upsmon`;
+- stránkám: `httpd_t` s uid `upsmon-www` (pool php-fpm upsmonu);
+- omezeným službám, se kterými upsmon pracuje (`httpd_t`, `logrotate_t`…), na normalizované
+  cestě upsmonu nebo na portu, na kterém poslouchá nginx upsmonu (root ho čte ze
+  `/etc/nginx/conf.d/upsmon.conf`, ne z požadavku démona).
+
+Odmítnutí programů, se kterými upsmon pracuje, ale na cizím místě, je „ne na tlačítko“ a počítá
+se proti enforcingu jako dřív. „Nepatří upsmonu“ jsou jen jiné domény.
+
+**Pravidlo upsmonu** smí povolit jen to, co upsmon sám potřebuje: démon spouští své nástroje
+(`process2 { nnp_transition nosuid_transition }`), nástroj odpovídá démonovi (roura, soket,
+`sigchld`), web server čte vlastní stránky a soubory v `/run/upsmon` (`httpd_sys_content_t`,
+`httpd_var_run_t` – jen čtení). Nikdy pravidlo na typ portu. Oprávnění, které nahraná politika
+nezná, se nenabídne (blok `optional` by se tiše vypnul). USER_AVC a SELINUX_ERR se odsud
+nenapravují nikdy.
 
 **Nasadit vybrané (N):**
 

@@ -4,6 +4,44 @@ Every version is a package in `release/` (the last ten are kept), signed with
 the release key whose public half is in `deploy/release-keys/`. The root of
 the repository is the package unpacked.
 
+## 4.9.1 - 2026-11-20
+
+Bugs found and put right.
+
+- **Files sent from the pages** (a new version in Upgrades, a database put back, a backup from
+  another machine) were all refused with "that request did not come from this page" (403) since
+  4.0.0: the pages send the header X-Upsmon-Restore, the guard looked for OTP's X-Otp-Restore.
+  On nginx they went to `/admin/upload/` first, which upsmon's nginx answers 413 for anything
+  over 64 kB - straight to the page now.
+- **A session that ran out** (or was signed out elsewhere) never went back to the sign-in: the
+  page asked as OTP's `/admin/` pages ask (`?api=me`, no road here) and said "The daemon is not
+  answering" for good. Back to the sign-in within seconds now.
+- **SELinux - Put in what is selected** (4.9.0) believed things any user of the machine may
+  write into the audit log: the word "upsmon" in a program's name, a path or its arguments made
+  a refusal "upsmon's", and a rule for it could be put in for any domain. Now whose a refusal
+  is comes only from what the kernel wrote - the uid (upsmon.service and its tools run as
+  `upsmon`, the PHP of the pages as `upsmon-www`), the object's path, the ports in upsmon's own
+  nginx file (not the daemon's request). A rule of upsmon's may only allow what upsmon itself
+  needs (upsmon.service starting its tools, the tools answering it, the web server reading
+  upsmon's own pages and run files); never a rule on a port type; a permission the loaded policy
+  does not know is not offered (it would do nothing). Programs upsmon works with (the web
+  server, the services, its tools) are never "not upsmon's" - they count against enforcing as
+  before. Each AVC line is answered by audit2why and counted by itself (one event holds several);
+  fields are read from the end (a USER_AVC's command line cannot pose as them; USER_AVC is never
+  put right from here); `node=` before the records (auditd name_format) is read; a label is put
+  right by its real path and only counted as put right when restorecon ran;
+  `upsmon --selinux-fix all` hands "all" to root.
+- **The upgrade band** (4.8.0): "being upgraded" only while one runs - a daemon that is down
+  after an upgrade ended is said down in red again (it was hidden for 10 minutes, with saves
+  failing silently); who asked and why it failed only in the status of a signed-in page, never
+  to a page without a real session; the sign-in page seen from elsewhere no longer loads itself
+  again and again when the database will not open (and at most once in half a minute anyway);
+  an upgrade is told apart by its version and start, so the same version tried again reloads
+  the dashboard; no reload when a failed upgrade's record runs out; a "running" left behind by a
+  restart of the machine in the middle of one is no longer believed once the daemon is up
+  (its health says how long it runs).
+- The passkeys test wrote `undefined-*.png` into the repository when run without a folder.
+
 ## 4.9.0 - 2026-11-17
 
 SELinux as the SELinux kit describes it: what SELinux refuses, sorted by what puts it right, and

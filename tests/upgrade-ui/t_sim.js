@@ -165,6 +165,27 @@ async function until(p, fn, ms) {
   tell('done', 13, 'upsmon 4.8.0 runs', {id: 'sim4'});
   check('… done: the dashboard loaded once', await until(d, () => window.__before === undefined && document.readyState === 'complete', 20000), null);
 
+  /* 11. (4.9.1) after an upgrade ended, a daemon that is down is down - said in red, not hidden;
+     and nothing of who asked or why to a page without a real session */
+  started = now() - 200;
+  tell('done', 13, 'upsmon 4.8.0 runs', {id: 'sim5'});
+  await wait(1500);
+  const leak = await p.evaluate(() => fetch('?api=upgrade-state', {credentials: 'omit'}).then(r => r.text()));
+  check('upgrade-state without a session: no who, no why, no id', !/"by"|"said"|"id"/.test(leak), leak);
+  const forged = await d.evaluate(() => fetch('/settings/?api=upgrade-state', {headers: {}}).then(r => r.text()));
+  check('… nor with a cookie that is no session', !/"by"|"said"|"id"/.test(forged), forged);
+  await p.evaluate(() => { window.__toasts = []; });
+  killApi();
+  check('done, then the daemon down: the red "not answering" bar', await until(p, () => !document.getElementById('offline').hidden &&
+        /not answering|neodpovídá/.test(document.getElementById('offline').textContent), 15000),
+        await p.evaluate(() => [document.getElementById('offline').hidden, document.getElementById('offline').textContent]));
+  check('… and no band saying it is being upgraded', await p.evaluate(() => { const x = document.getElementById('upband'); return !x || x.hidden; }), null);
+  await d.goto(BASE + '/'); await wait(4000);
+  check('… the dashboard not "In maintenance"', !/maintenance|údržb/i.test(await d.evaluate(() => document.getElementById('verdict').textContent)),
+        await d.evaluate(() => document.getElementById('verdict').textContent));
+  startApi();
+  await wait(4000);
+
   gone();
   console.log('page errors:', errs.join(' | ') || 'none');
   console.log(ok + ' ok, ' + bad + ' failed');

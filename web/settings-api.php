@@ -235,7 +235,7 @@ function ups_relay(string $path, string $method = 'GET', array|object|null $payl
     header('Cache-Control: no-store');
 
     if (ups_token() === null) {
-        $up = ups_upgrading(ups_upgrade_session());
+        $up = ups_upgrading_running();
         if ($up !== null) {
             ups_upgrade_503($up);
             return;
@@ -251,7 +251,7 @@ function ups_relay(string $path, string $method = 'GET', array|object|null $payl
     }
     [$status, $body] = ups_call($path, $method, $payload, $timeout);
     if ($status === 0) {
-        $up = ups_upgrading(ups_upgrade_session());
+        $up = ups_upgrading_running();
         if ($up !== null) {
             ups_upgrade_503($up);
             return;

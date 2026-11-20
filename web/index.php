@@ -63,15 +63,23 @@ if (isset($_GET['api'])) {
         if ($up !== null) {
             [$status, $body] = upsmon_call('/api/status');
             if ($status === 0) {
+                /* "Being upgraded" only while one runs (4.9.1): down after it
+                   ended is down, and said as before. */
+                if ($up['state'] !== 'running') {
+                    upsmon_relay('/api/status');
+                    exit;
+                }
                 ups_upgrade_503($up);
                 exit;
             }
+            $j = $status === 200 ? json_decode($body, true) : null;
+            $up = ups_upgrade_live($up, is_array($j) ? $j : null);
             header('Content-Type: application/json; charset=utf-8');
             header('Cache-Control: no-store');
             http_response_code($status);
             $b = rtrim($body);
-            if ($status === 200 && strlen($b) > 2 && $b[0] === '{' && substr($b, -1) === '}'
-                && is_array(json_decode($b, true))) {
+            if ($up !== null && $status === 200 && strlen($b) > 2 && $b[0] === '{' && substr($b, -1) === '}'
+                && is_array($j)) {
                 echo substr($b, 0, -1) . ',"upgrading":'
                     . json_encode($up, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '}';
             } else {
@@ -87,8 +95,10 @@ if (isset($_GET['api'])) {
     if ($what === 'upgrade-state') {
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
-        [$hs] = upsmon_call('/api/health', 'GET', null, 3.0);
-        echo json_encode(['ok' => true, 'upgrading' => ups_upgrading(false), 'api' => $hs === 200],
+        [$hs, $hb] = upsmon_call('/api/health', 'GET', null, 3.0);
+        $hj = $hs === 200 ? json_decode($hb, true) : null;
+        echo json_encode(['ok' => true, 'upgrading' => ups_upgrade_live(ups_upgrading(false), is_array($hj) ? $hj : null),
+                          'api' => $hs === 200],
                          JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         exit;
     }
@@ -228,7 +238,7 @@ if (isset($_GET['api'])) {
 // ---- first paint ----------------------------------------------------------
 $snapshot = upsmon_get('/api/status', 6.0);
 $health   = upsmon_get('/api/health', 6.0);
-$upgrade  = ups_upgrading(false);
+$upgrade  = ups_upgrade_live(ups_upgrading(false), $health);
 $upgrade_on = $upgrade !== null && $upgrade['state'] === 'running';
 
 function h($value): string
@@ -3333,7 +3343,7 @@ function drawNotices(n) {
 /* Being upgraded (4.8.0): the daemon, nginx and PHP restart on purpose - a
    band says how far it is (read from the disk by PHP), the pill says
    maintenance, and once it is done the page loads the new version once. */
-var DUPG = {u: null, saw: "", reloading: false};
+var DUPG = {u: null, saw: "", last: "", reloading: false};
 function dashUpgradeLine(u) {
   var bits = [];
   var parts = Number(u.parts || 0), part = Number(u.part || 0);
@@ -3345,9 +3355,13 @@ function dashUpgradeLine(u) {
 }
 function drawUpgrading(u, apiUp) {
   var box = $("upg-banner");
-  if (u && u.state === "running") DUPG.saw = String(u.version || "?");
+  /* One upgrade by its version and when it began (4.9.1): the same version tried again is
+     another one. Loaded again when it is done - or its record went while it was running -
+     never after a failure whose record only ran out. */
+  if (u && u.state === "running") DUPG.saw = String(u.version || "?") + ":" + String(u.started || "");
+  if (u) DUPG.last = u.state;
   DUPG.u = u || null;
-  if (DUPG.saw && apiUp && !DUPG.reloading && (!u || u.state === "done")) {
+  if (DUPG.saw && apiUp && !DUPG.reloading && ((u && u.state === "done") || (!u && DUPG.last === "running"))) {
     var seen = "";
     try { seen = sessionStorage.getItem("upsmon-dash-upgraded") || ""; } catch (e) { }
     if (seen !== DUPG.saw) {
@@ -3358,13 +3372,13 @@ function drawUpgrading(u, apiUp) {
   }
   if (!box) return;
   var running = !!(u && u.state === "running");
-  if (!running && !DUPG.reloading && !(DUPG.saw && !apiUp)) { box.hidden = true; return; }
+  if (!running && !DUPG.reloading && !(DUPG.saw && !apiUp && DUPG.last === "running")) { box.hidden = true; return; }
   box.textContent = "";
   box.className = "maint-banner upg";
   var dot = document.createElement("span"); dot.className = "dot"; box.appendChild(dot);
   var words = document.createElement("div");
   var b = document.createElement("b");
-  var v = (u && u.version) || DUPG.saw || "";
+  var v = (u && u.version) || DUPG.saw.split(":")[0] || "";
   b.textContent = DUPG.reloading ? "upsmon " + v + " is in - loading the new version…"
     : (u && u.downgrade ? "upsmon is being taken back to " : "upsmon is being upgraded to ") + v;
   words.appendChild(b);
@@ -3399,7 +3413,7 @@ function refresh() {
     var upg = snap && snap.upgrading && typeof snap.upgrading === "object" ? snap.upgrading : null;
     var answered = !!(snap && snap.ok !== false);
     drawUpgrading(upg, answered);
-    if (!answered && (upg || DUPG.saw)) { upgradingPill(); return; }
+    if (!answered && ((upg && upg.state === "running") || (DUPG.saw && DUPG.last === "running"))) { upgradingPill(); return; }
     drawMaintenance(snap && snap.maintenance);
     drawNotices(snap && snap.notices);
     if (!snap || snap.online === false) {
@@ -3417,7 +3431,7 @@ function refresh() {
       renderSensorVariables(snap.sensors);
     }
   }).catch(function () {
-    if (DUPG.saw) { drawUpgrading(DUPG.u, false); upgradingPill(); return; }
+    if (DUPG.saw && DUPG.last === "running") { drawUpgrading(DUPG.u, false); upgradingPill(); return; }
     var verdict = $("verdict");
     verdict.className = "pill unknown";
     verdict.innerHTML = '<span class="dot"></span>Dashboard offline';

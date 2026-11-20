@@ -61,7 +61,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 # Bumped with upsmon.py: the two are one version.
-__version__ = '4.9.0'
+__version__ = '4.9.1'
 # The oldest version this one may go back to (Settings → Upgrades): 4.0.0 is
 # the first with these pages, the database and the signed packages.
 DOWNGRADE_FLOOR = '4.0.0'
@@ -8549,6 +8549,9 @@ def _lockouts_do(h):
 
 
 # ======== carried over from OTP 1.0.187 (lines 32987-33480): health, signing in ========
+HEALTH_BORN = time.time()
+
+
 @route('GET', '/api/health')
 def _health(h):
     """Asked without the API token, so it says only what the pages need
@@ -8573,6 +8576,7 @@ def _health(h):
         HEALTH_SEEN['db'] = (time.time(), (users, db_ok, maint))
     out = {'ok': True, 'users': users, 'database': {'ok': db_ok},
            'lang': CONFIG.get('ui_lang') or 'cs', 'node': node_name(),
+           'uptime': int(time.time() - HEALTH_BORN),
            'maintenance': maint,
            # Offered as soon as it is switched on (4.4.1): with none added yet the
            # button was missing, and that looked like the switch had not worked.
@@ -16253,8 +16257,10 @@ def cli_selinux_find(args, pal, store):
             print('  %-6s %s' % (x['kind'], x['fix']))
             print(pal.dim('         %s: %s -> %s %s { %s }' % (x['prog'], x['src'], x['tgt'], x['class'], ' '.join(x['perms']))))
         cli_sure(args, 'These %d put right' % len(pick))
-        got = _selinux_helper(['--selinux-do', 'fix'], json.dumps(dict(base, ids=[x['id'] for x in pick],
-                                                                      by='the command line')))
+        # "all" goes to root as it is (4.9.1): it puts right every one it finds itself - a list of
+        # more than 64, or of more than the 80 shown, was refused or fell short.
+        got = _selinux_helper(['--selinux-do', 'fix'], json.dumps(dict(
+            base, ids='all' if want == ['all'] else [x['id'] for x in pick], by='the command line')))
     store.add_event('settings', 'the command line asked SELinux: %s (%s)' % (
         'take away a local rule' if args.selinux_rules else 'put right %d' % len(pick),
         'done' if got.returncode in (0, 1) and not got.stderr.strip() else 'not done'), 'warn', who='the command line')

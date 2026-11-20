@@ -130,11 +130,29 @@ function ups_upgrading(bool $full = false): ?array
     return $u;
 }
 
-/** Whether this request comes with a session cookie of Settings. */
-function ups_upgrade_session(): bool
+/**
+ * The record of an upgrade running now, without who asked or why (4.9.1) - what answers
+ * "being upgraded" while the daemon is away. A done or failed one does not: a daemon that is
+ * down after an upgrade ended is down, and said so.
+ */
+function ups_upgrading_running(): ?array
 {
-    $c = $_COOKIE['upsmon_session'] ?? '';
-    return is_string($c) && $c !== '';
+    $u = ups_upgrading(false);
+    return ($u !== null && $u['state'] === 'running') ? $u : null;
+}
+
+/**
+ * A "running" left behind (4.9.1): the machine restarted, or the helper was killed, in the
+ * middle of one - nothing wrote it failed. The daemon started well after the last step was
+ * written (its uptime says when), while install.sh writes done within moments of starting it.
+ */
+function ups_upgrade_live(?array $u, $health): ?array
+{
+    if ($u === null || $u['state'] !== 'running' || !is_array($health) || !is_numeric($health['uptime'] ?? null)) {
+        return $u;
+    }
+    $started = microtime(true) - (float) $health['uptime'];
+    return ($started - (float) $u['at'] > 180) ? null : $u;
 }
 
 /** The 503 every relayed call answers while the daemon is away during an upgrade. */

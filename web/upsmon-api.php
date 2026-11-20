@@ -129,7 +129,7 @@ function upsmon_relay(string $path, string $method = 'GET', ?array $payload = nu
     if ($status === 0) {
         /* Being upgraded (4.8.0): the daemon restarts on purpose - said as
            such, with how far it is, not as "not responding". */
-        $up = ups_upgrading(false);
+        $up = ups_upgrading_running();
         if ($up !== null) {
             ups_upgrade_503($up);
             return;

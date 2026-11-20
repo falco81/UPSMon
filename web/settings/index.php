@@ -33,14 +33,19 @@ if (isset($_GET['api'])) {
     }
     /* How far an upgrade is (4.8.0) - read from the disk, so it answers while
        the daemon restarts: the band under the header and the sign-in page ask
-       every two seconds. Who asked, what went wrong and the upgrade's id only
-       with a session cookie; "api": whether the daemon answers now. */
+       every two seconds. Never who asked, what went wrong or the upgrade's id
+       (4.9.1): nothing here knows whether the session is real while the daemon
+       is away. "api": whether the daemon answers now - as the sign-in page
+       decides it (from elsewhere: the token, the database and an account too),
+       else the sign-in page loaded itself again and again. */
     if ($what === 'upgrade-state' && !$post) {
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
         $health = ups_token() !== null ? ups_get('/api/health', 3.0) : null;
-        echo json_encode(['ok' => true, 'upgrading' => ups_upgrading(ups_upgrade_session()),
-                          'pages' => UPS_VERSION, 'api' => is_array($health)],
+        $answers = is_array($health) && (ups_local()
+            || (!empty($health['database']['ok']) && !empty($health['users'])));
+        echo json_encode(['ok' => true, 'upgrading' => ups_upgrade_live(ups_upgrading(false), $health),
+                          'pages' => UPS_VERSION, 'api' => $answers],
                          JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         exit;
     }
@@ -51,8 +56,22 @@ if (isset($_GET['api'])) {
         unset($query['api']);
         [$status, $body] = ups_call('/api/status' . ($query ? '?' . http_build_query($query) : ''), 'GET', null, 60.0);
         if ($status === 0) {
-            ups_upgrade_503($up);
+            /* "Being upgraded" only while one runs, and nothing of who or why
+               (4.9.1): nothing knows the session while the daemon is away. A
+               daemon down after an upgrade ended is down. */
+            $run = ups_upgrading_running();
+            if ($run !== null) {
+                ups_upgrade_503($run);
+                exit;
+            }
+            http_response_code(503);
+            header('Content-Type: application/json; charset=utf-8');
+            header('Cache-Control: no-store');
+            echo json_encode(['ok' => false, 'error' => 'the daemon is not answering — is upsmon.service running?']);
             exit;
+        }
+        if ($up['state'] === 'running') {
+            $up = ups_upgrade_live($up, ups_get('/api/health', 3.0));
         }
         header('Content-Type: application/json; charset=utf-8');
         header('Cache-Control: no-store');
@@ -60,7 +79,7 @@ if (isset($_GET['api'])) {
         /* Put in as text, before the last brace: decoded and encoded again,
            an empty {} of the daemon's answer would come out as []. */
         $b = rtrim($body);
-        if ($status === 200 && strlen($b) > 2 && $b[0] === '{' && substr($b, -1) === '}'
+        if ($up !== null && $status === 200 && strlen($b) > 2 && $b[0] === '{' && substr($b, -1) === '}'
             && is_array(json_decode($b, true))) {
             echo substr($b, 0, -1) . ',"upgrading":'
                 . json_encode($up, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . '}';
@@ -343,6 +362,7 @@ $me      = ups_whoami();
 $mfa     = (is_array($me) && !empty($me['mfa'])) ? (string) $me['mfa'] : '';
 if ($mfa !== '') { $me = null; }
 $health  = ups_get('/api/health', 5.0);
+$health_seen = $health;          /* as the daemon said it, before it is cut down below */
 $alive   = is_array($health);
 $token_there = file_exists(UPS_TOKEN);
 $token_ok    = ups_token() !== null;
@@ -370,7 +390,7 @@ if (!$me && !ups_local()) {
 $initial = $me ? (ups_get('/api/status', 8.0) ?: null) : null;
 /* An upgrade under way or ended a moment ago (4.8.0), read from the disk:
    the sign-in page says so instead of "the daemon is not answering". */
-$upg     = ups_upgrading($me ? true : ups_upgrade_session());
+$upg     = ups_upgrade_live(ups_upgrading((bool) $me), $health_seen);
 $upg_on  = $upg !== null && $upg['state'] === 'running';
 $host    = (string) ($_SERVER['HTTP_HOST'] ?? php_uname('n'));
 $site    = (string) ($initial['site'] ?? '');

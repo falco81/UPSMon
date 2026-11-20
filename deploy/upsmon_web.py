@@ -1432,17 +1432,9 @@ def se_allowed_now(lines):
     tells: "would be allowed by active policy" - a newer module or a boolean since."""
     if not lines:
         return []
-    by_id = {}
-    for key, line in lines.items():
-        m = re.search(r'msg=audit\(([0-9.]+:\d+)\)', line)
-        if m:
-            by_id[m.group(1)] = key
-    if not by_id:
-        return []
-    # One audit2why for each look, shared with the findings (4.9.0).
-    blocks = se_why_blocks([lines[k] for k in by_id.values()])
-    now = {key for mid, key in by_id.items() if 'would be allowed by active policy' in blocks.get(mid, '')}
-    return sorted(now)
+    # One audit2why for each look, shared with the findings (4.9.0) - by the line (4.9.1).
+    blocks = se_why_blocks(list(lines.values()))
+    return sorted(key for key, line in lines.items() if 'would be allowed by active policy' in se_why_of(blocks, line))
 
 
 def se_denials(since=0.0):
@@ -1459,9 +1451,10 @@ def se_denials(since=0.0):
         if since and when and int(when.group(1)) < since:
             continue
         perms = re.search(r'denied\s+\{([^}]*)\}', line)
-        sc = re.search(r'scontext=(\S+)', line)
-        tc = re.search(r'tcontext=(\S+)', line)
-        cl = re.search(r'tclass=(\S+)', line)
+        sc = list(re.finditer(r'scontext=(\S+)', line))[-1:] or [None]
+        tc = list(re.finditer(r'tcontext=(\S+)', line))[-1:] or [None]
+        cl = list(re.finditer(r'tclass=(\S+)', line))[-1:] or [None]
+        sc, tc, cl = sc[0], tc[0], cl[0]
         comm = re.search(r'comm=(\S+)', line)
         name = re.search(r'\bname=(\S+)', line)
         if not (perms and sc and tc and cl):
@@ -1473,7 +1466,7 @@ def se_denials(since=0.0):
             continue
         # Another program's (the findings say so), or put right after it happened (4.9.0).
         mid = re.search(r'msg=audit\(([0-9.]+:\d+)\)', line)
-        if mid and mid.group(1) in SE_AUSEARCH.get('other', ()):
+        if mid and se_line_key(mid.group(1), st, tt, cl.group(1), perms.group(1).split()) in SE_AUSEARCH.get('other', ()):
             continue
         if when and se_fixed_skip(st, tt, cl.group(1), perms.group(1), int(when.group(1))):
             continue
@@ -1557,7 +1550,7 @@ def se_check(r):
         # What SELinux refuses, sorted by what puts it right (4.9.0) - first: it says which
         # refusals are another program's, and those are not counted below.
         try:
-            out['findings'] = se_find(se_app_ports(r), se_applied_at())
+            out['findings'] = se_find((), se_applied_at())
         except Exception as e:                          # noqa: BLE001 - the rest of the look goes on
             out['findings'] = {'tool': False, 'items': [], 'counts': {}, 'error': str(e)[:200]}
         out['local_rules'] = se_local_rules()
@@ -1786,6 +1779,24 @@ SE_GENERIC_TYPES = ('etc_t', 'usr_t', 'bin_t', 'sbin_t', 'lib_t', 'var_t', 'defa
 SE_WRITE_PERMS = ('write', 'append', 'create', 'unlink', 'rename', 'add_name', 'remove_name', 'setattr',
                   'rmdir', 'link', 'reparent', 'ioctl', 'lock')
 SE_KINDS = ('boolean', 'label', 'port', 'rule', 'nobutton', 'other', 'fixed')
+# 4.9.1: whose a refusal is, only from what the kernel wrote - the uid of the process (SYSCALL)
+# and the path or port of the object; never from a name a program gives itself (comm,
+# proctitle) or a word in a path, which any user of the machine may choose. upsmon.service and
+# the tools it starts run as the account upsmon; the PHP of its pages as upsmon-www.
+SE_ACCOUNTS = ('upsmon', 'upsmon-www')
+SE_NGINX_CONF = os.environ.get('UPSMON_NGINX_CONF', '/etc/nginx/conf.d/upsmon.conf')
+# A rule of upsmon's own may open up only these - anything else is not for a button:
+#  - upsmon.service starting one of its tools under NoNewPrivileges,
+#  - a tool talking back to upsmon.service (its pipe, its socket, the signal it ends with),
+#  - the web server reading upsmon's own pages and run files.
+SE_RULE_TOOL_IN = {'process2': {'nnp_transition', 'nosuid_transition'}}
+SE_RULE_TOOL_BACK = {'fifo_file': {'read', 'write', 'getattr', 'ioctl', 'append', 'lock'},
+                     'unix_stream_socket': {'read', 'write', 'getattr', 'ioctl', 'connectto'},
+                     'unix_dgram_socket': {'read', 'write', 'getattr', 'ioctl', 'sendto'},
+                     'fd': {'use'}, 'process': {'sigchld'}}
+SE_RULE_PAGES = {'types': ('httpd_var_run_t', 'httpd_runtime_t', 'httpd_sys_content_t'),
+                 'classes': ('file', 'dir', 'lnk_file'),
+                 'perms': {'read', 'open', 'getattr', 'search', 'ioctl', 'map', 'lock'}}
 SE_FIXABLE = ('boolean', 'label', 'port', 'rule')
 SE_AUSEARCH = {}                               # one ausearch, one audit2why for each look
 
@@ -1798,28 +1809,42 @@ def se_ausearch():
     return SE_AUSEARCH['out']
 
 
+def _se_norm(line):
+    return ' '.join(re.sub(r'^node=\S+\s+', '', line or '').split())
+
+
 def se_why_blocks(lines):
-    """audit2why for these AVC lines: {msg id: what it said}, each line asked once per look."""
+    """audit2why for these AVC lines: {line: what it said}, each line asked once per look. By the
+    line, not by the event (4.9.1): one event often holds several AVC lines, and each has its own
+    answer - one allowed now must not take the other with it."""
     cache = SE_AUSEARCH.setdefault('why', {})
-    want = {}
+    want = []
     for line in lines:
-        m = re.search(r'msg=audit\(([0-9.]+:\d+)\)', line)
-        if m and m.group(1) not in cache:
-            want[m.group(1)] = line
+        k = _se_norm(line)
+        if k and k not in cache and k not in want:
+            want.append(k)
     if want:
-        got = _se_run(['audit2why'], 300, light=True, data=''.join(x + '\n' for x in want.values()))
+        got = _se_run(['audit2why'], 300, light=True, data=''.join(x + '\n' for x in want))
         for k in want:
             cache[k] = ''
         if got is not None and got.returncode == 0:
-            cur = None
+            cur, left = None, list(want)
             for line in (got.stdout or '').splitlines():
-                m = re.search(r'msg=audit\(([0-9.]+:\d+)\)', line)
-                if m and ('avc:' in line or 'type=' in line):
-                    cur = m.group(1) if m.group(1) in want else None
+                if re.search(r'msg=audit\([0-9.]+:\d+\)', line) and ('avc:' in line or 'type=' in line):
+                    k = _se_norm(line)
+                    # The line given back as it was sent - else the next one not answered yet,
+                    # as audit2why answers in the order it was asked.
+                    cur = k if k in left else (left[0] if left else None)
+                    if cur in left:
+                        left.remove(cur)
                     continue
                 if cur is not None:
                     cache[cur] += line + '\n'
     return cache
+
+
+def se_why_of(why, line):
+    return why.get(_se_norm(line), '')
 
 
 def _se_unhex(v):
@@ -1836,10 +1861,14 @@ def _se_unhex(v):
     return v
 
 
-def _se_field(line, key, unhex=True):
-    m = re.search(r'(?:^|\s)%s=("[^"]*"|\S+)' % re.escape(key), line)
-    if not m:
+def _se_field(line, key, unhex=True, last=False):
+    """A field of a raw audit line. `last`: the last of its name (4.9.1) - the kernel writes
+    scontext, tcontext and tclass at the end; text a program put into a USER_AVC before them
+    (a command line) must not be taken for them."""
+    found = list(re.finditer(r'(?:^|\s)%s=("[^"]*"|\S+)' % re.escape(key), line))
+    if not found:
         return ''
+    m = found[-1] if last else found[0]
     return _se_unhex(m.group(1)) if unhex else m.group(1).strip('"')
 
 
@@ -1847,10 +1876,54 @@ def se_events(raw):
     """The raw audit text as events: {serial: [lines]}, in their order."""
     out = {}
     for line in (raw or '').splitlines():
+        # auditd with name_format=hostname puts node=NAME before every record (4.9.1).
+        line = re.sub(r'^node=\S+\s+', '', line)
         m = re.search(r'msg=audit\(([0-9.]+):(\d+)\)', line)
         if m:
             out.setdefault(m.group(1) + ':' + m.group(2), []).append(line)
     return out
+
+
+def se_line_key(serial, st, tt, cl, perms):
+    """One refusal of one event (4.9.1): an event holds several AVC lines."""
+    return '%s|%s|%s|%s|%s' % (serial, st, tt, cl, ' '.join(sorted(set(perms))))
+
+
+def se_uids():
+    """{uid: account} of upsmon's accounts, as root knows them."""
+    fake = os.environ.get('UPSMON_SELINUX_UIDS')                # tests: {"upsmon": 990, ...}
+    if fake:
+        try:
+            return {str(v): k for k, v in (json.loads(fake) or {}).items()}
+        except ValueError:
+            return {}
+    import pwd
+    out = {}
+    for name in SE_ACCOUNTS:
+        try:
+            out[str(pwd.getpwnam(name).pw_uid)] = name
+        except KeyError:
+            continue
+    return out
+
+
+def se_nginx_ports():
+    """The ports upsmon's nginx listens on, read by root from its own file."""
+    try:
+        text = open(SE_NGINX_CONF, encoding='utf-8', errors='replace').read(262144)
+    except OSError:
+        return {80, 443}
+    got = {int(p) for p in re.findall(r'(?m)^\s*listen\s+(?:\[[^\]]*\]:|[0-9.]+:)?(\d{1,5})\b', text)}
+    return {p for p in got if 1 <= p <= 65535} or {80, 443}
+
+
+def se_perm_known(cl, perms):
+    """Whether the loaded policy knows these permissions of the class (4.9.1): a rule naming one it
+    does not is switched off silently in its optional block - "put right" would be a lie."""
+    base = os.environ.get('UPSMON_SELINUX_CLASSES', '/sys/fs/selinux/class')
+    if not os.path.isdir(base):
+        return True                                  # not to be read here: secilc and semodule say
+    return all(os.path.exists(os.path.join(base, cl, 'perms', p)) for p in perms)
 
 
 def se_type_of(ctx):
@@ -1922,22 +1995,24 @@ def se_find(app_ports=(), since=0.0):
         return {'tool': False, 'items': [], 'counts': {}, 'since': since}
     fixed = se_root_json(SE_FIXED)
     groups, serials = {}, {}
+    accounts = se_uids()
+    ports_web = se_nginx_ports()
     for serial, lines in se_events(raw).items():
         avc = [x for x in lines if 'avc:' in x and 'denied' in x]
         err = [x for x in lines if x.startswith('type=SELINUX_ERR') or 'type=SELINUX_ERR' in x[:40]]
         sysc = next((x for x in lines if x.startswith('type=SYSCALL')), '')
+        uid = _se_field(sysc, 'uid', False)
         paths = [x for x in lines if x.startswith('type=PATH')]
         cwd = next((x for x in lines if x.startswith('type=CWD')), '')
         title = next((x for x in lines if x.startswith('type=PROCTITLE')), '')
         exe = _se_field(sysc, 'exe')
         comm = _se_field(sysc, 'comm')
-        ptitle = _se_field(title, 'proctitle')[:200]
         when = float(serial.split(':')[0])
         for line in avc + err:
             perms = re.search(r'denied\s+\{([^}]*)\}', line)
             perms = sorted(set(perms.group(1).split())) if perms else ['transition']
-            sc, tc, cl = _se_field(line, 'scontext', False), _se_field(line, 'tcontext', False), \
-                _se_field(line, 'tclass', False)
+            sc, tc, cl = _se_field(line, 'scontext', False, True), _se_field(line, 'tcontext', False, True), \
+                _se_field(line, 'tclass', False, True)
             if not (sc and tc and cl):
                 continue
             st, tt = se_type_of(sc), se_type_of(tc)
@@ -1967,13 +2042,13 @@ def se_find(app_ports=(), since=0.0):
             key = se_finding_id(st, tt, cl, perms, prog, where)
             g = groups.get(key)
             if g is None:
-                text = ' '.join(lines)
                 g = groups[key] = {'id': key, 'src': st, 'tgt': tt, 'class': cl, 'perms': perms, 'prog': prog[:60],
                                    'exe': exe[:200], 'path': path[:300] if not port else '', 'port': int(port) if port else 0,
                                    'proto': proto if port else '', 'count': 0, 'first': when, 'last': when,
                                    'permissive': 'permissive=1' in line, 'line': line,
-                                   'upsmon': 'upsmon' in (text + ptitle).lower(), 'err': line in err}
-            serials.setdefault(key, set()).add(serial)
+                                   'account': accounts.get(uid, '') if not line.startswith('type=USER_') else '',
+                                   'user_avc': line.startswith('type=USER_'), 'err': line in err}
+            serials.setdefault(key, set()).add(se_line_key(serial, st, tt, cl, perms))
             g['count'] += 1
             g['first'] = min(g['first'], when)
             g['last'] = max(g['last'], when)
@@ -1985,9 +2060,8 @@ def se_find(app_ports=(), since=0.0):
         ports_now = None
     items = []
     for g in groups.values():
-        m = re.search(r'msg=audit\(([0-9.]+:\d+)\)', g['line'])
-        said = why.get(m.group(1), '') if m else ''
-        g.update(se_sort(g, said, app_ports, ports_now))
+        said = se_why_of(why, g['line'])
+        g.update(se_sort(g, said, ports_web, ports_now))
         f = fixed.get(g['id'])
         if g['kind'] == 'allowed':
             continue
@@ -1997,12 +2071,13 @@ def se_find(app_ports=(), since=0.0):
             if time.time() - float(f.get('at') or 0) > SE_FIXED_SHOW_S:
                 continue
             g['kind'], g['why'] = 'fixed', 'Put right just now - it goes at the next look'
-        g.pop('line', None)
-        g.pop('err', None)
+        for k in ('line', 'err', 'user_avc'):
+            g.pop(k, None)
         items.append(g)
     order = {k: i for i, k in enumerate(('fixed',) + SE_FIXABLE + ('nobutton', 'other'))}
     items.sort(key=lambda x: (order.get(x['kind'], 9), -x['count'], x['id']))
-    # Another program's refusals and what was put right since do not count against enforcing.
+    # Another program's refusals and what was put right since do not count against enforcing -
+    # each AVC line by itself (4.9.1), never the whole event it came in.
     SE_AUSEARCH['other'] = set()
     for x in items:
         if x['kind'] in ('other', 'fixed'):
@@ -2015,26 +2090,55 @@ def se_find(app_ports=(), since=0.0):
             'other': counts.get('other', 0), 'fixed': counts.get('fixed', 0), 'more': max(0, len(items) - SE_FIND_MOST)}
 
 
-def se_sort(g, said, app_ports, ports_now):
+def se_rule_ok(g, mine):
+    """Whether a rule of upsmon's own may allow exactly this (4.9.1): only what upsmon itself
+    needs, never anything a rule on a type would open far beyond it."""
+    st, tt, cl, perms = g['src'], g['tgt'], g['class'], set(g['perms'])
+    if mine == 'daemon' and tt in SE_TOOL_DOMAINS and perms <= SE_RULE_TOOL_IN.get(cl, set()):
+        return True
+    if mine == 'tool' and tt == 'unconfined_service_t' and perms <= SE_RULE_TOOL_BACK.get(cl, set()):
+        return True
+    if mine in ('pages', 'place') and st == 'httpd_t' and tt in SE_RULE_PAGES['types'] and \
+            cl in SE_RULE_PAGES['classes'] and perms <= SE_RULE_PAGES['perms']:
+        return True
+    return False
+
+
+def se_sort(g, said, ports_web, ports_now):
     """One finding's kind, why, and the fix root would put in."""
     st, tt, cl, perms = g['src'], g['tgt'], g['class'], g['perms']
     low = said.lower()
     if 'would be allowed by active policy' in low or 'allowed by active policy' in low:
         return {'kind': 'allowed', 'why': 'the policy loaded now allows it', 'fix': ''}
     path, port = g['path'], g['port']
-    known = bool(path.startswith('/')) or bool(port)
-    app_place = (se_app_path(path) if path.startswith('/') else False) or (port and port in app_ports)
-    daemon = st == 'unconfined_service_t' and (g['upsmon'] or g['exe'].startswith('/usr/local/lib/upsmon'))
-    tool = (st in SE_TOOL_DOMAINS and (tt == 'unconfined_service_t' or g['upsmon'])) or \
-        (st == 'unconfined_service_t' and tt in SE_TOOL_DOMAINS and g['upsmon'])
-    confined = st in SE_DOMAINS and st != 'unconfined_service_t'
-    if not (daemon or tool or g['upsmon'] or (confined and (app_place or not known))):
-        who = '%s (%s)' % (g['prog'], st)
-        return {'kind': 'other', 'why': 'not upsmon\'s: %s is another program of this machine - look at it '
-                                        'with whoever looks after it' % who, 'fix': ''}
+    app_path = bool(path.startswith('/')) and se_app_path(path)
+    # Whose it is - from the uid the kernel wrote, the object's path and port (4.9.1).
+    if st == 'unconfined_service_t' and g['account'] == 'upsmon':
+        mine = 'daemon'
+    elif st in SE_TOOL_DOMAINS and g['account'] == 'upsmon':
+        mine = 'tool'
+    elif st == 'httpd_t' and g['account'] == 'upsmon-www':
+        mine = 'pages'
+    elif st in SE_DOMAINS and st not in ('unconfined_service_t', 'init_t') and \
+            (app_path or (port and port in ports_web)):
+        mine = 'place'
+    else:
+        mine = ''
+    if not mine:
+        if st in SE_DOMAINS or st in SE_TOOL_DOMAINS:
+            # A program upsmon works with (the web server, the services, its tools): counted against
+            # enforcing as before, never put right from here.
+            return {'kind': 'nobutton', 'fix': '',
+                    'why': '%s (%s) refused on something not known as upsmon\'s - not put right from here; it '
+                           'counts, as the program is one upsmon works with' % (g['prog'], st)}
+        return {'kind': 'other', 'why': 'not upsmon\'s: %s (%s) is another program of this machine - look at it '
+                                        'with whoever looks after it' % (g['prog'], st), 'fix': ''}
     if g['err']:
         return {'kind': 'nobutton', 'why': 'SELinux could not work out a context (SELINUX_ERR) - a matter of '
                                            'the policy itself, for the report', 'fix': ''}
+    if g.get('user_avc'):
+        return {'kind': 'nobutton', 'why': 'refused by a program that asks SELinux itself (USER_AVC: dbus, '
+                                           'systemd) - for the report', 'fix': ''}
     if 'constraint' in low:
         return {'kind': 'nobutton', 'why': 'a constraint of the policy (users, roles, levels) refuses it, not a '
                                            'missing rule - for the report', 'fix': ''}
@@ -2047,7 +2151,7 @@ def se_sort(g, said, app_ports, ports_now):
         return {'kind': 'nobutton', 'why': 'only a boolean that allows far more would allow it (%s) - never '
                                            'switched on from here' % ', '.join(sorted(set(bools))[:3]), 'fix': ''}
     bad = se_why_not(st, tt, cl, perms)
-    if path.startswith('/') and se_app_path(path) and cl in ('file', 'dir', 'lnk_file', 'sock_file', 'fifo_file'):
+    if app_path and cl in ('file', 'dir', 'lnk_file', 'sock_file', 'fifo_file'):
         want = se_matchpathcon(path)
         if want and want != tt and not (want == 'httpd_var_run_t' and tt == 'httpd_runtime_t'):
             folder = path if cl == 'dir' else os.path.dirname(path)
@@ -2055,24 +2159,34 @@ def se_sort(g, said, app_ports, ports_now):
                 folder = path
             return {'kind': 'label', 'fix': 'restorecon -R -v %s' % folder, 'label_path': folder,
                     'why': '%s is labelled %s - the policy says %s' % (path, tt, want)}
-    if port and tt in SE_GENERIC_PORTS and cl in ('tcp_socket', 'udp_socket') and \
-            set(perms) <= {'name_bind', 'name_connect'} and st in SE_PORT_FOR:
-        ptype = SE_PORT_FOR[st]
-        others = [k for (k, pr), spans in (ports_now or {}).items()
-                  if pr == g['proto'] and k not in SE_GENERIC_PORTS and any(lo <= port <= hi for lo, hi in spans)]
-        if ports_now is not None and not others:
-            return {'kind': 'port', 'port_type': ptype, 'fix': 'semanage port -a -t %s -p %s %d' % (ptype, g['proto'], port),
-                    'why': 'port %d/%s has no type of its own - %s may %s it once it is %s' % (
-                        port, g['proto'], st, 'bind' if 'name_bind' in perms else 'connect to', ptype)}
-        if others:
-            return {'kind': 'nobutton', 'why': 'port %d/%s is %s\'s in the policy - never taken from it here' % (
-                port, g['proto'], others[0]), 'fix': ''}
+    if tt in SE_GENERIC_PORTS or tt.endswith('_port_t'):
+        # A port: given a type of its own, or nothing - a rule on a port type would open every
+        # port of that type (4.9.1).
+        if port and tt in SE_GENERIC_PORTS and cl in ('tcp_socket', 'udp_socket') and \
+                set(perms) <= {'name_bind', 'name_connect'} and st in SE_PORT_FOR and port in ports_web:
+            ptype = SE_PORT_FOR[st]
+            others = [k for (k, pr), spans in (ports_now or {}).items()
+                      if pr == g['proto'] and k not in SE_GENERIC_PORTS and any(lo <= port <= hi for lo, hi in spans)]
+            if ports_now is not None and not others:
+                return {'kind': 'port', 'port_type': ptype,
+                        'fix': 'semanage port -a -t %s -p %s %d' % (ptype, g['proto'], port),
+                        'why': 'port %d/%s has no type of its own - %s may %s it once it is %s' % (
+                            port, g['proto'], st, 'bind' if 'name_bind' in perms else 'connect to', ptype)}
+            if others:
+                return {'kind': 'nobutton', 'why': 'port %d/%s is %s\'s in the policy - never taken from it here' % (
+                    port, g['proto'], others[0]), 'fix': ''}
+        return {'kind': 'nobutton', 'fix': '',
+                'why': 'a rule on %s would open every port of that type - not put right from here' % tt}
     if bad:
         return {'kind': 'nobutton', 'why': bad, 'fix': ''}
-    if confined and not (app_place or daemon or tool or g['upsmon']):
+    if not se_rule_ok(g, mine):
         return {'kind': 'nobutton', 'fix': '',
-                'why': '%s (%s) refused on a path or port not known as upsmon\'s - not put right from here' % (
-                    g['prog'], st)}
+                'why': 'a rule for %s -> %s %s would reach beyond what upsmon itself needs - not put right from '
+                       'here; the report is for whoever looks after upsmon\'s module' % (st, tt, cl)}
+    if not se_perm_known(cl, perms):
+        return {'kind': 'nobutton', 'fix': '',
+                'why': 'the policy loaded here does not know %s { %s } - a rule for it would do nothing' % (
+                    cl, ' '.join(perms))}
     rule = '(allow %s %s (%s (%s)))' % (st, tt, cl, ' '.join(perms))
     return {'kind': 'rule', 'fix': rule, 'rule': rule,
             'why': 'nothing of the policy allows it: a rule of upsmon\'s own local module allows exactly this'}
@@ -2145,8 +2259,7 @@ def se_fix(r, said):
         ids = None
     elif not isinstance(ids, list) or not ids or len(ids) > 64 or not all(isinstance(i, str) and SE_ID_RE.match(i) for i in ids):
         raise Refused('name the findings to put right by their ids (12 hex digits)')
-    app_ports = se_app_ports(r)
-    found = se_find(app_ports, se_applied_at())
+    found = se_find((), se_applied_at())
     by_id = {x['id']: x for x in found['items']}
     if ids is None:
         ids = [x['id'] for x in found['items'] if x['kind'] in SE_FIXABLE]
@@ -2170,9 +2283,12 @@ def se_fix(r, said):
                 raise Refused('setsebool -P %s 1: %s' % (x['boolean'], ((got.stderr or '') if got else '').strip()[-200:]))
             said.append('boolean %s on (%s)' % (x['boolean'], i))
         elif x['kind'] == 'label':
-            p = x['label_path']
+            # By its real path (4.9.1): a link inside upsmon's folders must not lead restorecon
+            # elsewhere.
+            p = os.path.realpath(x['label_path'])
             if not (se_app_path(p) and os.path.exists(p)):
-                said.append('%s: %s is not there any more' % (i, p))
+                said.append('%s: %s is not there any more (or not upsmon\'s) - nothing done' % (i, x['label_path']))
+                continue
             else:
                 got = _se_run(['restorecon', '-R', '-v', p], 300)
                 if got is None or got.returncode != 0:
